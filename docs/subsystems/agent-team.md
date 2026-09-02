@@ -32,7 +32,7 @@ interface TeamMemberSnapshot {
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. `requestedRoute` is immutable from the first record; `resolvedRoute` comes from the accepted child continuation descriptor and must preserve every explicit requested field. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. `requestedRoute` is immutable from the first record; `resolvedRoute` comes from the accepted child continuation descriptor and must preserve every explicit requested field. Caller cancellation applies through the initial inbox durability checkpoint; after that acceptance, only the Team lifecycle may cancel descriptor correlation and the terminal roster commit. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
 
 ## Durable mailbox
 

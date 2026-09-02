@@ -323,7 +323,10 @@ export class TeamRoster {
         signal,
       })
       await this.checkpointInitialPrompt(childId, started.messageId, signal)
-      resolvedRoute = await this.resolveStartedRoute(childId, member.provider, signal)
+      // Durable initial acceptance transfers cancellation ownership from the
+      // launch caller to Agent Teams. Only Team disposal may cancel the
+      // descriptor correlation and terminal roster commit that follow.
+      resolvedRoute = await this.resolveStartedRoute(childId, member.provider, this.lifecycle.signal)
       if (!routePreserved(member.requestedRoute, resolvedRoute)) {
         throw new TeamError(
           `teammate "${name}" resolved a different provider, model, or reasoning effort than requested`,

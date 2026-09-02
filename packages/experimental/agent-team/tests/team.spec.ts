@@ -317,6 +317,31 @@ describe('Team identity and provisioning', () => {
     await waitNoAgent(ctx, started.member.id)
   })
 
+  it('transfers cancellation ownership after the initial prompt is durably accepted', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const controller = new AbortController()
+    const roster = teamInternals(ctx).roster
+    const checkpoint = roster.checkpointInitialPrompt.bind(roster)
+    vi.spyOn(roster, 'checkpointInitialPrompt').mockImplementation(async (...args) => {
+      await checkpoint(...args)
+      controller.abort(new Error('caller disconnected after durable acceptance'))
+    })
+
+    const started = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'ownership-worker',
+      description: 'continues after its accepted launch caller disconnects',
+      prompt: content('accept this work before the caller disconnects'),
+      context: 'fresh',
+      provider: 'spawn',
+      signal: controller.signal,
+    })
+
+    expect(started.member.status).toBe('running')
+    expect(durable(lead).members[0]).toMatchObject({ phase: 'active' })
+    ctx.agentTeams.interrupt(lead, 'ownership-worker')
+    await waitNoAgent(ctx, started.member.id)
+  })
+
   it('checkpoints live and detached inbox receipts and aborts an unresolved checkpoint', async () => {
     const { ctx, lead } = await setup([])
     const internal = teamInternals(ctx).roster

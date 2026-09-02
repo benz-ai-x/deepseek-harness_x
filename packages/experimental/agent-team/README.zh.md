@@ -127,7 +127,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### Team 身份与 roster
 
-每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条带请求 child 路由的 `provisioning` 成员记录，再要求配置的 continuation provider 用同一组 options 创建预留 child。初始 inbox 条目持久化后，服务会读取 child descriptor，拒绝发生变化的显式路由，并把解析路由写入 `active` 成员记录。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的 Session 进行对账：直接 parent、continuation provider、请求路由、continuable descriptor 都匹配且初始用户消息已记录，才会产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
+每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条带请求 child 路由的 `provisioning` 成员记录，再要求配置的 continuation provider 用同一组 options 创建预留 child。launch 调用方拥有初始 inbox 持久化检查点之前的取消权；该条目持久化后，取消所有权转交 Team 生命周期：调用方断开不能中断 descriptor 对账或 roster 终态提交，但 Team dispose 仍可中止。随后服务读取 child descriptor，拒绝发生变化的显式路由，并把解析路由写入 `active` 成员记录。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的 Session 进行对账：直接 parent、continuation provider、请求路由、continuable descriptor 都匹配且初始用户消息已记录，才会产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
 
 ### 持久 mailbox
 

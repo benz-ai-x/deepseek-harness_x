@@ -32,7 +32,7 @@ interface TeamMemberSnapshot {
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。`requestedRoute` 从第一条记录起就不可变；`resolvedRoute` 来自已接受 child 的 continuation descriptor，并且必须保留每个显式请求字段。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。`requestedRoute` 从第一条记录起就不可变；`resolvedRoute` 来自已接受 child 的 continuation descriptor，并且必须保留每个显式请求字段。调用方取消权持续到初始 inbox 持久化检查点；该工作获准后，只有 Team 生命周期可以中止 descriptor 对账与 roster 终态提交。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
 
 ## 持久 mailbox
 
