@@ -1,0 +1,11 @@
+version: 1
+scenario: agent-team-external
+profile: sdk
+composition: sdk-agent-team-event
+recording: authored
+replay:
+  override: true
+header:
+  class: sdk-agent-team-event
+  pin: true
+  systemPromptSource: text-turn

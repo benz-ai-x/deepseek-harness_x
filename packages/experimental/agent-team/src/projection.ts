@@ -1,10 +1,18 @@
 /** Host-only Team state projected incrementally from committed Session events. */
 
+import { Buffer } from 'node:buffer'
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import {
+  TeamId as toTeamId,
+  TeamMessageId as toTeamMessageId,
+  TeamTaskId as toTeamTaskId,
+  TeammateLaunchRequestId,
+  TeammateRuntimeHandle,
+} from './brand.ts'
 import type {
   TeamId,
   TeamMemberSnapshot,
@@ -12,11 +20,6 @@ import type {
   TeamMessageId,
   TeamMessageSnapshot,
   TeamTaskSnapshot,
-} from './types.ts'
-import {
-  TeamId as toTeamId,
-  TeamMessageId as toTeamMessageId,
-  TeamTaskId as toTeamTaskId,
 } from './types.ts'
 import { assertTaskGraphCandidate } from './task-graph.ts'
 
@@ -30,12 +33,65 @@ const teamTaskIdSchema = z.string().min(1).refine((value) => {
   return match === null || Number.isSafeInteger(Number(match[1]))
 }, { message: 'numeric task id suffix must be a safe integer' }).transform(value => toTeamTaskId(value))
 const teamMessageIdSchema = z.string().min(1).transform(value => toTeamMessageId(value))
+const durableOpaqueIdSchema = z.string().min(1).refine(
+  value => Buffer.byteLength(value, 'utf8') <= 200,
+  { message: 'durable opaque identity must be at most 200 UTF-8 bytes' },
+)
 
 const teamMemberRouteSnapshotSchema = z.object({
   provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   reasoningEffort: z.string().min(1).transform(value => ReasoningEffortId(value)).optional(),
 }).strict() as z.ZodType<TeamMemberRouteSnapshot>
+
+const teammateProfileCapabilities = [
+  'persona',
+  'mission',
+  'context',
+  'memory',
+  'tool-policy',
+  'hooks',
+] as const
+const teammateRuntimeCapabilities = [
+  'exact-call-approval',
+  'sandbox',
+  'evaluation',
+  'evidence',
+  'usage',
+] as const
+
+const teammateRuntimeRequirementsSchema = z.object({
+  contextMode: z.enum(['fresh', 'fork']),
+  profileCapabilities: z.array(z.enum(teammateProfileCapabilities)),
+  runtimeCapabilities: z.array(z.enum(teammateRuntimeCapabilities)),
+}).strict().superRefine((requirements, ctx) => {
+  const canonicalProfile = teammateProfileCapabilities.filter(capability =>
+    requirements.profileCapabilities.includes(capability))
+  const canonicalRuntime = teammateRuntimeCapabilities.filter(capability =>
+    requirements.runtimeCapabilities.includes(capability))
+  if (canonicalProfile.length !== requirements.profileCapabilities.length
+    || canonicalProfile.some((capability, index) => requirements.profileCapabilities[index] !== capability)) {
+    ctx.addIssue({ code: 'custom', message: 'external Profile capabilities must be unique and canonical' })
+  }
+  if (!requirements.profileCapabilities.includes('persona')
+    || !requirements.profileCapabilities.includes('mission')) {
+    ctx.addIssue({ code: 'custom', message: 'external Profile capabilities must include persona and mission' })
+  }
+  if (canonicalRuntime.length !== requirements.runtimeCapabilities.length
+    || canonicalRuntime.some((capability, index) => requirements.runtimeCapabilities[index] !== capability)) {
+    ctx.addIssue({ code: 'custom', message: 'external runtime capabilities must be unique and canonical' })
+  }
+})
+
+const externalRuntimeSchema = z.object({
+  kind: z.literal('external-agent'),
+  launchRequestId: durableOpaqueIdSchema
+    .transform(value => TeammateLaunchRequestId(value)),
+  requestFingerprint: z.string().regex(/^[0-9a-f]{64}$/u),
+  requirements: teammateRuntimeRequirementsSchema,
+  nativeHandle: durableOpaqueIdSchema
+    .transform(value => TeammateRuntimeHandle(value)).optional(),
+}).strict()
 
 const coreContentBlockTypes = new Set(['text', 'reasoning', 'image', 'tool-call', 'tool-result'])
 const imageAttachmentSchema = z.object({
@@ -79,9 +135,27 @@ const teamMemberSnapshotSchema = z.object({
   context: z.enum(['fresh', 'fork']),
   requestedRoute: teamMemberRouteSnapshotSchema.optional(),
   resolvedRoute: teamMemberRouteSnapshotSchema.optional(),
+  externalRuntime: externalRuntimeSchema.optional(),
   phase: z.enum(['provisioning', 'active', 'failed']),
   error: z.string().optional(),
-}).strict() as z.ZodType<TeamMemberSnapshot>
+}).strict().superRefine((member, ctx) => {
+  if (member.externalRuntime !== undefined
+    && (member.requestedRoute !== undefined || member.resolvedRoute !== undefined)) {
+    ctx.addIssue({ code: 'custom', message: 'external teammates cannot carry DSH route snapshots' })
+  }
+  if (member.externalRuntime !== undefined
+    && member.phase === 'active'
+    && member.externalRuntime.nativeHandle === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'active external teammates require a native handle' })
+  }
+  if (member.externalRuntime?.nativeHandle !== undefined && member.phase === 'provisioning') {
+    ctx.addIssue({ code: 'custom', message: 'provisioning external teammates cannot own a native handle' })
+  }
+  if (member.externalRuntime?.requirements.contextMode !== undefined
+    && member.externalRuntime.requirements.contextMode !== member.context) {
+    ctx.addIssue({ code: 'custom', message: 'external runtime context must match the roster member context' })
+  }
+}) as z.ZodType<TeamMemberSnapshot>
 
 const teamTaskSnapshotSchema = z.object({
   id: teamTaskIdSchema,
@@ -253,13 +327,37 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       if (named !== undefined && named.id !== member.id) {
         throw new Error(`teammate name "${member.name}" is reused by another member`)
       }
+      const externalLaunch = member.externalRuntime?.launchRequestId
+      const launchOwner = externalLaunch === undefined
+        ? undefined
+        : state.members.find(candidate => candidate.externalRuntime?.launchRequestId === externalLaunch)
+      if (launchOwner !== undefined && launchOwner.id !== member.id) {
+        throw new Error(`external launch request "${externalLaunch}" is reused by another member`)
+      }
+      const externalHandle = member.externalRuntime?.nativeHandle
+      const handleOwner = externalHandle === undefined
+        ? undefined
+        : state.members.find(candidate => candidate.provider === member.provider
+          && candidate.externalRuntime?.nativeHandle === externalHandle)
+      if (handleOwner !== undefined && handleOwner.id !== member.id) {
+        throw new Error(`external native handle "${externalHandle}" is reused by another member`)
+      }
       if (prior === undefined) {
         if (member.phase !== 'provisioning') throw new Error(`teammate "${member.name}" must begin provisioning`)
       } else {
+        const priorExternal = prior.externalRuntime
+        const nextExternal = member.externalRuntime
         if (prior.name !== member.name
+          || prior.description !== member.description
           || prior.provider !== member.provider
           || prior.context !== member.context
-          || JSON.stringify(prior.requestedRoute) !== JSON.stringify(member.requestedRoute)) {
+          || JSON.stringify(prior.requestedRoute) !== JSON.stringify(member.requestedRoute)
+          || priorExternal?.kind !== nextExternal?.kind
+          || priorExternal?.launchRequestId !== nextExternal?.launchRequestId
+          || priorExternal?.requestFingerprint !== nextExternal?.requestFingerprint
+          || JSON.stringify(priorExternal?.requirements) !== JSON.stringify(nextExternal?.requirements)
+          || (priorExternal?.nativeHandle !== undefined
+            && priorExternal.nativeHandle !== nextExternal?.nativeHandle)) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
         if (prior.phase !== 'provisioning' || member.phase === 'provisioning') {

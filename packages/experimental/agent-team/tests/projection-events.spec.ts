@@ -3,7 +3,13 @@ import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionEventMap, SessionEventType } from '@deepseek-ai/dsh-session'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamProjectionState, TeamState } from '../src/projection.ts'
-import { TeamId, TeamMessageId, TeamTaskId } from '../src/types.ts'
+import {
+  TeamId,
+  TeamMessageId,
+  TeamTaskId,
+  TeammateLaunchRequestId,
+  TeammateRuntimeHandle,
+} from '../src/brand.ts'
 import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
 
 const ROOT = SessionId('team-root')
@@ -52,6 +58,22 @@ function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot
   }
 }
 
+function externalRuntime(
+  overrides: Partial<NonNullable<TeamMemberSnapshot['externalRuntime']>> = {},
+): NonNullable<TeamMemberSnapshot['externalRuntime']> {
+  return {
+    kind: 'external-agent',
+    launchRequestId: TeammateLaunchRequestId('external-launch-1'),
+    requestFingerprint: '1'.repeat(64),
+    requirements: {
+      contextMode: 'fresh',
+      profileCapabilities: ['persona', 'mission'],
+      runtimeCapabilities: ['evaluation', 'evidence'],
+    },
+    ...overrides,
+  }
+}
+
 function task(overrides: Partial<TeamTaskSnapshot> = {}): TeamTaskSnapshot {
   return {
     id: TeamTaskId('task-1'),
@@ -77,6 +99,30 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
 }
 
 describe('Agent Teams projection events', () => {
+  it('round-trips bounded opaque external launch and native identities', () => {
+    const launchRequestId = TeammateLaunchRequestId('launch/request/请求')
+    const nativeHandle = TeammateRuntimeHandle('native/session/运行')
+    const provisioning = member({
+      provider: 'native',
+      externalRuntime: externalRuntime({ launchRequestId }),
+    })
+    const projected = projectTeam(ROOT, [
+      event('team/member', { version: 1, teamId: TEAM, member: provisioning }, SessionSeq(0)),
+      event('team/member', {
+        version: 1,
+        teamId: TEAM,
+        member: {
+          ...provisioning,
+          phase: 'active',
+          externalRuntime: { ...provisioning.externalRuntime!, nativeHandle },
+        },
+      }, SessionSeq(1)),
+    ])
+
+    expect(teamProjectionDefinition.stateSchema.parse(JSON.parse(JSON.stringify(projected))))
+      .toEqual(projected)
+  })
+
   it('projects current-team records independently from inherited records', () => {
     const records: SessionEvent[] = [
       event('team/member', { version: 2, teamId: TeamId('ancestor'), member: member() }, SessionSeq(0)),
@@ -117,6 +163,11 @@ describe('Agent Teams projection events', () => {
     expect(() => projectTeam(ROOT, [base, event('team/member', {
       version: 2,
       teamId: TEAM,
+      member: member({ description: 'changed responsibility', phase: 'active' }),
+    }, SessionSeq(1))])).toThrow(/immutable identity/)
+    expect(() => projectTeam(ROOT, [base, event('team/member', {
+      version: 1,
+      teamId: TEAM,
       member: member({ phase: 'active' }),
     }, SessionSeq(1)), event('team/member', {
       version: 2,
@@ -130,6 +181,82 @@ describe('Agent Teams projection events', () => {
       teamId: TEAM,
       member: duplicateName,
     }, SessionSeq(1))])).toThrow(/name .* reused/)
+
+    const duplicateExternalLaunch = member({
+      id: SessionId('child-b'),
+      name: 'worker-b',
+      provider: 'native',
+      externalRuntime: externalRuntime(),
+    })
+    expect(() => projectTeam(ROOT, [event('team/member', {
+      version: 1,
+      teamId: TEAM,
+      member: member({ provider: 'native', externalRuntime: externalRuntime() }),
+    }, SessionSeq(0)), event('team/member', {
+      version: 1,
+      teamId: TEAM,
+      member: duplicateExternalLaunch,
+    }, SessionSeq(1))])).toThrow(/launch request .* reused/)
+
+    const secondExternal = member({
+      id: SessionId('child-b'),
+      name: 'worker-b',
+      provider: 'native',
+      externalRuntime: externalRuntime({ launchRequestId: TeammateLaunchRequestId('external-launch-2') }),
+    })
+    expect(() => projectTeam(ROOT, [
+      event('team/member', {
+        version: 1,
+        teamId: TEAM,
+        member: member({ provider: 'native', externalRuntime: externalRuntime() }),
+      }, SessionSeq(0)),
+      event('team/member', {
+        version: 1,
+        teamId: TEAM,
+        member: member({
+          provider: 'native',
+          phase: 'active',
+          externalRuntime: externalRuntime({ nativeHandle: TeammateRuntimeHandle('shared-native') }),
+        }),
+      }, SessionSeq(1)),
+      event('team/member', { version: 1, teamId: TEAM, member: secondExternal }, SessionSeq(2)),
+      event('team/member', {
+        version: 1,
+        teamId: TEAM,
+        member: {
+          ...secondExternal,
+          phase: 'active',
+          externalRuntime: {
+            ...secondExternal.externalRuntime!,
+            nativeHandle: TeammateRuntimeHandle('shared-native'),
+          },
+        },
+      }, SessionSeq(3)),
+    ])).toThrow(/native handle .* reused/)
+
+    const externalProvisioning = event('team/member', {
+      version: 1,
+      teamId: TEAM,
+      member: member({ provider: 'native', externalRuntime: externalRuntime() }),
+    }, SessionSeq(0))
+    const externalActive = event('team/member', {
+      version: 1,
+      teamId: TEAM,
+      member: member({
+        provider: 'native',
+        externalRuntime: externalRuntime({ nativeHandle: TeammateRuntimeHandle('native-1') }),
+        phase: 'active',
+      }),
+    }, SessionSeq(1))
+    expect(() => projectTeam(ROOT, [externalProvisioning, externalActive, event('team/member', {
+      version: 1,
+      teamId: TEAM,
+      member: member({
+        provider: 'native',
+        externalRuntime: externalRuntime({ nativeHandle: TeammateRuntimeHandle('native-2') }),
+        phase: 'failed',
+      }),
+    }, SessionSeq(2))])).toThrow(/immutable identity/)
   })
 
   it('enforces task revision continuity', () => {
@@ -239,6 +366,58 @@ describe('Agent Teams projection events', () => {
   })
 
   it('validates every current-version persisted payload before projecting it', () => {
+    const invalidExternalMembers = [
+      member({
+        provider: 'native',
+        requestedRoute: { provider: 'mock' },
+        externalRuntime: externalRuntime(),
+      }),
+      member({
+        provider: 'native',
+        phase: 'active',
+        externalRuntime: externalRuntime(),
+      }),
+      member({
+        provider: 'native',
+        phase: 'provisioning',
+        externalRuntime: externalRuntime({ nativeHandle: TeammateRuntimeHandle('premature-handle') }),
+      }),
+      member({
+        provider: 'native',
+        context: 'fork',
+        externalRuntime: externalRuntime(),
+      }),
+      member({
+        provider: 'native',
+        externalRuntime: externalRuntime({
+          requirements: {
+            contextMode: 'fresh',
+            profileCapabilities: ['persona'],
+            runtimeCapabilities: [],
+          },
+        }),
+      }),
+      member({
+        provider: 'native',
+        externalRuntime: externalRuntime({
+          requirements: {
+            contextMode: 'fresh',
+            profileCapabilities: ['mission', 'persona'],
+            runtimeCapabilities: ['evaluation', 'evidence'],
+          },
+        }),
+      }),
+      member({
+        provider: 'native',
+        externalRuntime: externalRuntime({
+          requirements: {
+            contextMode: 'fresh',
+            profileCapabilities: ['persona', 'mission'],
+            runtimeCapabilities: ['evidence', 'evaluation'],
+          },
+        }),
+      }),
+    ]
     const malformed = [
       {
         ...event('team/member', { version: 2, teamId: TEAM, member: member() }, SessionSeq(0)),
@@ -278,6 +457,10 @@ describe('Agent Teams projection events', () => {
         ...event('team/task', { version: 2, teamId: TEAM, task: task() }, SessionSeq(0)),
         data: { version: 2, teamId: 42, task: task() },
       },
+      ...invalidExternalMembers.map(invalidMember => ({
+        ...event('team/member', { version: 1, teamId: TEAM, member: member() }, SessionSeq(0)),
+        data: { version: 1, teamId: TEAM, member: invalidMember },
+      })),
     ] as unknown as SessionEvent[]
 
     for (const candidate of malformed) {

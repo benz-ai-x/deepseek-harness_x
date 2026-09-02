@@ -8,37 +8,113 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 /** Identifies the implicit team rooted at one top-level Session. */
 export type TeamId = Branded<'TeamId'>
 
-/**
- * Brand one root Session identity as its implicit Team identity.
- * @param id - Root Session identity.
- * @returns the same string branded as a Team identity.
- */
-export function TeamId(id: SessionId | string): TeamId {
-  return id as TeamId
-}
-
 /** Stable identifier for one task in a Team. */
 export type TeamTaskId = Branded<'TeamTaskId'>
-
-/**
- * Brand a validated task id.
- * @param id - Team-local task identity.
- * @returns the same string branded as a Team task identity.
- */
-export function TeamTaskId(id: string): TeamTaskId {
-  return id as TeamTaskId
-}
 
 /** Stable identifier for one durable peer message. */
 export type TeamMessageId = Branded<'TeamMessageId'>
 
-/**
- * Brand a generated peer-message id.
- * @param id - Durable mailbox message identity.
- * @returns the same string branded as a Team message identity.
- */
-export function TeamMessageId(id: string): TeamMessageId {
-  return id as TeamMessageId
+/** Non-empty opaque caller identity, at most 200 UTF-8 bytes, retained across launch retries. */
+export type TeammateLaunchRequestId = Branded<'TeammateLaunchRequestId'>
+
+/** Stable non-empty opaque provider-native identity of at most 200 UTF-8 bytes. */
+export type TeammateRuntimeHandle = Branded<'TeammateRuntimeHandle'>
+
+
+/** Stable provider-native identity of one accepted work turn. */
+export type TeammateRuntimeTurnId = Branded<'TeammateRuntimeTurnId'>
+
+
+/** Caller-owned idempotency identity of one isolated evaluation request. */
+export type TeammateEvaluationId = Branded<'TeammateEvaluationId'>
+
+
+/** Stable provider-native identity of one isolated evaluation runtime. */
+export type TeammateEvaluationHandle = Branded<'TeammateEvaluationHandle'>
+
+
+/** Stable provider-native identity of one detached evidence fact. */
+export type TeammateRuntimeEvidenceId = Branded<'TeammateRuntimeEvidenceId'>
+
+
+/** Opaque continuation identity for one provider-native evidence window. */
+export type TeammateRuntimeEvidenceCursor = Branded<'TeammateRuntimeEvidenceCursor'>
+
+
+/** Profile behavior a durable external teammate runtime can enforce. */
+export type TeammateProfileCapability =
+  | 'persona'
+  | 'mission'
+  | 'context'
+  | 'memory'
+  | 'tool-policy'
+  | 'hooks'
+
+/** Operational guarantees a durable external teammate runtime can prove. */
+export type TeammateRuntimeCapability =
+  | 'exact-call-approval'
+  | 'sandbox'
+  | 'evaluation'
+  | 'evidence'
+  | 'usage'
+
+/** One enabled, bounded context or curated-memory fragment passed to a provider. */
+export interface TeammateRuntimeProfileTextBlock {
+  readonly id: string
+  readonly title: string
+  readonly content: string
+}
+
+/** Tool inheritance policy a durable provider must enforce for one launch. */
+export interface TeammateRuntimeToolPolicy {
+  readonly mode: 'inherit' | 'allow' | 'deny'
+  readonly names: readonly string[]
+}
+
+/** Declarative hook point supported by the external teammate Profile seam. */
+export type TeammateRuntimeHookPoint = 'session-start' | 'before-step' | 'before-tool' | 'after-tool'
+
+/** One enabled declarative Profile hook passed without executable code. */
+export interface TeammateRuntimeProfileHook {
+  readonly point: TeammateRuntimeHookPoint
+  readonly effect: 'context' | 'deny'
+  readonly matcher?: string
+  readonly text: string
+}
+
+/** Detached launch-time policy semantics a durable provider accepts immutably. */
+export interface TeammateRuntimeProfileSnapshot {
+  readonly persona: string
+  readonly mission: string
+  readonly context: readonly TeammateRuntimeProfileTextBlock[]
+  readonly memory: readonly TeammateRuntimeProfileTextBlock[]
+  readonly toolPolicy: TeammateRuntimeToolPolicy
+  readonly hooks: readonly TeammateRuntimeProfileHook[]
+}
+
+/** Exact capability demand checked before a provider receives work. */
+export interface TeammateRuntimeRequirements {
+  readonly contextMode: 'fresh' | 'fork'
+  readonly profileCapabilities: readonly TeammateProfileCapability[]
+  readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
+}
+
+/** Detached provider metadata safe for local catalogs and diagnostics. */
+export interface TeammateRuntimeMetadata {
+  readonly id: string
+  readonly displayName: string
+  readonly contextModes: readonly ('fresh' | 'fork')[]
+  readonly profileCapabilities: readonly TeammateProfileCapability[]
+  readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
+}
+
+/** Durable provider correlation retained with one external roster member. */
+export interface TeamMemberExternalRuntimeSnapshot {
+  readonly kind: 'external-agent'
+  readonly launchRequestId: TeammateLaunchRequestId
+  readonly requestFingerprint: string
+  readonly requirements: TeammateRuntimeRequirements
+  readonly nativeHandle?: TeammateRuntimeHandle
 }
 
 /** Durable teammate lifecycle. */
@@ -60,6 +136,7 @@ export interface TeamMemberSnapshot {
   readonly context: 'fresh' | 'fork'
   readonly requestedRoute?: TeamMemberRouteSnapshot
   readonly resolvedRoute?: TeamMemberRouteSnapshot
+  readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
@@ -76,6 +153,7 @@ export interface TeamMemberView {
   readonly model?: string
   readonly requestedRoute?: TeamMemberRouteSnapshot
   readonly resolvedRoute?: TeamMemberRouteSnapshot
+  readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot
   readonly diagnostics: string[]
 }
 
@@ -148,7 +226,13 @@ export interface Config {
   readonly maxPendingMessagesPerMember?: number
   /** Maximum UTF-8 bytes in one complete sender-framed delivery. */
   readonly maxMessageBytes?: number
-  /** Maximum milliseconds allowed for Team-owned runtime disposal. */
+  /** Maximum UTF-8 bytes in one canonical external teammate Profile snapshot. */
+  readonly maxProfileBytes?: number
+  /** Maximum normalized evidence items in one external-runtime page. */
+  readonly maxEvidenceItems?: number
+  /** Maximum UTF-8 bytes in one complete normalized external-runtime evidence page. */
+  readonly maxEvidenceBytes?: number
+  /** Grace period before Team-owned runtime cleanup receives an abort signal. */
   readonly disposalTimeoutMs?: number
 }
 

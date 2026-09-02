@@ -39,6 +39,23 @@ send_message steers a running target at its nearest step boundary, starts an idl
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
 
+/** Project one Host roster row onto the complete model-facing schema. */
+function modelMemberView(member: TeamMemberView): Omit<TeamMemberView, 'externalRuntime'> {
+  return {
+    id: member.id,
+    name: member.name,
+    role: member.role,
+    status: member.status,
+    ...(member.description === undefined ? {} : { description: member.description }),
+    ...(member.provider === undefined ? {} : { provider: member.provider }),
+    ...(member.context === undefined ? {} : { context: member.context }),
+    ...(member.model === undefined ? {} : { model: member.model }),
+    ...(member.requestedRoute === undefined ? {} : { requestedRoute: { ...member.requestedRoute } }),
+    ...(member.resolvedRoute === undefined ? {} : { resolvedRoute: { ...member.resolvedRoute } }),
+    diagnostics: [...member.diagnostics],
+  }
+}
+
 const MEMBER_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -199,7 +216,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
         const context = args.context ?? 'fresh'
-        return await ctx.agentTeams.spawnTeammate(agent, {
+        const result = await ctx.agentTeams.spawnTeammate(agent, {
           name: args.name,
           description: args.description,
           prompt: [{ type: 'text', text: args.prompt }],
@@ -207,6 +224,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
           signal: exec.signal,
         })
+        return { member: modelMemberView(result.member) }
       },
     })))
 
@@ -232,8 +250,10 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       description: 'List the Lead and every durable teammate with current runtime status.',
       parameters: {},
       output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
-      async execute(_args, exec) {
-        return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')))
+      execute(_args, exec) {
+        return Promise.resolve(
+          ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMemberView),
+        )
       },
     })))
 

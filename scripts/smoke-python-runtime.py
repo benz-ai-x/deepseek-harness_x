@@ -114,6 +114,52 @@ return (ctx) => {
       return args.value * 2
     }
   }))
+  harness.registerTool(ctx, harness.defineTool({
+    name: 'snapshot_external_team_member',
+    description: 'Record one external Team member event for SDK projection verification.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string', required: true },
+          nativeHandle: { type: 'string', required: true }
+        }
+      },
+      render(_args, value) {
+        return [{ type: 'text', text: JSON.stringify(value) }]
+      }
+    },
+    async execute(_args, exec) {
+      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')
+      const nativeHandle = 'snapshot-native-runtime-1'
+      exec.agent.session.append('team/member', {
+        version: 1,
+        teamId: exec.agent.id,
+        member: {
+          id: 'snapshot-external-member-1',
+          name: 'external-worker',
+          description: 'Python SDK external event worker',
+          provider: 'snapshot-native',
+          context: 'fresh',
+          externalRuntime: {
+            kind: 'external-agent',
+            launchRequestId: 'snapshot-native-launch-1',
+            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',
+            requirements: {
+              contextMode: 'fresh',
+              profileCapabilities: ['persona', 'mission'],
+              runtimeCapabilities: []
+            },
+            nativeHandle
+          },
+          phase: 'active'
+        }
+      })
+      return { name: 'external-worker', nativeHandle }
+    }
+  }))
 }
 """
 SNAPSHOT_WORKFLOW_SCRIPT = (
@@ -610,6 +656,15 @@ def advanced_tool_followup(
     if call_id == "advanced-code" and tool_name == "run_code":
         if "42" not in tool_text:
             raise AssertionError(f"run_code returned no dynamic-tool value: {tool_text}")
+        assert_advertised_tool(body, "snapshot_external_team_member")
+        return tool_call_chunks(
+            "advanced-team-event",
+            "snapshot_external_team_member",
+            {},
+        )
+    if call_id == "advanced-team-event" and tool_name == "snapshot_external_team_member":
+        if "snapshot-native-runtime-1" not in tool_text:
+            raise AssertionError(f"external Team event tool returned no native handle: {tool_text}")
         assert_advertised_tool(body, "subagent")
         return tool_call_chunks(
             "advanced-direct-child",

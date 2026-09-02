@@ -558,10 +558,10 @@ const SERVICE_ROLES: ServiceRole[] = [
   {
     key: 'agentTeams',
     pkg: 'experimental-agent-team',
-    title: 'Agent Teams coordination domain',
-    mode: 'core',
+    title: 'Agent Teams coordination and teammate-runtime registry',
+    mode: 'seam',
     consumers: ['experimental-tool-agent-team', 'experimental-client-ui-agent-team'],
-    note: 'Owns the implicit-root roster, durable peer mailbox, shared task DAG, continuable-child lifecycle, and generated Team Remote methods; tool-agent-team contributes model controls and client-ui-agent-team mounts the browser contribution.',
+    note: 'Owns the implicit-root roster, durable peer mailbox, shared task DAG, and generated Team Remote methods; it routes DSH teammates through continuable children and external teammates through Fiber-scoped durable provider registrations.',
   },
   {
     key: 'inspector',

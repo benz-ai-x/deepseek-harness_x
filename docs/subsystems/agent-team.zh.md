@@ -2,11 +2,11 @@
 
 [English](agent-team.md) | 中文
 
-实验性隐式 Root Team 领域、模型工具与宿主适配器共享的类型。[Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.zh.md)负责身份、mailbox、task 与共享 checkout 决策；[Team Steer 消息 Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.zh.md)负责消息调度；本页记录 [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts) 中的字面持久形式。
+实验性隐式 Root Team 领域、模型工具与宿主适配器共享的类型。[Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.zh.md)负责身份、运行时放置、mailbox、task 与共享 checkout 决策；[Team Steer 消息 Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.zh.md)负责消息调度；本页记录 [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts) 中的字面持久形式。
 
 ## 身份与 roster
 
-`TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 的 Session id 始终是持久身份，而 `name` 是不可变的模型／UI 标签。
+`TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 的预留 member id 始终是其持久 Team 身份，`name` 是不可变的模型／UI 标签。DSH 分支把该 id 用作 child Session；外部分支只把它作为 provider-native session 的稳定关联。
 
 ```ts type-equiv
 /** Provider, model, and optional reasoning selection retained for one teammate. */
@@ -27,16 +27,45 @@ interface TeamMemberSnapshot {
   readonly context: 'fresh' | 'fork'
   readonly requestedRoute?: TeamMemberRouteSnapshot
   readonly resolvedRoute?: TeamMemberRouteSnapshot
+  readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。`requestedRoute` 从第一条记录起就不可变；`resolvedRoute` 来自已接受 child 的 continuation descriptor，并且必须保留每个显式请求字段。调用方取消权持续到初始 inbox 持久化检查点；该工作获准后，只有 Team 生命周期可以中止 descriptor 对账与 roster 终态提交。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。DSH member 保留不可变的 `requestedRoute`；其 `resolvedRoute` 来自已接受 child 的 continuation descriptor，并且必须保留每个显式请求字段。external member 改为保留 `externalRuntime`，不能携带任一 DSH 路由字段。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
+
+## 持久运行时放置
+
+external provider 只声明它能够强制执行的 context mode 与 capability。Agent Teams 在预留 roster 身份或向 provider 发送工作前验证完整需求；one-shot subagent provider 不作为回退。
+
+```ts type-equiv
+/** Exact capability demand checked before a provider receives work. */
+interface TeammateRuntimeRequirements {
+  readonly contextMode: 'fresh' | 'fork'
+  readonly profileCapabilities: readonly TeammateProfileCapability[]
+  readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
+}
+```
+
+```ts type-equiv
+/** Durable provider correlation retained with one external roster member. */
+interface TeamMemberExternalRuntimeSnapshot {
+  readonly kind: 'external-agent'
+  readonly launchRequestId: TeammateLaunchRequestId
+  readonly requestFingerprint: string
+  readonly requirements: TeammateRuntimeRequirements
+  readonly nativeHandle?: TeammateRuntimeHandle
+}
+```
+
+`launchRequestId` 让相同创建重试保持幂等，`requestFingerprint` 则拒绝用不同规范化输入复用该身份。provider 只有在持久接受初始工作后才返回 `nativeHandle`；在记录该不透明身份前，external member 不能变为 `active`。provider process object、credential、prompt、evidence payload 与原生 session 状态不会进入 Team 日志。
+
+provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消并等待该 provider 的工作、移除其进程内 handle，且不影响其他 provider。持久 external member 会在不改变持久身份的情况下变为不可用且不驻留；同一 provider id 之后可以恢复完全相同的原生 handle，而不会创建替代项。
 
 ## 持久 mailbox
 
-Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。
+Lead Session 首先存储完整 queued message。DSH target 只有在 pending inbox 条目或已记录用户消息完成持久化后才写入 acknowledgement；external target 则在 provider 返回稳定 native turn identity 后确认。两种情况下，queued-minus-delivered 都构成恢复 mailbox。
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -49,9 +78,7 @@ interface TeamMessageSnapshot {
 }
 ```
 
-每条消息都会尝试 Steer 投递。running target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。调用方不能选择其他模式，因此持久记录不存储调度方式。
-
-target Session 会在 pending inbox 条目和最终用户消息上保留消息身份与发送者归因。跨 inbox 与历史折叠该 source 构成 target 侧去重键；模型可见的 framing 会重复 id 和发送者。
+每条消息都会尝试 Steer 投递。running DSH target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。其 Session 会在 pending inbox 条目和最终用户消息上保留消息身份与发送者归因。external target 通过 provider-native handle 接收同一持久 mailbox item，并在 Agent Teams 记录 delivery 前返回幂等 native turn correlation。调用方不能选择其他模式，因此持久记录不存储调度方式。
 
 ```ts type-equiv
 /** Source retained by the target Session for durable mailbox de-duplication. */
@@ -118,12 +145,19 @@ membership(agent: Agent): TeamMembership
 listMembers(agent: Agent): TeamMemberView[]
 
 /**
- * Create one named, continuable direct child of the Team Lead.
+ * Create one named durable teammate through its selected typed runtime.
  * @param caller - exact live Lead Agent.
- * @param request - immutable identity, prompt, context, provider, options, and caller cancellation through prompt durability.
- * @returns the active roster row with requested and descriptor-resolved child routes.
+ * @param request - DSH-continuable or external runtime placement and caller cancellation through initial-work durability.
+ * @returns the active roster row with its resolved DSH route or provider-native handle.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
+
+/**
+ * Register one complete durable external teammate provider on the calling Fiber.
+ * @param provider - provider operations and detached capability metadata.
+ * @returns an async disposer with atomic same-id replacement.
+ */
+registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeRegistration
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.

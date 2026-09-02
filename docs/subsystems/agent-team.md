@@ -2,11 +2,11 @@
 
 English | [中文](agent-team.zh.md)
 
-Types shared by the experimental implicit-root Team domain, model tools, and host adapters. The [Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) owns identity, mailbox, task, and shared-checkout decisions; the [Team Steer messaging Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.md) owns message scheduling; this page records the literal durable forms from [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts).
+Types shared by the experimental implicit-root Team domain, model tools, and host adapters. The [Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) owns identity, runtime placement, mailbox, task, and shared-checkout decisions; the [Team Steer messaging Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.md) owns message scheduling; this page records the literal durable forms from [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts).
 
 ## Identity and roster
 
-`TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's Session id remains its persistent identity, while `name` is an immutable model/UI label.
+`TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's reserved member id remains its persistent Team identity, while `name` is an immutable model/UI label. The DSH branch uses that id for its child Session; the external branch uses it only as a stable correlation to a provider-native session.
 
 ```ts type-equiv
 /** Provider, model, and optional reasoning selection retained for one teammate. */
@@ -27,16 +27,45 @@ interface TeamMemberSnapshot {
   readonly context: 'fresh' | 'fork'
   readonly requestedRoute?: TeamMemberRouteSnapshot
   readonly resolvedRoute?: TeamMemberRouteSnapshot
+  readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. `requestedRoute` is immutable from the first record; `resolvedRoute` comes from the accepted child continuation descriptor and must preserve every explicit requested field. Caller cancellation applies through the initial inbox durability checkpoint; after that acceptance, only the Team lifecycle may cancel descriptor correlation and the terminal roster commit. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. A DSH member retains an immutable `requestedRoute`; its `resolvedRoute` comes from the accepted child continuation descriptor and must preserve every explicit requested field. An external member retains `externalRuntime` instead and cannot carry either DSH route field. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
+
+## Durable runtime placement
+
+An external provider declares only context modes and capabilities it can enforce. Agent Teams validates the complete demand before it reserves a roster identity or sends work to that provider; one-shot subagent providers are not a fallback.
+
+```ts type-equiv
+/** Exact capability demand checked before a provider receives work. */
+interface TeammateRuntimeRequirements {
+  readonly contextMode: 'fresh' | 'fork'
+  readonly profileCapabilities: readonly TeammateProfileCapability[]
+  readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
+}
+```
+
+```ts type-equiv
+/** Durable provider correlation retained with one external roster member. */
+interface TeamMemberExternalRuntimeSnapshot {
+  readonly kind: 'external-agent'
+  readonly launchRequestId: TeammateLaunchRequestId
+  readonly requestFingerprint: string
+  readonly requirements: TeammateRuntimeRequirements
+  readonly nativeHandle?: TeammateRuntimeHandle
+}
+```
+
+`launchRequestId` makes identical creation retries idempotent, while `requestFingerprint` rejects reuse with different normalized input. The provider returns `nativeHandle` only after it durably accepts initial work; an external member cannot become `active` before that opaque identity is recorded. Provider process objects, credentials, prompts, evidence payloads, and native session state do not enter the Team log.
+
+Provider registration belongs to the calling Fiber. Removal closes admission, cancels and settles that provider's work, removes its process-local handles, and leaves other providers untouched. A persisted external member becomes unavailable and inactive without changing its durable identity; the same provider id can later resume its exact native handle without creating a replacement.
 
 ## Durable mailbox
 
-The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox.
+The Lead Session first stores the complete queued message. A DSH target receipt is acknowledged only after its pending inbox item or recorded user message is durable; an external receipt is acknowledged after its provider returns the stable native turn identity. Either way, queued-minus-delivered is the recovery mailbox.
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -49,9 +78,7 @@ interface TeamMessageSnapshot {
 }
 ```
 
-Every message attempts Steer delivery. A running target receives it at the nearest step boundary, an idle target starts a turn, and an inactive teammate cold-resumes. Scheduling is not stored in the durable record because callers cannot select another mode.
-
-The target Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. Folding that source across inbox and history is the target-side de-duplication key; the model-visible framing repeats the id and sender.
+Every message attempts Steer delivery. A running DSH target receives it at the nearest step boundary, an idle target starts a turn, and an inactive teammate cold-resumes. Its Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. An external target receives the same durable mailbox item through its provider-native handle and returns an idempotent native turn correlation before Agent Teams records delivery. Scheduling is not stored in the durable record because callers cannot select another mode.
 
 ```ts type-equiv
 /** Source retained by the target Session for durable mailbox de-duplication. */
@@ -118,12 +145,19 @@ membership(agent: Agent): TeamMembership
 listMembers(agent: Agent): TeamMemberView[]
 
 /**
- * Create one named, continuable direct child of the Team Lead.
+ * Create one named durable teammate through its selected typed runtime.
  * @param caller - exact live Lead Agent.
- * @param request - immutable identity, prompt, context, provider, options, and caller cancellation through prompt durability.
- * @returns the active roster row with requested and descriptor-resolved child routes.
+ * @param request - DSH-continuable or external runtime placement and caller cancellation through initial-work durability.
+ * @returns the active roster row with its resolved DSH route or provider-native handle.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
+
+/**
+ * Register one complete durable external teammate provider on the calling Fiber.
+ * @param provider - provider operations and detached capability metadata.
+ * @returns an async disposer with atomic same-id replacement.
+ */
+registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeRegistration
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.

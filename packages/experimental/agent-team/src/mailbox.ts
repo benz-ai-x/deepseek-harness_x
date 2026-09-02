@@ -9,6 +9,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
+import { TeamId, TeamMessageId as toTeamMessageId } from './brand.ts'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -16,10 +17,11 @@ import { readPersistedSession } from './persisted.ts'
 import type { TeamRoster } from './roster.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
-import { TeamId, TeamMessageId } from './types.ts'
+import type { TeammateRuntimeRegistry } from './service-types.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
+  TeamMessageId,
   TeamMessageSnapshot,
 } from './types.ts'
 
@@ -42,6 +44,7 @@ export class TeamMailbox {
     private readonly journal: TeamJournal,
     private readonly roster: TeamRoster,
     private readonly lifecycle: TeamRuntimeLifecycle,
+    private readonly teammateRuntimes: TeammateRuntimeRegistry,
     private readonly maxPendingMessagesPerMember: number,
     private readonly maxMessageBytes: number,
   ) {}
@@ -128,7 +131,7 @@ export class TeamMailbox {
         )
       }
       const queued: TeamMessageSnapshot = {
-        id: TeamMessageId(`team-message-${randomUUID()}`),
+        id: toTeamMessageId(`team-message-${randomUUID()}`),
         senderId: caller.id,
         senderName: membership.name,
         targetId: target.id,
@@ -234,6 +237,22 @@ export class TeamMailbox {
   /** Attempt one queued delivery after target-local ordering admits it. */
   private async dispatchOnce(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     try {
+      const externalMember = this.journal.state(root).members.find(member =>
+        member.id === message.targetId
+        && member.phase === 'active'
+        && member.externalRuntime?.nativeHandle !== undefined)
+      if (externalMember?.externalRuntime?.nativeHandle !== undefined) {
+        await this.teammateRuntimes.deliver(externalMember.provider, {
+          nativeHandle: externalMember.externalRuntime.nativeHandle,
+          deliveryId: message.id,
+          senderId: message.senderId,
+          senderName: message.senderName,
+          content: this.deliveryContent(message),
+          signal,
+        })
+        await this.markDelivered(root, message.id, message.targetId)
+        return true
+      }
       const target = message.targetId === root.id ? root : this.ctx.agents.get(message.targetId)
       if (target !== undefined && this.targetRecorded(target.session, message.id)) {
         return await this.checkpointDelivered(root, target.session, message.id)

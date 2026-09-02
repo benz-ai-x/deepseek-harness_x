@@ -1,13 +1,13 @@
-/** Shared admission cutoff and bounded settlement for the Team runtime. */
+/** Shared admission cutoff and abort-grace cleanup for the Team runtime. */
 
 import { TeamError } from './error.ts'
 
-/** Owns the single Team runtime cancellation fact and disposal timeout. */
+/** Owns the single Team runtime cancellation fact and cleanup abort grace period. */
 export class TeamRuntimeLifecycle {
   private readonly controller = new AbortController()
 
   /**
-   * @param disposalTimeoutMs - maximum wait for one disposal settlement operation.
+   * @param disposalTimeoutMs - grace period before an interruptible native cleanup is aborted.
    */
   constructor(private readonly disposalTimeoutMs: number) {}
 
@@ -49,37 +49,31 @@ export class TeamRuntimeLifecycle {
   /**
    * Await admitted operations and retain failures other than runtime cancellation.
    * @param operations - admitted operations captured after the admission cutoff.
-   * @param failures - aggregate destination for unexpected rejection or timeout.
+   * @param failures - aggregate destination for unexpected rejection.
    */
   async settle(operations: readonly Promise<unknown>[], failures: unknown[]): Promise<void> {
     if (operations.length === 0) return
-    try {
-      const outcomes = await this.withTimeout(Promise.allSettled(operations))
-      for (const outcome of outcomes) {
-        if (outcome.status === 'rejected' && !this.isCancellation(outcome.reason)) failures.push(outcome.reason)
-      }
-    } catch (error: unknown) {
-      failures.push(error)
+    const outcomes = await Promise.allSettled(operations)
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected' && !this.isCancellation(outcome.reason)) failures.push(outcome.reason)
     }
   }
 
   /**
-   * Bound one runtime settlement operation.
-   * @param operation - settlement that may otherwise block HMR or process shutdown.
-   * @returns the operation result.
+   * Abort cleanup at the configured deadline but keep awaiting real settlement.
+   * @param operation - cleanup operation that must reach quiescence before return.
+   * @returns the cleanup result after it actually settles.
    */
-  async withTimeout<T>(operation: Promise<T>): Promise<T> {
-    let timer!: ReturnType<typeof setTimeout>
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(new TeamError(
-          `Agent Teams runtime disposal exceeded ${this.disposalTimeoutMs}ms`,
-          'TEAM_DISPOSAL_TIMEOUT',
-        ))
-      }, this.disposalTimeoutMs)
-    })
+  async settleWithAbortDeadline<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      controller.abort(new TeamError(
+        `Agent Teams runtime disposal exceeded ${this.disposalTimeoutMs}ms`,
+        'TEAM_DISPOSAL_TIMEOUT',
+      ))
+    }, this.disposalTimeoutMs)
     try {
-      return await Promise.race([operation, timeout])
+      return await operation(controller.signal)
     } finally {
       clearTimeout(timer)
     }

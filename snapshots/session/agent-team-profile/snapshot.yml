@@ -1,0 +1,12 @@
+version: 1
+scenario: agent-team-profile
+profile: headless
+composition: agent-team-profile
+recording: authored
+input:
+  task: Call provision_external_teammate exactly once, then call list_agents exactly once. Reply with exactly TEAM READY and stop.
+replay:
+  override: true
+header:
+  class: agent-team-profile
+  pin: true

@@ -18,6 +18,8 @@ Every ordinary runtime root is the implicit Lead of a Team identified by that ro
 
 The implementation is split into `@deepseek-ai/dsh-experimental-agent-team`, which owns `ctx.agentTeams` and durable semantics, and `@deepseek-ai/dsh-experimental-tool-agent-team`, which owns scoped schemas and model guidance. Every Team tool declares its complete result schema and renders that value as compact JSON, so the compiler checks each `execute` against what the model is promised and no result spends tokens on indentation. Deployments mount both plugins explicitly and may disable legacy continuable controls with the same model-visible names. The explicit delegation policy permits Team creation only when the user asks for Agent Teams or teammates. Both packages are private members of `packages/experimental/`; the [experimental package decision](../architecture/2026-08-18-experimental-agent-teams-packages.md) owns release exclusion, dependency isolation, and promotion.
 
+Durable provider-native teammates are a later extension owned by the [external teammate runtime decision](../architecture/2026-09-03-durable-external-teammate-runtimes.md).
+
 The Lead must wait for required work before its final answer. Process teardown remains the final lifecycle owner and drains continuation Activations; a Team task owner is durable state and is not automatically released by idle, interruption, or process exit.
 
 ## Provisioning and recovery

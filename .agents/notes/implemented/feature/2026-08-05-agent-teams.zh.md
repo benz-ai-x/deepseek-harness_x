@@ -18,6 +18,8 @@ subagent seam 已提供 fresh／fork provider、持久 child Session、FIFO foll
 
 实现拆分为 `@deepseek-ai/dsh-experimental-agent-team` 与 `@deepseek-ai/dsh-experimental-tool-agent-team`：前者负责 `ctx.agentTeams` 和持久语义，后者负责 scoped schema 与模型指引。每个 Team 工具都声明完整的结果 schema，并把该值渲染为紧凑 JSON，因此编译器会检查每个 `execute` 是否符合对模型的承诺，也没有结果把 token 花在缩进上。部署显式挂载两个插件，并可禁用具有相同模型可见名称的旧 continuable control。显式 delegation 策略只允许在用户要求 Agent Teams 或 teammate 时创建 Team。 两个包都是 `packages/experimental/` 的私有成员；[实验性包决策](../architecture/2026-08-18-experimental-agent-teams-packages.zh.md)负责发布排除、依赖隔离与 promotion。
 
+持久的 provider-native teammate 是后续扩展，由[外部 teammate 运行时决策](../architecture/2026-09-03-durable-external-teammate-runtimes.zh.md)负责。
+
 Lead 必须等待所需工作后才能给出最终答案。进程 teardown 仍是最终生命周期 owner，并会 drain continuation Activation；Team task owner 是持久状态，不会因 idle、interrupt 或进程退出自动释放。
 
 ## Provisioning and recovery

@@ -1,6 +1,7 @@
 /** Shared Team task DAG commands and runtime-enriched views. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { TeamId, TeamTaskId as toTeamTaskId } from './brand.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
@@ -8,9 +9,9 @@ import type { TeamState } from './projection.ts'
 import { resolveActiveMember } from './roster.ts'
 import { assertTaskGraphCandidate, TeamTaskGraphError } from './task-graph.ts'
 import type { TeamTaskGraphViolation } from './task-graph.ts'
-import { TeamId, TeamTaskId } from './types.ts'
 import type {
   CreateTeamTaskRequest,
+  TeamTaskId,
   TeamTaskSnapshot,
   TeamTaskView,
   UpdateTeamTaskRequest,
@@ -53,7 +54,7 @@ export class TeamTaskBoard {
       if (active >= this.maxTasks) {
         throw new TeamError(`Team task limit ${this.maxTasks} reached`, 'TEAM_TASK_LIMIT')
       }
-      const id = TeamTaskId(`task-${state.nextTaskNumber}`)
+      const id = toTeamTaskId(`task-${state.nextTaskNumber}`)
       if (state.tasks.some(task => task.id === id)) {
         throw new TeamError('Team task id space exhausted', 'TEAM_TASK_LIMIT')
       }

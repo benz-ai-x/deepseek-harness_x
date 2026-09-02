@@ -212,11 +212,20 @@ describe('dsh-tool-team', () => {
     const childId = spawnedChildId(spawned)
     const child = await waitRunning(ctx, childId)
 
+    const serviceRoster = ctx.agentTeams.listMembers(child)
+    const rosterSpy = vi.spyOn(ctx.agentTeams, 'listMembers').mockReturnValueOnce(serviceRoster.map(member =>
+      member.name === 'json-worker'
+        ? { ...member, externalRuntime: { requestFingerprint: 'internal-fingerprint' } as never }
+        : member))
     const roster = await execute(ctx, child, 'list_agents', {})
-    expect(JSON.parse(text(roster))).toMatchObject([
+    rosterSpy.mockRestore()
+    const rosterRows = JSON.parse(text(roster)) as readonly unknown[]
+    expect(rosterRows).toMatchObject([
       { name: 'lead', role: 'lead' },
       { name: 'json-worker', role: 'teammate' },
     ])
+    expect(rosterRows[1]).not.toHaveProperty('externalRuntime')
+    expect(text(roster)).not.toContain('internal-fingerprint')
     // Every Team result reaches the model as compact JSON: indentation would
     // spend tokens on every roster, task, and receipt without adding meaning.
     expect(text(roster)).toBe(JSON.stringify(JSON.parse(text(roster))))

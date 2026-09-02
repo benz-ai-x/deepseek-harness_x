@@ -159,6 +159,9 @@ describe('Team identity and provisioning', () => {
       'maxTasks',
       'maxPendingMessagesPerMember',
       'maxMessageBytes',
+      'maxProfileBytes',
+      'maxEvidenceBytes',
+      'maxEvidenceItems',
       'disposalTimeoutMs',
     ] as const
     for (const field of fields) {
@@ -1861,28 +1864,39 @@ describe('Team mailbox and waiting', () => {
     flushSpy.mockRestore()
   })
 
-  it('bounds Team runtime disposal when a continuation drain never settles', async () => {
+  it('awaits continuation-drain quiescence after the cleanup abort grace', async () => {
     const { ctx, lead, teamFiber } = await setup(['hang'], { disposalTimeoutMs: 25 })
     const started = await spawn(ctx, lead, 'stuck-worker')
     await waitRunning(ctx, started.member.id)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
     const drain = vi.spyOn(ctx.subagents, 'drainContinuableChildren')
-      .mockImplementation(() => new Promise(() => {}))
+      .mockImplementation(async () => {
+        entered.resolve(undefined)
+        await release.promise
+      })
 
-    const outcome = await Promise.race([
-      teamFiber.dispose().then(() => 'disposed'),
-      new Promise<'hung'>((resolve) => { setTimeout(() => { resolve('hung') }, 1_000) }),
-    ])
-    expect(outcome).toBe('disposed')
+    let disposed = false
+    const disposal = teamFiber.dispose().then(() => { disposed = true })
+    await entered.promise
+    await new Promise(resolve => setTimeout(resolve, 35))
+    expect(disposed).toBe(false)
     expect(drain).toHaveBeenCalledWith(lead, [started.member.id])
+    release.resolve(undefined)
+    await disposal
     expect(ctx.get('agentTeams')).toBeUndefined()
   })
 
-  it('bounds disposal while an admitted creation ignores cancellation', async () => {
+  it('awaits an admitted creation that ignores cancellation', async () => {
     const { ctx, lead } = await setup([], { disposalTimeoutMs: 25 })
     const internal = teamInternals(ctx)
-    internal.roster.inFlightCreations.add(new Promise(() => {}))
+    const release = Promise.withResolvers<undefined>()
+    internal.roster.inFlightCreations.add(release.promise)
 
-    await expect(internal.disposeRuntime()).rejects.toBeInstanceOf(AggregateError)
+    let disposed = false
+    const disposal = internal.disposeRuntime().then(() => { disposed = true })
+    await new Promise(resolve => setTimeout(resolve, 35))
+    expect(disposed).toBe(false)
     await expect(ctx.agentTeams.spawnTeammate(lead, {
       name: 'after-timeout',
       description: 'admission remains closed',
@@ -1901,6 +1915,8 @@ describe('Team mailbox and waiting', () => {
       targetId: lead.id,
       content: content('must not dispatch'),
     }, SIGNAL)).resolves.toBe(false)
+    release.resolve(undefined)
+    await disposal
   })
 
   it('contains recovery callback failures and ignores work scheduled after disposal', async () => {
@@ -1928,19 +1944,23 @@ describe('Team mailbox and waiting', () => {
 
     const entered = Promise.withResolvers<undefined>()
     const release = Promise.withResolvers<undefined>()
+    let recoveryRuns = 0
     internal.recoverFor = async () => {
+      recoveryRuns += 1
       entered.resolve(undefined)
       await release.promise
-      throw new Error('failure after disposal')
     }
     internal.scheduleRecovery(lead)
     await entered.promise
-    await teamFiber.dispose()
+    let disposed = false
+    const disposal = teamFiber.dispose().then(() => { disposed = true })
+    await new Promise(resolve => setTimeout(resolve, 35))
+    expect(disposed).toBe(false)
     release.resolve(undefined)
-    await Promise.resolve()
-    await Promise.resolve()
+    await disposal
     internal.scheduleRecovery(lead)
     await Promise.resolve()
+    expect(recoveryRuns).toBe(1)
   })
 
   it('reports contained teardown failures without retaining the Team service', async () => {

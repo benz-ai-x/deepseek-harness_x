@@ -324,6 +324,16 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeammateRuntimeRequirements",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMemberExternalRuntimeSnapshot",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamMessageSnapshot",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

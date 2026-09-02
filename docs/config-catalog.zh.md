@@ -534,12 +534,18 @@ export interface Config {
   readonly maxPendingMessagesPerMember?: number
   /** Maximum UTF-8 bytes in one complete sender-framed delivery. */
   readonly maxMessageBytes?: number
-  /** Maximum milliseconds allowed for Team-owned runtime disposal. */
+  /** Maximum UTF-8 bytes in one canonical external teammate Profile snapshot. */
+  readonly maxProfileBytes?: number
+  /** Maximum normalized evidence items in one external-runtime page. */
+  readonly maxEvidenceItems?: number
+  /** Maximum UTF-8 bytes in one complete normalized external-runtime evidence page. */
+  readonly maxEvidenceBytes?: number
+  /** Grace period before Team-owned runtime cleanup receives an abort signal. */
   readonly disposalTimeoutMs?: number
 }
 ```
 
-来源：[`packages/experimental/agent-team/src/types.ts:142`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:220`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-code-runtime-python"></a>
 

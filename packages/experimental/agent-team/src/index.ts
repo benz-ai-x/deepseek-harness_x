@@ -6,6 +6,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamActivity } from './activity.ts'
+import { TeamId } from './brand.ts'
 import { errorMessage, TeamError } from './error.ts'
 import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -14,7 +15,7 @@ import { teamProjectionDefinition } from './projection.ts'
 import { TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
-import { TeamId, TeamTaskId } from './types.ts'
+import { TeammateRuntimeRegistryHost } from './teammate-runtime.ts'
 import type {
   Config,
   CreateTeamTaskRequest,
@@ -22,19 +23,57 @@ import type {
   SendTeamMessageResult,
   SpawnTeammateResult,
   TeamMemberView,
+  TeamTaskId,
   TeamTaskMutationResult,
   TeamTaskView,
   TeamView,
   TeamWaitResult,
   UpdateTeamTaskRequest,
 } from './types.ts'
-import type { SpawnTeammateRequest } from './service-types.ts'
+import type {
+  SpawnTeammateRequest,
+  TeammateRuntimeProvider,
+  TeammateRuntimeRegistration,
+} from './service-types.ts'
 
 export type * from './types.ts'
-export type { SpawnTeammateRequest } from './service-types.ts'
+export type {
+  ExternalTeammateRuntimeLaunch,
+  SpawnContinuableTeammateRequest,
+  SpawnExternalTeammateRequest,
+  SpawnTeammateRequest,
+  TeammateEvaluationCreateRequest,
+  TeammateEvaluationCreateResult,
+  TeammateRuntimeCreateRequest,
+  TeammateRuntimeCreateResult,
+  TeammateRuntimeDeliverRequest,
+  TeammateRuntimeDeliverResult,
+  TeammateRuntimeDisposeRequest,
+  TeammateRuntimeEvidenceItem,
+  TeammateRuntimeEvidenceRequest,
+  TeammateRuntimeEvidenceResult,
+  TeammateRuntimeInterruptRequest,
+  TeammateRuntimeInterruptResult,
+  TeammateRuntimePresenceEvent,
+  TeammateRuntimeProvider,
+  TeammateRuntimeRegistration,
+  TeammateRuntimeResumeRequest,
+} from './service-types.ts'
 export type { TeamMembership } from './roster.ts'
-export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
+export {
+  TeamId,
+  TeamMessageId,
+  TeamTaskId,
+  TeammateEvaluationId,
+  TeammateEvaluationHandle,
+  TeammateLaunchRequestId,
+  TeammateRuntimeHandle,
+  TeammateRuntimeEvidenceCursor,
+  TeammateRuntimeEvidenceId,
+  TeammateRuntimeTurnId,
+} from './brand.ts'
 export { TeamError } from './error.ts'
+export { TeammateRuntimeError } from './teammate-runtime.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -46,6 +85,9 @@ const DEFAULT_MAX_MEMBERS = 8
 const DEFAULT_MAX_TASKS = 256
 const DEFAULT_MAX_PENDING_MESSAGES = 64
 const DEFAULT_MAX_MESSAGE_BYTES = 65_536
+const DEFAULT_MAX_PROFILE_BYTES = 131_072
+const DEFAULT_MAX_EVIDENCE_ITEMS = 1_000
+const DEFAULT_MAX_EVIDENCE_BYTES = 65_536
 const DEFAULT_DISPOSAL_TIMEOUT_MS = 5_000
 
 /** Validate one positive safe-integer deployment limit. */
@@ -65,6 +107,9 @@ export class TeamService extends TypertRemoteService {
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
     maxPendingMessagesPerMember: z.number().step(1).min(1).default(DEFAULT_MAX_PENDING_MESSAGES),
     maxMessageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_BYTES),
+    maxProfileBytes: z.number().step(1).min(1).default(DEFAULT_MAX_PROFILE_BYTES),
+    maxEvidenceItems: z.number().step(1).min(1).default(DEFAULT_MAX_EVIDENCE_ITEMS),
+    maxEvidenceBytes: z.number().step(1).min(1).default(DEFAULT_MAX_EVIDENCE_BYTES),
     disposalTimeoutMs: z.number().step(1).min(1).default(DEFAULT_DISPOSAL_TIMEOUT_MS),
   })
 
@@ -77,6 +122,9 @@ export class TeamService extends TypertRemoteService {
   private readonly roster: TeamRoster
   private readonly mailbox: TeamMailbox
   private readonly tasks: TeamTaskBoard
+  private readonly inFlightRecoveries = new Set<Promise<void>>()
+  /** Host-only durable provider registry used by roster and mailbox routing. */
+  private readonly teammateRuntimeRegistry: TeammateRuntimeRegistryHost
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
@@ -88,6 +136,15 @@ export class TeamService extends TypertRemoteService {
         config.maxPendingMessagesPerMember ?? DEFAULT_MAX_PENDING_MESSAGES,
       ),
       maxMessageBytes: positiveLimit('maxMessageBytes', config.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES),
+      maxProfileBytes: positiveLimit('maxProfileBytes', config.maxProfileBytes ?? DEFAULT_MAX_PROFILE_BYTES),
+      maxEvidenceItems: positiveLimit(
+        'maxEvidenceItems',
+        config.maxEvidenceItems ?? DEFAULT_MAX_EVIDENCE_ITEMS,
+      ),
+      maxEvidenceBytes: positiveLimit(
+        'maxEvidenceBytes',
+        config.maxEvidenceBytes ?? DEFAULT_MAX_EVIDENCE_BYTES,
+      ),
       disposalTimeoutMs: positiveLimit(
         'disposalTimeoutMs',
         config.disposalTimeoutMs ?? DEFAULT_DISPOSAL_TIMEOUT_MS,
@@ -97,12 +154,27 @@ export class TeamService extends TypertRemoteService {
     this.activity = new TeamActivity()
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
     this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) })
-    this.roster = new TeamRoster(ctx, this.journal, this.lifecycle, this.config.maxMembers)
+    this.teammateRuntimeRegistry = new TeammateRuntimeRegistryHost((providerId) => {
+      this.notifyExternalRuntimeTeams(providerId)
+      for (const agent of ctx.agents.list()) this.scheduleRecovery(agent)
+    }, (providerId) => {
+      this.notifyExternalRuntimeTeams(providerId)
+    }, (error) => {
+      ctx.logger.error(`Agent Teams asynchronous teammate-runtime failure: ${errorMessage(error)}`)
+    }, this.lifecycle, this.config.maxProfileBytes, this.config.maxEvidenceItems, this.config.maxEvidenceBytes)
+    this.roster = new TeamRoster(
+      ctx,
+      this.journal,
+      this.lifecycle,
+      this.teammateRuntimeRegistry,
+      this.config.maxMembers,
+    )
     this.mailbox = new TeamMailbox(
       ctx,
       this.journal,
       this.roster,
       this.lifecycle,
+      this.teammateRuntimeRegistry,
       this.config.maxPendingMessagesPerMember,
       this.config.maxMessageBytes,
     )
@@ -146,13 +218,22 @@ export class TeamService extends TypertRemoteService {
   }
 
   /**
-   * Create one named, continuable direct child of the Team Lead.
+   * Create one named durable teammate through its selected typed runtime.
    * @param caller - exact live Lead Agent.
-   * @param request - immutable identity, prompt, context, provider, options, and caller cancellation through prompt durability.
-   * @returns the active roster row with requested and descriptor-resolved child routes.
+   * @param request - DSH-continuable or external runtime placement and caller cancellation through initial-work durability.
+   * @returns the active roster row with its resolved DSH route or provider-native handle.
    */
   async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {
     return await this.roster.spawn(caller, request)
+  }
+
+  /**
+   * Register one complete durable external teammate provider on the calling Fiber.
+   * @param provider - provider operations and detached capability metadata.
+   * @returns an async disposer with atomic same-id replacement.
+   */
+  registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeRegistration {
+    return this.teammateRuntimeRegistry.register(this.ctx, provider)
   }
 
   /**
@@ -290,11 +371,22 @@ export class TeamService extends TypertRemoteService {
   private scheduleRecovery(agent: Agent): void {
     queueMicrotask(() => {
       if (this.lifecycle.disposed) return
-      void this.recoverFor(agent).catch((error: unknown) => {
-        if (this.lifecycle.disposed) return
-        this.ctx.logger.warn(`Agent Teams recovery for "${agent.id}" failed: ${errorMessage(error)}`)
-      })
+      const operation = this.recoverFor(agent)
+      this.inFlightRecoveries.add(operation)
+      void operation
+        .catch((error: unknown) => {
+          if (this.lifecycle.disposed) return
+          this.ctx.logger.warn(`Agent Teams recovery for "${agent.id}" failed: ${errorMessage(error)}`)
+        })
+        .finally(() => { this.inFlightRecoveries.delete(operation) })
     })
+  }
+
+  /** Wake only Teams whose visible external-runtime state depends on one provider. */
+  private notifyExternalRuntimeTeams(providerId: string): void {
+    for (const teamId of this.roster.teamIdsForExternalProvider(providerId)) {
+      this.activity.notify(teamId)
+    }
   }
 
   /** Reconcile roster provisioning before retrying that member's pending mailbox. */
@@ -307,8 +399,10 @@ export class TeamService extends TypertRemoteService {
   private async disposeRuntime(): Promise<void> {
     this.lifecycle.close()
     this.activity.close()
+    this.teammateRuntimeRegistry.closeAdmission()
 
     const failures: unknown[] = []
+    await this.lifecycle.settle([...this.inFlightRecoveries], failures)
     await this.lifecycle.settle(this.roster.pendingCreations(), failures)
     await this.lifecycle.settle(this.mailbox.pendingDispatches(), failures)
     for (const [root, childIds] of this.roster.liveChildrenByRoot()) {
@@ -317,6 +411,11 @@ export class TeamService extends TypertRemoteService {
       } catch (error: unknown) {
         failures.push(error)
       }
+    }
+    try {
+      await this.teammateRuntimeRegistry.disposeAttached()
+    } catch (error: unknown) {
+      failures.push(error)
     }
     if (failures.length > 0) throw new AggregateError(failures, 'Agent Teams runtime disposal failed')
   }

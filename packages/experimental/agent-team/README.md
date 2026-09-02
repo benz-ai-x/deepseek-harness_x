@@ -52,7 +52,10 @@ With the tools installed, the model does the rest on request — for example, "c
 | `maxTasks` | `256` | Maximum active tasks on the board |
 | `maxPendingMessagesPerMember` | `64` | Maximum queued messages for one member |
 | `maxMessageBytes` | `65,536` | Maximum size of one sent message |
-| `disposalTimeoutMs` | `5,000` | Time allowed for shutdown cleanup |
+| `maxProfileBytes` | `131,072` | Maximum UTF-8 size of one canonical external Profile snapshot |
+| `maxEvidenceItems` | `1,000` | Maximum normalized items in one external evidence page |
+| `maxEvidenceBytes` | `65,536` | Maximum UTF-8 size of one normalized external evidence page |
+| `disposalTimeoutMs` | `5,000` | Grace period before provider-native cleanup receives an abort signal; settlement is still awaited |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -62,7 +65,9 @@ Ask the Lead to create a teammate: give it a unique lowercase name such as `revi
 
 A host can pin a teammate to normalized per-child LLM provider, model, and reasoning-effort options. Agent Teams passes those options unchanged to the continuation manager, records both the requested route and the route resolved into the child descriptor, and rejects creation if an explicitly requested field changed. The descriptor remains the cold-resume authority, so a later Lead or deployment-default route cannot replace the pinned route.
 
-The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `idle`, `inactive` (a member that exists but is not loaded), `provisioning`, or `failed`. Teammate rows also expose detached requested and resolved route snapshots. A member that is not loaded receives its messages when it wakes.
+A host can instead register a durable external teammate provider with `ctx.agentTeams.registerTeammateRuntimeProvider()`. The provider advertises only detached context, Profile-policy, and operational capabilities; its credentials, process objects, and native payloads remain Host-only. An external launch carries a caller-minted launch id and the Team's already-reserved member id. Durable launch ids and native handles are non-empty opaque strings of at most 200 UTF-8 bytes and impose no lexical identifier grammar. The provider must durably accept the initial work and return one stable opaque native handle before the roster becomes active. Identical launch and mailbox retries keep the same native runtime and turn identities; Agent Teams never substitutes a one-shot subagent. Provider removal makes the member inactive, while a later provider generation resumes the exact handle rather than creating a replacement.
+
+The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `idle`, `inactive` (a member that exists but is not loaded), `provisioning`, or `failed`. DSH teammate rows expose detached requested and resolved route snapshots; external rows expose only their durable provider correlation and opaque native handle. A member that is not loaded receives its messages when it wakes.
 
 Only the Lead can create teammates or interrupt them.
 
@@ -122,18 +127,22 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 | [`src/journal.ts`](src/journal.ts) | Serialized Lead-log transactions and commit notification |
 | [`src/projection.ts`](src/projection.ts) | Strict replay projection that decodes and validates Team events |
 | [`src/activity.ts`](src/activity.ts) | One-shot change waiters and disposal release |
-| [`src/lifecycle.ts`](src/lifecycle.ts) | Shared admission cutoff and bounded settlement |
+| [`src/lifecycle.ts`](src/lifecycle.ts) | Shared admission cutoff and quiescent cleanup with an abort grace period |
+| [`src/teammate-runtime.ts`](src/teammate-runtime.ts) | Fiber-scoped durable provider registry, capability gate, exact-handle routing, and cleanup |
+| [`src/service-types.ts`](src/service-types.ts) | Host-only DSH and external teammate request/provider contracts |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion that replays candidate events before append |
 
 ### Team identity and roster
 
 Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; there is no creation event, and durable state begins with the first member, message, or task record. `spawnTeammate()` first appends and flushes a `provisioning` member record with its requested child route, then asks the configured continuation provider to create the reserved child with the same options. The launch caller owns cancellation through the initial inbox durability checkpoint. Once that item is durable, cancellation ownership transfers to the Team lifecycle: a disconnected caller cannot interrupt descriptor correlation or the terminal roster commit, while Team disposal still can. The service then reads the child's descriptor, rejects an altered explicit route, and writes the resolved route into the `active` member record. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct parent, continuation provider, requested route, continuable descriptor, and recorded initial user message produces `active`, while anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused.
 
+The external branch validates the requested context, Profile-policy, approval, sandbox, evaluation, evidence, and usage capabilities before reserving a member. It records a canonical request fingerprint and provider correlation, calls `create()` with the launch id plus reserved member identity, and records the validated native handle in the same terminal `active` snapshot. Before native acceptance the caller owns cancellation; afterward the Team lifecycle owns the roster commit. Recovery calls `resume()` with the stored launch/member/handle tuple, and a missing provider leaves provisioning or active state intact and unavailable. Provider generations own native sessions, evidence, isolated evaluation handles, and disposal; Agent Teams owns roster names, member ids, mailbox ordering, and stable correlations. The reusable provider suite exported from [`@deepseek-ai/dsh-experimental-agent-team/testkit`](src/testkit.ts) fixes the common idempotency, cancellation, evidence, evaluation, and exact-disposal contract for future implementations. Its fixture must arm in-flight create and delivery cancellation, reopen the same durable native store, and prove single-runtime identity, stable turns, exact interruption, and complete detachment through `armCreateCancellation`, `armDeliveryCancellation`, `reopen`, `assertSingleRuntime`, `assertTurn`, `assertInterrupted`, and `assertDetached`.
+
 ### Durable mailbox
 
 `sendMessage()` validates peer membership, appends `team/message/queued`, and flushes before attempting delivery. The target message begins with `Team message <id> from <name>:` and keeps the same id and sender in `TeamMessageSource`. A target receipt is acknowledged with `team/message/delivered` only after the target Session durably holds the message identity in its pending inbox or recorded history. Immediate admissions are serialized per target in durable queue order; recovery dispatches queued-minus-delivered records in the same order. Delivery folds both live and persisted target inbox/history state before retrying, so a crash between inbox acceptance and model claim does not duplicate the message. The guarantee is process-local retry plus target-Session de-duplication, not cross-process exactly-once delivery.
 
-Lead delivery calls `Agent.steer()` directly. Teammate delivery uses the continuation owner's host-only Steer path, which preserves the Team sender source while authorizing the Lead-to-child edge and cold-resuming inactive targets. Sibling messages never impersonate the Lead through the public adjacent-Agent messaging operation.
+Lead delivery calls `Agent.steer()` directly. DSH teammate delivery uses the continuation owner's host-only Steer path, which preserves the Team sender source while authorizing the Lead-to-child edge and cold-resuming inactive targets. Sibling messages never impersonate the Lead through the public adjacent-Agent messaging operation. For an external teammate, the same durable queue routes through `deliver()` with its exact provider/native handle and stable Team message id. The provider returns a stable native turn id before Agent Teams records delivery. Provider absence keeps the item queued; re-registration and exact-handle resume retry it without a one-shot fallback.
 
 ### Shared task board
 
@@ -141,7 +150,7 @@ Tasks are complete versioned snapshots; every mutation carries `expectedRevision
 
 ### Waiting and interruption
 
-`waitForChange()` waits for one roster, task, mailbox, or live-status edge that occurs after registration, from ten seconds through one hour, and reports only whether it timed out; runtime disposal releases current waits. Cancellation preserves an Error reason or reports a non-Error reason through `TEAM_WAIT_ABORTED`. `interrupt()` is Lead-only and delegates to the continuable-subagent interrupt path, which cancels only a live teammate's current turn with `keepInbox`; it neither releases task ownership nor deletes durable mail.
+`waitForChange()` waits for one roster, task, mailbox, or live-status edge that occurs after registration, from ten seconds through one hour, and reports only whether it timed out; runtime disposal releases current waits. Cancellation preserves an Error reason or reports a non-Error reason through `TEAM_WAIT_ABORTED`. `interrupt()` is Lead-only: DSH children use the continuable-subagent path with `keepInbox`, while external teammates use their exact provider/native handle. Neither path releases task ownership nor deletes durable mail.
 
 ### Durability model
 
@@ -149,7 +158,7 @@ Team events are appended to the exact live Lead Session and flushed before the o
 
 ### Disposal
 
-Disposal closes admission, aborts and awaits admitted creation and mailbox-dispatch transactions, then asks the continuation owner to release the roster's exact live direct children and their descendants; non-Team continuable children of the Lead remain untouched. Cleanup failures make disposal fail visibly, bounded by `disposalTimeoutMs`.
+Disposal closes admission, aborts and awaits admitted creation and mailbox-dispatch transactions, then asks the continuation owner to release the roster's exact live direct children and their descendants. Each removed external-provider Fiber closes its own admission immediately, removes its catalog presence, and disposes only that generation's attached runtime and evaluation handles. After the `disposalTimeoutMs` grace period, provider-native cleanup receives an abort signal, but Agent Teams still awaits its actual settlement; the value is not a total shutdown deadline. Other providers and non-Team continuable children remain untouched. Cleanup failures make disposal fail visibly.
 
 </details>
 
@@ -179,15 +188,15 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-Each delivered peer message is a user-role message. A short first text block names its stable message id and sender; the sender's original content blocks follow unchanged. Roster, task, and mailbox records are log-only and never enter derived model history.
+For a DSH teammate, each delivered peer message is a user-role message. A short first text block names its stable message id and sender; the sender's original content blocks follow unchanged. For an external teammate, Agent Teams passes the detached Profile snapshot and initial work to provider `create()`, then passes peer content to provider `deliver()` with stable launch, member, handle, message, and turn correlations. The provider owns how those inputs become native model requests and history; its conversation is not written into a DSH child Session. Roster, task, and mailbox records remain log-only.
 
 #### Token effect
 
-Each peer delivery adds the sender prefix plus message content to the target history. Task, roster, and route-correlation mutations add no model tokens; their model-facing representation belongs to `@deepseek-ai/dsh-experimental-tool-agent-team` results.
+Each DSH peer delivery adds the sender prefix plus message content to the target history. An external provider defines the model calls and token cost of initial work, Profile policy, and deliveries. Task, roster, and route-correlation mutations add no DSH model-history tokens; their model-facing representation belongs to `@deepseek-ai/dsh-experimental-tool-agent-team` results.
 
 #### KV Cache effect
 
-Peer messages append after the target's reusable history prefix. Cold resume reuses the persisted conversation before appending a previously undelivered item.
+For a DSH teammate, peer messages append after the reusable history prefix, and cold resume reuses the persisted conversation before appending a previously undelivered item. External history and KV-cache behavior are provider-defined; Agent Teams preserves only the stable native handle and delivery identities needed for exact resume and de-duplication.
 
 ## Known Limitations and Deferred Work
 

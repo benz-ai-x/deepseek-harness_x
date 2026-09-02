@@ -52,7 +52,10 @@ kind: "package-reference"
 | `maxTasks` | `256` | 任务板上最多的活动任务数 |
 | `maxPendingMessagesPerMember` | `64` | 单个成员最多可排队的消息数 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
-| `disposalTimeoutMs` | `5,000` | 关闭清理允许的时间 |
+| `maxProfileBytes` | `131,072` | 单个规范外部 Profile 快照的最大 UTF-8 尺寸 |
+| `maxEvidenceItems` | `1,000` | 单个外部 evidence 页面最多的规范化条目数 |
+| `maxEvidenceBytes` | `65,536` | 单个规范化外部 evidence 页面的最大 UTF-8 尺寸 |
+| `disposalTimeoutMs` | `5,000` | provider-native cleanup 收到中止信号前的宽限期；之后仍等待实际结算 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -62,7 +65,9 @@ kind: "package-reference"
 
 宿主可以用规范化的 child 级 LLM provider、model 和 reasoning-effort options 固定 teammate 路由。Agent Teams 会把这些 options 原样传给 continuation manager，同时记录请求路由和解析进 child descriptor 的路由；如果任何显式请求字段发生变化，就会拒绝创建。descriptor 继续作为冷恢复的权威来源，因此之后的 Lead 路由或部署默认路由都不能替换固定路由。
 
-roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。teammate 行还会暴露分离的请求路由与解析路由快照。未加载的成员会在唤醒后收到其消息。
+宿主也可以通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 注册耐久外部 teammate provider。provider 只公开分离的上下文、Profile 策略与运行能力元数据；凭据、进程对象和原生载荷始终留在 Host。外部启动携带调用方生成的 launch id 与 Team 已预留的 member id。持久 launch id 与 native handle 是非空、最多 200 UTF-8 字节的 opaque 字符串，不施加词法 identifier 语法。provider 必须先持久接受初始工作并返回一个稳定、不透明的 native handle，roster 才能进入 active。同一启动或 mailbox 重试保持相同原生 runtime 与 turn identity；Agent Teams 绝不替换成一次性 subagent。provider 移除后成员变为 inactive；后续 provider generation 会恢复精确 handle，而不是创建替代品。
+
+roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。DSH teammate 行公开分离的请求与解析路由快照；外部行只公开耐久 provider 关联和不透明 native handle。未加载的成员会在唤醒后收到其消息。
 
 只有 Lead 可以创建 teammate 或中断它们。
 
@@ -122,18 +127,22 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | [`src/journal.ts`](src/journal.ts) | 串行化的 Lead 日志事务与提交通知 |
 | [`src/projection.ts`](src/projection.ts) | 解码并校验 Team 事件的严格回放投影 |
 | [`src/activity.ts`](src/activity.ts) | 一次性变更等待者与 dispose 释放 |
-| [`src/lifecycle.ts`](src/lifecycle.ts) | 共享准入截止与有界结算 |
+| [`src/lifecycle.ts`](src/lifecycle.ts) | 共享准入截止，以及带中止宽限期的静止清理 |
+| [`src/teammate-runtime.ts`](src/teammate-runtime.ts) | Fiber 作用域耐久 provider 注册表、能力门禁、精确 handle 路由与清理 |
+| [`src/service-types.ts`](src/service-types.ts) | Host-only DSH 与外部 teammate 请求/provider 合约 |
 | [`src/invariant.ts`](src/invariant.ts) | 在 append 前回放候选事件的不变式伴生插件 |
 
 ### Team 身份与 roster
 
 每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条带请求 child 路由的 `provisioning` 成员记录，再要求配置的 continuation provider 用同一组 options 创建预留 child。launch 调用方拥有初始 inbox 持久化检查点之前的取消权；该条目持久化后，取消所有权转交 Team 生命周期：调用方断开不能中断 descriptor 对账或 roster 终态提交，但 Team dispose 仍可中止。随后服务读取 child descriptor，拒绝发生变化的显式路由，并把解析路由写入 `active` 成员记录。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的 Session 进行对账：直接 parent、continuation provider、请求路由、continuable descriptor 都匹配且初始用户消息已记录，才会产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
 
+外部分支会在预留成员前校验请求的上下文、Profile 策略、审批、sandbox、evaluation、evidence 与 usage 能力。它记录规范请求指纹和 provider 关联，以 launch id 加预留 member identity 调用 `create()`，并在同一条终态 `active` 快照中写入已校验的 native handle。原生接受前由调用方拥有取消权；接受后由 Team 生命周期拥有 roster 提交。恢复使用已保存的 launch/member/handle 三元组调用 `resume()`；provider 缺失只会令 provisioning 或 active 状态保持且不可用。provider generation 拥有原生 session、evidence、隔离 evaluation handle 与 dispose；Agent Teams 拥有 roster 名字、member id、mailbox 顺序和稳定关联。从 [`@deepseek-ai/dsh-experimental-agent-team/testkit`](src/testkit.ts) 导出的可复用 provider 契约套件，固定了未来实现共同的幂等、取消、evidence、evaluation 与精确释放语义。fixture 必须通过 `armCreateCancellation`、`armDeliveryCancellation`、`reopen`、`assertSingleRuntime`、`assertTurn`、`assertInterrupted` 与 `assertDetached` 安排进行中的 create/delivery 取消、重新打开同一耐久原生存储，并证明单一 runtime identity、稳定 turn、精确中断和完全分离。
+
 ### 持久 mailbox
 
 `sendMessage()` 校验 peer 成员关系，追加 `team/message/queued` 并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标 Session 在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target Session 去重，而不是跨进程 exactly-once 投递。
 
-投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
+投递给 Lead 时直接调用 `Agent.steer()`。投递给 DSH teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。对于外部 teammate，同一持久队列会用精确 provider/native handle 与稳定 Team message id 调用 `deliver()`。provider 返回稳定 native turn id 后，Agent Teams 才记录 delivered。provider 缺失时消息继续排队；重新注册并恢复精确 handle 后会重试，且不会回退到一次性调用。
 
 ### 共享任务板
 
@@ -141,7 +150,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### 等待与中断
 
-`waitForChange()` 等待注册之后发生的下一条 roster、task、mailbox 或实时状态边，时长从 10 秒到 1 小时，并且只报告是否超时；运行时 dispose 会释放当前等待。取消会保留 Error reason；非 Error reason 则通过 `TEAM_WAIT_ABORTED` 报告。`interrupt()` 仅限 Lead，委托 continuable-subagent 的 interrupt 路径，以 `keepInbox` 只取消 live teammate 的当前 turn；它既不释放任务 owner，也不删除持久 mail。
+`waitForChange()` 等待注册之后发生的下一条 roster、task、mailbox 或实时状态边，时长从 10 秒到 1 小时，并且只报告是否超时；运行时 dispose 会释放当前等待。取消会保留 Error reason；非 Error reason 则通过 `TEAM_WAIT_ABORTED` 报告。`interrupt()` 仅限 Lead：DSH child 走带 `keepInbox` 的 continuable-subagent 路径，外部 teammate 则使用精确 provider/native handle。两条路径都不释放任务 owner，也不删除持久 mail。
 
 ### 持久性模型
 
@@ -149,7 +158,7 @@ Team 事件追加到精确的 live Lead Session，并在操作报告成功或唤
 
 ### Dispose
 
-dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代；Lead 的非 Team continuable child 不受影响。cleanup 失败会让 dispose 明确失败，并以 `disposalTimeoutMs` 为上限。
+dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代。每个被移除的外部 provider Fiber 会立即关闭自身准入、移除目录可见性，并只 dispose 该 generation 挂载的 runtime 与 evaluation handle。经过 `disposalTimeoutMs` 宽限期后，provider-native cleanup 会收到中止信号，但 Agent Teams 仍等待它实际结算；该值不是关闭总时限。其他 provider 和 Lead 的非 Team continuable child 不受影响。cleanup 失败会明确暴露。
 
 </details>
 
@@ -179,15 +188,15 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 #### 模型看到什么
 
-每条已投递 peer 消息都是用户角色消息。第一个短文本块包含稳定消息 id 与发送者，之后原样附加发送者的内容块。roster、task 与 mailbox 记录仅存在于日志，绝不进入派生模型历史。
+对于 DSH teammate，每条已投递 peer 消息都是用户角色消息。第一个短文本块包含稳定消息 id 与发送者，之后原样附加发送者的内容块。对于外部 teammate，Agent Teams 会把分离的 Profile 快照和初始工作交给 provider `create()`，再把 peer 内容连同稳定的 launch、member、handle、message 与 turn 关联交给 provider `deliver()`。这些输入如何成为原生模型请求和历史由 provider 所有；其对话不会写入 DSH child Session。roster、task 与 mailbox 记录仍仅存在于日志。
 
 #### Token 影响
 
-每次 peer 投递都会把发送者前缀与消息内容加入 target 历史。任务、roster 与路由对账变更不增加模型 token；其面向模型的呈现属于 `@deepseek-ai/dsh-experimental-tool-agent-team` 结果。
+每次 DSH peer 投递都会把发送者前缀与消息内容加入 target 历史。外部 provider 自行定义初始工作、Profile 策略和投递产生的模型调用与 Token 成本。任务、roster 与路由对账变更不增加 DSH 模型历史 Token；其面向模型的呈现属于 `@deepseek-ai/dsh-experimental-tool-agent-team` 结果。
 
 #### KV Cache 影响
 
-Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用持久对话，再追加尚未投递的消息。
+对于 DSH teammate，Peer 消息追加在可复用历史前缀之后；冷恢复会先复用持久对话，再追加尚未投递的消息。外部历史与 KV cache 行为由 provider 定义；Agent Teams 只保留精确恢复与去重所需的稳定 native handle 和 delivery identity。
 
 ## 已知限制与延期工作
 

@@ -5,7 +5,7 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as TeamInvariant from '../src/invariant.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
-import { TeamId, TeamTaskId } from '../src/types.ts'
+import { TeamId, TeamTaskId } from '../src/brand.ts'
 
 async function setup(): Promise<Context> {
   const ctx = new Context()

@@ -363,9 +363,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
-        description: 'Create one named, continuable direct child of the Team Lead.',
-        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable identity, prompt, context, provider, options, and caller cancellation through prompt durability.' }],
-        returns: 'the active roster row with requested and descriptor-resolved child routes.',
+        description: 'Create one named durable teammate through its selected typed runtime.',
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'DSH-continuable or external runtime placement and caller cancellation through initial-work durability.' }],
+        returns: 'the active roster row with its resolved DSH route or provider-native handle.',
+      },
+      {
+        signature: 'registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeRegistration',
+        description: 'Register one complete durable external teammate provider on the calling Fiber.',
+        parameters: [{ name: 'provider', description: 'provider operations and detached capability metadata.' }],
+        returns: 'an async disposer with atomic same-id replacement.',
       },
       {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
@@ -3953,6 +3959,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EpochHeader {\n    config: LlmCallConfig;\n    adapterDefaults?: LlmCallConfigAdapterDefaults;\n    system?: string;\n    tools?: ToolSchema[];\n}',
   },
   {
+    name: 'ExternalTeammateRuntimeLaunch',
+    declaration: 'export interface ExternalTeammateRuntimeLaunch {\n    readonly kind: \'external-agent\';\n    readonly provider: string;\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly profile: TeammateRuntimeProfileSnapshot;\n    readonly requirements: TeammateRuntimeRequirements;\n}',
+  },
+  {
     name: 'FiberState',
     declaration: 'export type FiberState = FiberStateEnum;',
   },
@@ -5353,8 +5363,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillViewOptions extends SkillLookupOptions {\n    readonly scope?: ScopeKey | undefined;\n}',
   },
   {
+    name: 'SpawnContinuableTeammateRequest',
+    declaration: 'export interface SpawnContinuableTeammateRequest extends SpawnTeammateRequestBase {\n    readonly provider: string;\n    readonly agentOptions?: AgentOptions;\n    readonly runtime?: undefined;\n}',
+  },
+  {
+    name: 'SpawnExternalTeammateRequest',
+    declaration: 'export interface SpawnExternalTeammateRequest extends SpawnTeammateRequestBase {\n    readonly runtime: ExternalTeammateRuntimeLaunch;\n    readonly provider?: never;\n    readonly agentOptions?: never;\n}',
+  },
+  {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly agentOptions?: AgentOptions;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export type SpawnTeammateRequest = SpawnContinuableTeammateRequest | SpawnExternalTeammateRequest;',
   },
   {
     name: 'SpawnTeammateResult',
@@ -5565,6 +5583,138 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
   {
+    name: 'TeammateEvaluationCreateRequest',
+    declaration: 'export interface TeammateEvaluationCreateRequest {\n    readonly evaluationId: TeammateEvaluationId;\n    readonly profile: TeammateRuntimeProfileSnapshot;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly input: readonly ContentBlock[];\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'TeammateEvaluationCreateResult',
+    declaration: 'export interface TeammateEvaluationCreateResult {\n    readonly evaluationHandle: TeammateEvaluationHandle;\n}',
+  },
+  {
+    name: 'TeammateEvaluationHandle',
+    declaration: 'export type TeammateEvaluationHandle = Branded<\'TeammateEvaluationHandle\'>;',
+  },
+  {
+    name: 'TeammateEvaluationId',
+    declaration: 'export type TeammateEvaluationId = Branded<\'TeammateEvaluationId\'>;',
+  },
+  {
+    name: 'TeammateLaunchRequestId',
+    declaration: 'export type TeammateLaunchRequestId = Branded<\'TeammateLaunchRequestId\'>;',
+  },
+  {
+    name: 'TeammateProfileCapability',
+    declaration: 'export type TeammateProfileCapability = \'persona\' | \'mission\' | \'context\' | \'memory\' | \'tool-policy\' | \'hooks\';',
+  },
+  {
+    name: 'TeammateRuntimeCapability',
+    declaration: 'export type TeammateRuntimeCapability = \'exact-call-approval\' | \'sandbox\' | \'evaluation\' | \'evidence\' | \'usage\';',
+  },
+  {
+    name: 'TeammateRuntimeCreateRequest',
+    declaration: 'export interface TeammateRuntimeCreateRequest {\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly memberId: SessionId;\n    readonly memberName: string;\n    readonly description: string;\n    readonly initialWork: readonly ContentBlock[];\n    readonly profile: TeammateRuntimeProfileSnapshot;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'TeammateRuntimeCreateResult',
+    declaration: 'export interface TeammateRuntimeCreateResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly presence: \'running\' | \'idle\';\n}',
+  },
+  {
+    name: 'TeammateRuntimeDeliverRequest',
+    declaration: 'export interface TeammateRuntimeDeliverRequest {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly deliveryId: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly content: readonly ContentBlock[];\n    readonly delivery: \'quiet\' | \'wakeup\';\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'TeammateRuntimeDeliverResult',
+    declaration: 'export interface TeammateRuntimeDeliverResult {\n    readonly turnId: TeammateRuntimeTurnId;\n    readonly presence: \'running\' | \'idle\';\n}',
+  },
+  {
+    name: 'TeammateRuntimeDisposeRequest',
+    declaration: 'export type TeammateRuntimeDisposeRequest = {\n    readonly kind: \'runtime\';\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly signal: AbortSignal;\n} | {\n    readonly kind: \'evaluation\';\n    readonly evaluationHandle: TeammateEvaluationHandle;\n    readonly signal: AbortSignal;\n};',
+  },
+  {
+    name: 'TeammateRuntimeEvidenceCursor',
+    declaration: 'export type TeammateRuntimeEvidenceCursor = Branded<\'TeammateRuntimeEvidenceCursor\'>;',
+  },
+  {
+    name: 'TeammateRuntimeEvidenceId',
+    declaration: 'export type TeammateRuntimeEvidenceId = Branded<\'TeammateRuntimeEvidenceId\'>;',
+  },
+  {
+    name: 'TeammateRuntimeEvidenceItem',
+    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'tool\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'interrupted\' | \'unknown\';\n}',
+  },
+  {
+    name: 'TeammateRuntimeEvidenceRequest',
+    declaration: 'export interface TeammateRuntimeEvidenceRequest {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly cursor?: TeammateRuntimeEvidenceCursor;\n    readonly limit: number;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'TeammateRuntimeEvidenceResult',
+    declaration: 'export interface TeammateRuntimeEvidenceResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly items: readonly TeammateRuntimeEvidenceItem[];\n    readonly nextCursor?: TeammateRuntimeEvidenceCursor;\n    readonly complete: boolean;\n}',
+  },
+  {
+    name: 'TeammateRuntimeHandle',
+    declaration: 'export type TeammateRuntimeHandle = Branded<\'TeammateRuntimeHandle\'>;',
+  },
+  {
+    name: 'TeammateRuntimeHookPoint',
+    declaration: 'export type TeammateRuntimeHookPoint = \'session-start\' | \'before-step\' | \'before-tool\' | \'after-tool\';',
+  },
+  {
+    name: 'TeammateRuntimeInterruptRequest',
+    declaration: 'export interface TeammateRuntimeInterruptRequest {\n    readonly nativeHandle: TeammateRuntimeHandle;\n}',
+  },
+  {
+    name: 'TeammateRuntimeInterruptResult',
+    declaration: 'export interface TeammateRuntimeInterruptResult {\n    readonly previousStatus: \'running\' | \'idle\' | \'inactive\';\n}',
+  },
+  {
+    name: 'TeammateRuntimeMetadata',
+    declaration: 'export interface TeammateRuntimeMetadata {\n    readonly id: string;\n    readonly displayName: string;\n    readonly contextModes: readonly (\'fresh\' | \'fork\')[];\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n}',
+  },
+  {
+    name: 'TeammateRuntimePresenceEvent',
+    declaration: 'export interface TeammateRuntimePresenceEvent {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly presence: \'running\' | \'idle\' | \'inactive\';\n}',
+  },
+  {
+    name: 'TeammateRuntimeProfileHook',
+    declaration: 'export interface TeammateRuntimeProfileHook {\n    readonly point: TeammateRuntimeHookPoint;\n    readonly effect: \'context\' | \'deny\';\n    readonly matcher?: string;\n    readonly text: string;\n}',
+  },
+  {
+    name: 'TeammateRuntimeProfileSnapshot',
+    declaration: 'export interface TeammateRuntimeProfileSnapshot {\n    readonly persona: string;\n    readonly mission: string;\n    readonly context: readonly TeammateRuntimeProfileTextBlock[];\n    readonly memory: readonly TeammateRuntimeProfileTextBlock[];\n    readonly toolPolicy: TeammateRuntimeToolPolicy;\n    readonly hooks: readonly TeammateRuntimeProfileHook[];\n}',
+  },
+  {
+    name: 'TeammateRuntimeProfileTextBlock',
+    declaration: 'export interface TeammateRuntimeProfileTextBlock {\n    readonly id: string;\n    readonly title: string;\n    readonly content: string;\n}',
+  },
+  {
+    name: 'TeammateRuntimeProvider',
+    declaration: 'export interface TeammateRuntimeProvider extends TeammateRuntimeMetadata {\n    create(request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult>;\n    resume(request: TeammateRuntimeResumeRequest): Promise<TeammateRuntimeCreateResult | undefined>;\n    deliver(request: TeammateRuntimeDeliverRequest): Promise<TeammateRuntimeDeliverResult>;\n    interrupt(request: TeammateRuntimeInterruptRequest): TeammateRuntimeInterruptResult;\n    onPresenceChanged?(listener: (event: TeammateRuntimePresenceEvent) => void): () => void;\n    evidence?(request: TeammateRuntimeEvidenceRequest): Promise<TeammateRuntimeEvidenceResult>;\n    createEvaluationHandle?(request: TeammateEvaluationCreateRequest): Promise<TeammateEvaluationCreateResult>;\n    dispose(request: TeammateRuntimeDisposeRequest): Promise<void>;\n}',
+  },
+  {
+    name: 'TeammateRuntimeRegistration',
+    declaration: 'export interface TeammateRuntimeRegistration {\n    (): Promise<void>;\n    available(): boolean;\n    metadata(): TeammateRuntimeMetadata;\n    onAvailabilityChanged(listener: () => void): () => void;\n    replace(provider: TeammateRuntimeProvider): Promise<void>;\n}',
+  },
+  {
+    name: 'TeammateRuntimeRequirements',
+    declaration: 'export interface TeammateRuntimeRequirements {\n    readonly contextMode: \'fresh\' | \'fork\';\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n}',
+  },
+  {
+    name: 'TeammateRuntimeResumeRequest',
+    declaration: 'export interface TeammateRuntimeResumeRequest {\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly memberId: SessionId;\n    readonly nativeHandle?: TeammateRuntimeHandle;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'TeammateRuntimeToolPolicy',
+    declaration: 'export interface TeammateRuntimeToolPolicy {\n    readonly mode: \'inherit\' | \'allow\' | \'deny\';\n    readonly names: readonly string[];\n}',
+  },
+  {
+    name: 'TeammateRuntimeTurnId',
+    declaration: 'export type TeammateRuntimeTurnId = Branded<\'TeammateRuntimeTurnId\'>;',
+  },
+  {
+    name: 'TeamMemberExternalRuntimeSnapshot',
+    declaration: 'export interface TeamMemberExternalRuntimeSnapshot {\n    readonly kind: \'external-agent\';\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly requestFingerprint: string;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly nativeHandle?: TeammateRuntimeHandle;\n}',
+  },
+  {
     name: 'TeamMemberRouteSnapshot',
     declaration: 'export interface TeamMemberRouteSnapshot {\n    readonly provider?: string;\n    readonly model?: string;\n    readonly reasoningEffort?: ReasoningEffortId;\n}',
   },
@@ -5574,7 +5724,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly requestedRoute?: TeamMemberRouteSnapshot;\n    readonly resolvedRoute?: TeamMemberRouteSnapshot;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly requestedRoute?: TeamMemberRouteSnapshot;\n    readonly resolvedRoute?: TeamMemberRouteSnapshot;\n    readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot;\n    readonly diagnostics: string[];\n}',
   },
   {
     name: 'TeamMessageId',
