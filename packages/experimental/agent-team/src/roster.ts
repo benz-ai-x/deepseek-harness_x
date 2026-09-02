@@ -192,7 +192,7 @@ export class TeamRoster {
   /**
    * Create one named, continuable direct child of the Team Lead.
    * @param caller - exact live Lead Agent.
-   * @param request - immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.
+   * @param request - immutable identity, prompt, context, provider, options, and caller cancellation through prompt durability.
    * @returns the active roster row with requested and descriptor-resolved child routes.
    */
   async spawn(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {

@@ -12,5 +12,6 @@ export interface SpawnTeammateRequest {
   readonly provider: string
   /** Normalized per-child options passed unchanged to the continuable manager. */
   readonly agentOptions?: AgentOptions
+  /** Caller cancellation until the initial prompt is durable; Team lifecycle cancellation afterward. */
   readonly signal: AbortSignal
 }

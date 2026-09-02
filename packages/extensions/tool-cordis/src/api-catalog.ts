@@ -364,7 +364,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
         description: 'Create one named, continuable direct child of the Team Lead.',
-        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.' }],
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable identity, prompt, context, provider, options, and caller cancellation through prompt durability.' }],
         returns: 'the active roster row with requested and descriptor-resolved child routes.',
       },
       {
