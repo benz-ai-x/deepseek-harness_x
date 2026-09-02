@@ -22,9 +22,9 @@ Lead 必须等待所需工作后才能给出最终答案。进程 teardown 仍�
 
 ## Provisioning and recovery
 
-创建操作先在 Lead Session 中追加并 flush `team/member` provisioning 快照，再通过选定 fresh 或 fork provider 启动预留的 continuable child。初始 inbox 获准前的失败会追加 failed 快照；成功会先 flush child 中已接受的 inbox 条目，再追加 active。恢复会在初始消息仍处于 pending 或已进入用户消息历史时识别它。名字由第一条 provisioning 记录永久保留，包括失败后也不能复用。dispose 会关闭准入，中止并等待已获准的创建与 mailbox dispatch 事务，再停止 roster 记录的所有 live child；failed child 在 Activation 退出前仍由 cleanup 拥有，cleanup 拒绝会让 dispose 失败。
+创建操作先在 Lead Session 中追加并 flush `team/member` provisioning 快照，再通过选定 fresh 或 fork provider 启动预留的 continuable child。可选的规范化 child 级 Agent options 会作为请求路由保留，并原样传给该 continuation。初始 inbox 获准前的失败会追加 failed 快照；成功会先 flush child 中已接受的 inbox 条目，读取其 descriptor 解析出的 provider／model／reasoning 路由，拒绝任何变化的显式请求字段，再追加同时带两种路由的 active。恢复会在初始消息仍处于 pending 或已进入用户消息历史时识别它。名字由第一条 provisioning 记录永久保留，包括失败后也不能复用。dispose 会关闭准入，中止并等待已获准的创建与 mailbox dispatch 事务，再停止 roster 记录的所有 live child；failed child 在 Activation 退出前仍由 cleanup 拥有，cleanup 拒绝会让 dispose 失败。
 
-Root 恢复时会把未终结 provisioning 记录与独立持久 child Session 对账。直接 parent 与 continuable descriptor 匹配，并且已经记录初始用户消息，才能证明准入成功并转为 active；缺失、损坏、provider／lineage 不匹配或缺少已准入消息都会转为 failed。creator 会在同一 Lead 日志 serializer 内重读终态；如果 recovery 在创建成功时先标记 failed，creator 会 drain child 并报告 provisioning conflict，而不是遗留孤儿。这样既无需重建从未保存在 Team 日志中的初始 prompt，也能约束插件 reload 竞争。
+Root 恢复时会把未终结 provisioning 记录与独立持久 child Session 对账。直接 parent、continuation provider、请求路由、continuable descriptor 都匹配，并且已经记录初始用户消息，才能证明准入成功，并带 descriptor 路由转为 active；缺失、损坏、路由／lineage 不匹配或缺少已准入消息都会转为 failed。因此显式 child 路由独立于之后的 Lead 与部署默认值，roster 不会回退到其中任何一个。creator 会在同一 Lead 日志 serializer 内重读终态；如果 recovery 在创建成功时先标记 failed，creator 会 drain child 并报告 provisioning conflict，而不是遗留孤儿。这样既无需重建从未保存在 Team 日志中的初始 prompt，也能约束插件 reload 竞争。
 
 fresh child 不继承对话。fork child 只捕获一次 Lead 已完成 turn 前缀，并保留为自己的持久 seed。当前 delegation turn 保持排除，与既有 fork provider 契约一致。
 
@@ -62,7 +62,7 @@ Worktree isolation 不是 harness runtime 行为。deployment 或 prompt 可以�
 
 ## Testing
 
-Package test 以逐文件 100% coverage 覆盖身份、名字与权限检查、provider 选择、预留 id 持久化冲突、child-before-Lead flush 顺序、持久 provisioning 失败与 pending-inbox JSONL 对账、target-local 并发顺序、pending／history 去重、mailbox 限额、flush 后 notification、取消在途创建与 dispatch 的有界 dispose、failed member cleanup、task CAS 与 DAG 校验、write-scope warning、wait cancel／timeout、保留 inbox 的 interrupt、普通 fork 隔离、旧 control shadowing、声明 schema 的紧凑结果渲染与 scoped registration HMR。一条 keyless 产品快照会通过 `dsh --profile headless` 加载私有 Agent Teams profile bundle，并为两个 teammate、依赖任务、peer 投递、等待、完成和汇总固定完整的面向模型工具列表、Team policy 与持久 workflow 投影。CLI e2e 会复用同一个确定性 adapter，并验证带持久 Team 与 child 日志的正常退出。
+Package test 以逐文件 100% coverage 覆盖身份、名字与权限检查、原样传递的 child 级 Agent options、descriptor 路由对账、固定路由冷恢复、不匹配失败、provider 选择、预留 id 持久化冲突、child-before-Lead flush 顺序、持久 provisioning 失败与 pending-inbox JSONL 对账、target-local 并发顺序、pending／history 去重、mailbox 限额、flush 后 notification、取消在途创建与 dispatch 的有界 dispose、failed member cleanup、task CAS 与 DAG 校验、write-scope warning、wait cancel／timeout、保留 inbox 的 interrupt、普通 fork 隔离、旧 control shadowing、声明 schema 的紧凑结果渲染与 scoped registration HMR。一条 keyless 产品快照会通过 `dsh --profile headless` 加载私有 Agent Teams profile bundle，并为两个 teammate、依赖任务、peer 投递、等待、完成和汇总固定完整的面向模型工具列表、Team policy 与持久 workflow 投影。CLI e2e 会复用同一个确定性 adapter，并验证带持久 Team 与 child 日志的正常退出。
 
 ## Consequences
 

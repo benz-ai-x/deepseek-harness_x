@@ -39,6 +39,16 @@ send_message steers a running target at its nearest step boundary, starts an idl
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
 
+const MEMBER_ROUTE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    provider: { type: 'string' },
+    model: { type: 'string' },
+    reasoningEffort: { type: 'string' },
+  },
+} as const
+
 /**
  * One roster row, matching `TeamMemberView`. The Lead pseudo-row omits the
  * teammate-only provisioning fields, so only identity, role, status, and
@@ -56,6 +66,8 @@ const MEMBER_VIEW_SCHEMA = {
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
     model: { type: 'string' },
+    requestedRoute: MEMBER_ROUTE_SCHEMA,
+    resolvedRoute: MEMBER_ROUTE_SCHEMA,
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const

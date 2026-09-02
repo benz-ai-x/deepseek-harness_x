@@ -9,6 +9,15 @@ Types shared by the experimental implicit-root Team domain, model tools, and hos
 `TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's Session id remains its persistent identity, while `name` is an immutable model/UI label.
 
 ```ts type-equiv
+/** Provider, model, and optional reasoning selection retained for one teammate. */
+interface TeamMemberRouteSnapshot {
+  readonly provider?: string
+  readonly model?: string
+  readonly reasoningEffort?: ReasoningEffortId
+}
+```
+
+```ts type-equiv
 /** Whole durable value written on every teammate lifecycle change. */
 interface TeamMemberSnapshot {
   readonly id: SessionId
@@ -16,12 +25,14 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  readonly requestedRoute?: TeamMemberRouteSnapshot
+  readonly resolvedRoute?: TeamMemberRouteSnapshot
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. `requestedRoute` is immutable from the first record; `resolvedRoute` comes from the accepted child continuation descriptor and must preserve every explicit requested field. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
 
 ## Durable mailbox
 
@@ -109,8 +120,8 @@ listMembers(agent: Agent): TeamMemberView[]
 /**
  * Create one named, continuable direct child of the Team Lead.
  * @param caller - exact live Lead Agent.
- * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
- * @returns the active roster row.
+ * @param request - immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.
+ * @returns the active roster row with requested and descriptor-resolved child routes.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 

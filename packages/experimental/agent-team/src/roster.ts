@@ -3,11 +3,11 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import type { ContinuableStart } from '@deepseek-ai/dsh-subagent'
+import type { ContinuableStart, ContinuableSubagentDescriptorData } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -16,14 +16,42 @@ import type { TeamState } from './projection.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId } from './types.ts'
 import type {
-  SpawnTeammateRequest,
   SpawnTeammateResult,
   TeamMemberSnapshot,
+  TeamMemberRouteSnapshot,
   TeamMemberView,
 } from './types.ts'
+import type { SpawnTeammateRequest } from './service-types.ts'
 import { requiredText } from './validation.ts'
 
 const MEMBER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+
+/** Retain only the route fields whose durable meaning is owned by Agent Teams. */
+function routeSnapshot(options: AgentOptions | undefined): TeamMemberRouteSnapshot {
+  return {
+    ...options?.provider === undefined ? {} : { provider: options.provider },
+    ...options?.model === undefined ? {} : { model: options.model },
+    ...options?.reasoningEffort === undefined ? {} : { reasoningEffort: options.reasoningEffort },
+  }
+}
+
+/** Read the exact resolved route recorded by a continuable descriptor. */
+function descriptorRoute(descriptor: ContinuableSubagentDescriptorData): TeamMemberRouteSnapshot {
+  return {
+    ...descriptor.agentProvider === undefined ? {} : { provider: descriptor.agentProvider },
+    ...descriptor.agentModel === undefined ? {} : { model: descriptor.agentModel },
+    ...descriptor.agentReasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: descriptor.agentReasoningEffort },
+  }
+}
+
+/** Whether every explicitly requested route field was preserved after resolution. */
+function routePreserved(requested: TeamMemberRouteSnapshot | undefined, resolved: TeamMemberRouteSnapshot): boolean {
+  return (requested?.provider === undefined || requested.provider === resolved.provider)
+    && (requested?.model === undefined || requested.model === resolved.model)
+    && (requested?.reasoningEffort === undefined || requested.reasoningEffort === resolved.reasoningEffort)
+}
 
 /** Caller identity inside one implicit Team. */
 export interface TeamMembership {
@@ -139,7 +167,7 @@ export class TeamRoster {
     }]
     for (const member of state.members) {
       const live = this.ctx.agents.get(member.id)
-      const model = live?.options.model ?? root.options.model
+      const model = member.resolvedRoute?.model
       result.push({
         id: member.id,
         name: member.name,
@@ -152,6 +180,8 @@ export class TeamRoster {
         description: member.description,
         provider: member.provider,
         context: member.context,
+        ...member.requestedRoute === undefined ? {} : { requestedRoute: { ...member.requestedRoute } },
+        ...member.resolvedRoute === undefined ? {} : { resolvedRoute: { ...member.resolvedRoute } },
         ...model === undefined ? {} : { model },
         diagnostics: member.error === undefined ? [] : [member.error],
       })
@@ -162,8 +192,8 @@ export class TeamRoster {
   /**
    * Create one named, continuable direct child of the Team Lead.
    * @param caller - exact live Lead Agent.
-   * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
-   * @returns the active roster row.
+   * @param request - immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.
+   * @returns the active roster row with requested and descriptor-resolved child routes.
    */
   async spawn(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {
     if (this.lifecycle.disposed) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
@@ -263,6 +293,7 @@ export class TeamRoster {
       description,
       provider: requiredText(request.provider, 'provider', 200),
       context: request.context,
+      requestedRoute: routeSnapshot(request.agentOptions),
       phase: 'provisioning',
     }
 
@@ -278,6 +309,7 @@ export class TeamRoster {
     })
 
     let started: ContinuableStart
+    let resolvedRoute: TeamMemberRouteSnapshot
     try {
       started = await this.ctx.subagents.startContinuable({
         childId,
@@ -286,10 +318,18 @@ export class TeamRoster {
         request: {
           prompt: request.prompt,
           parent: root,
+          ...request.agentOptions === undefined ? {} : { agentOptions: request.agentOptions },
         },
         signal,
       })
       await this.checkpointInitialPrompt(childId, started.messageId, signal)
+      resolvedRoute = await this.resolveStartedRoute(childId, member.provider, signal)
+      if (!routePreserved(member.requestedRoute, resolvedRoute)) {
+        throw new TeamError(
+          `teammate "${name}" resolved a different provider, model, or reasoning effort than requested`,
+          'TEAM_RUNTIME_ROUTE_MISMATCH',
+        )
+      }
     } catch (error: unknown) {
       const failed: TeamMemberSnapshot = {
         ...member,
@@ -313,6 +353,7 @@ export class TeamRoster {
     }
     const active = {
       ...member,
+      resolvedRoute,
       phase: 'active' as const,
     } satisfies TeamMemberSnapshot
     // Once the continuation accepted its first prompt, it is a real child. If
@@ -397,6 +438,7 @@ export class TeamRoster {
       if (this.ctx.agents.get(member.id) !== undefined) continue
       let phase: 'active' | 'failed' = 'failed'
       let failure = 'provisioning did not leave a resumable child Session'
+      let resolvedRoute: TeamMemberRouteSnapshot | undefined
       try {
         const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal)
         const suffix = loaded.events.slice(loaded.inheritedEventCount)
@@ -405,8 +447,10 @@ export class TeamRoster {
         if (loaded.header.parentSession === root.id
           && descriptor?.mode === 'continuable'
           && descriptor.provider === member.provider
+          && routePreserved(member.requestedRoute, descriptorRoute(descriptor))
           && acceptedInitialPrompt) {
           phase = 'active'
+          resolvedRoute = descriptorRoute(descriptor)
         } else {
           failure = 'persisted child Session does not match the provisioned continuation'
         }
@@ -421,6 +465,7 @@ export class TeamRoster {
         const settled: TeamMemberSnapshot = {
           ...current,
           phase,
+          ...resolvedRoute === undefined ? {} : { resolvedRoute },
           ...phase === 'failed' ? { error: failure } : {},
         }
         await this.journal.appendAndFlush(root, 'team/member', {
@@ -443,9 +488,36 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
-      ...live?.options.model === undefined ? {} : { model: live.options.model },
+      requestedRoute: { ...member.requestedRoute },
+      resolvedRoute: { ...member.resolvedRoute },
+      ...member.resolvedRoute?.model === undefined ? {} : { model: member.resolvedRoute.model },
       diagnostics: [],
     }
+  }
+
+  /** Load and correlate the continuable descriptor committed for one started child. */
+  private async resolveStartedRoute(
+    childId: SessionId,
+    provider: string,
+    signal: AbortSignal,
+  ): Promise<TeamMemberRouteSnapshot> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(childId)
+    let suffix
+    if (session === undefined) {
+      const inspected = await this.ctx.sessionPersistence.inspect(childId, signal)
+      suffix = inspected.events.slice(inspected.inheritedEventCount)
+    } else {
+      suffix = session.ownEvents()
+    }
+    const descriptor = foldSubagentDescriptor(suffix)
+    if (descriptor?.mode !== 'continuable' || descriptor.provider !== provider) {
+      throw new TeamError(
+        `teammate "${childId}" continuation descriptor does not match its provisioned provider`,
+        'TEAM_PROVISIONING_CONFLICT',
+      )
+    }
+    return descriptorRoute(descriptor)
   }
 
   /** Validate a never-reused model-facing teammate name. */

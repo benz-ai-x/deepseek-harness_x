@@ -364,8 +364,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
         description: 'Create one named, continuable direct child of the Team Lead.',
-        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation.' }],
-        returns: 'the active roster row.',
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.' }],
+        returns: 'the active roster row with requested and descriptor-resolved child routes.',
       },
       {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
@@ -5354,7 +5354,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly agentOptions?: AgentOptions;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SpawnTeammateResult',
@@ -5565,12 +5565,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
   {
+    name: 'TeamMemberRouteSnapshot',
+    declaration: 'export interface TeamMemberRouteSnapshot {\n    readonly provider?: string;\n    readonly model?: string;\n    readonly reasoningEffort?: ReasoningEffortId;\n}',
+  },
+  {
     name: 'TeamMembership',
     declaration: 'export interface TeamMembership {\n    readonly root: Agent;\n    readonly id: TeamId;\n    readonly role: \'lead\' | \'teammate\';\n    readonly name: string;\n}',
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly requestedRoute?: TeamMemberRouteSnapshot;\n    readonly resolvedRoute?: TeamMemberRouteSnapshot;\n    readonly diagnostics: string[];\n}',
   },
   {
     name: 'TeamMessageId',

@@ -60,7 +60,9 @@ kind: "package-reference"
 
 请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
 
-roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
+宿主可以用规范化的 child 级 LLM provider、model 和 reasoning-effort options 固定 teammate 路由。Agent Teams 会把这些 options 原样传给 continuation manager，同时记录请求路由和解析进 child descriptor 的路由；如果任何显式请求字段发生变化，就会拒绝创建。descriptor 继续作为冷恢复的权威来源，因此之后的 Lead 路由或部署默认路由都不能替换固定路由。
+
+roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。teammate 行还会暴露分离的请求路由与解析路由快照。未加载的成员会在唤醒后收到其消息。
 
 只有 Lead 可以创建 teammate 或中断它们。
 
@@ -114,7 +116,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、服务注册、恢复调度 |
-| [`src/roster.ts`](src/roster.ts) | Team 身份、成员关系解析、provisioning 与 roster 拆除 |
+| [`src/roster.ts`](src/roster.ts) | Team 身份、路由对账、provisioning、恢复与 roster 拆除 |
 | [`src/mailbox.ts`](src/mailbox.ts) | 持久队列、目标本地投递、确认与恢复 |
 | [`src/task-board.ts`](src/task-board.ts) | 任务 CAS 命令、DAG 校验与派生视图 |
 | [`src/journal.ts`](src/journal.ts) | 串行化的 Lead 日志事务与提交通知 |
@@ -125,7 +127,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### Team 身份与 roster
 
-每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的 provider 创建预留 child；provider 失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的 Session 进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
+每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条带请求 child 路由的 `provisioning` 成员记录，再要求配置的 continuation provider 用同一组 options 创建预留 child。初始 inbox 条目持久化后，服务会读取 child descriptor，拒绝发生变化的显式路由，并把解析路由写入 `active` 成员记录。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的 Session 进行对账：直接 parent、continuation provider、请求路由、continuable descriptor 都匹配且初始用户消息已记录，才会产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
 
 ### 持久 mailbox
 
@@ -181,7 +183,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 #### Token 影响
 
-每次 peer 投递都会把发送者前缀与消息内容加入 target 历史。任务与 roster 变更不增加模型 token；其面向模型的呈现属于 `@deepseek-ai/dsh-experimental-tool-agent-team` 结果。
+每次 peer 投递都会把发送者前缀与消息内容加入 target 历史。任务、roster 与路由对账变更不增加模型 token；其面向模型的呈现属于 `@deepseek-ai/dsh-experimental-tool-agent-team` 结果。
 
 #### KV Cache 影响
 

@@ -20,7 +20,6 @@ import type {
   CreateTeamTaskRequest,
   SendTeamMessageRequest,
   SendTeamMessageResult,
-  SpawnTeammateRequest,
   SpawnTeammateResult,
   TeamMemberView,
   TeamTaskMutationResult,
@@ -29,8 +28,10 @@ import type {
   TeamWaitResult,
   UpdateTeamTaskRequest,
 } from './types.ts'
+import type { SpawnTeammateRequest } from './service-types.ts'
 
 export type * from './types.ts'
+export type { SpawnTeammateRequest } from './service-types.ts'
 export type { TeamMembership } from './roster.ts'
 export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
 export { TeamError } from './error.ts'
@@ -147,8 +148,8 @@ export class TeamService extends TypertRemoteService {
   /**
    * Create one named, continuable direct child of the Team Lead.
    * @param caller - exact live Lead Agent.
-   * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
-   * @returns the active roster row.
+   * @param request - immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.
+   * @returns the active roster row with requested and descriptor-resolved child routes.
    */
   async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {
     return await this.roster.spawn(caller, request)

@@ -314,6 +314,11 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMemberRouteSnapshot",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamMemberSnapshot",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

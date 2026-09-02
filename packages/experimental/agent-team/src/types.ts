@@ -1,6 +1,7 @@
 /** Public Agent Teams identities, durable records, and service request values. */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm/brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
@@ -43,6 +44,13 @@ export function TeamMessageId(id: string): TeamMessageId {
 /** Durable teammate lifecycle. */
 export type TeamMemberPhase = 'provisioning' | 'active' | 'failed'
 
+/** Provider, model, and optional reasoning selection retained for one teammate. */
+export interface TeamMemberRouteSnapshot {
+  readonly provider?: string
+  readonly model?: string
+  readonly reasoningEffort?: ReasoningEffortId
+}
+
 /** Whole durable value written on every teammate lifecycle change. */
 export interface TeamMemberSnapshot {
   readonly id: SessionId
@@ -50,6 +58,8 @@ export interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  readonly requestedRoute?: TeamMemberRouteSnapshot
+  readonly resolvedRoute?: TeamMemberRouteSnapshot
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
@@ -64,6 +74,8 @@ export interface TeamMemberView {
   readonly provider?: string
   readonly context?: 'fresh' | 'fork'
   readonly model?: string
+  readonly requestedRoute?: TeamMemberRouteSnapshot
+  readonly resolvedRoute?: TeamMemberRouteSnapshot
   readonly diagnostics: string[]
 }
 
@@ -138,16 +150,6 @@ export interface Config {
   readonly maxMessageBytes?: number
   /** Maximum milliseconds allowed for Team-owned runtime disposal. */
   readonly disposalTimeoutMs?: number
-}
-
-/** Input for creating one durable teammate. */
-export interface SpawnTeammateRequest {
-  readonly name: string
-  readonly description: string
-  readonly prompt: ContentBlock[]
-  readonly context: 'fresh' | 'fork'
-  readonly provider: string
-  readonly signal: AbortSignal
 }
 
 /** Result after one teammate reaches a durable active or failed edge. */

@@ -9,6 +9,15 @@
 `TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 的 Session id 始终是持久身份，而 `name` 是不可变的模型／UI 标签。
 
 ```ts type-equiv
+/** Provider, model, and optional reasoning selection retained for one teammate. */
+interface TeamMemberRouteSnapshot {
+  readonly provider?: string
+  readonly model?: string
+  readonly reasoningEffort?: ReasoningEffortId
+}
+```
+
+```ts type-equiv
 /** Whole durable value written on every teammate lifecycle change. */
 interface TeamMemberSnapshot {
   readonly id: SessionId
@@ -16,12 +25,14 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  readonly requestedRoute?: TeamMemberRouteSnapshot
+  readonly resolvedRoute?: TeamMemberRouteSnapshot
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。`requestedRoute` 从第一条记录起就不可变；`resolvedRoute` 来自已接受 child 的 continuation descriptor，并且必须保留每个显式请求字段。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
 
 ## 持久 mailbox
 
@@ -109,8 +120,8 @@ listMembers(agent: Agent): TeamMemberView[]
 /**
  * Create one named, continuable direct child of the Team Lead.
  * @param caller - exact live Lead Agent.
- * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
- * @returns the active roster row.
+ * @param request - immutable identity, prompt, context, continuation provider, normalized child options, and cancellation.
+ * @returns the active roster row with requested and descriptor-resolved child routes.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 

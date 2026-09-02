@@ -6,11 +6,11 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import SubagentService from '@deepseek-ai/dsh-subagent'
+import SubagentService, { foldSubagentDescriptor, SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
 import { deliverSubagentPrompt, type HostPromptDeliverer } from '@deepseek-ai/dsh-subagent/internal'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
@@ -86,6 +86,7 @@ interface TeamServiceInternals {
   readonly roster: {
     readonly inFlightCreations: Set<Promise<unknown>>
     checkpointInitialPrompt(childId: SessionId, messageId: string, signal: AbortSignal): Promise<void>
+    resolveStartedRoute(childId: SessionId, provider: string, signal: AbortSignal): Promise<Record<string, string>>
     reconcileProvisioning(root: Agent, signal: AbortSignal): Promise<void>
     liveChildrenByRoot(): Map<Agent, SessionId[]>
   }
@@ -231,6 +232,72 @@ describe('Team identity and provisioning', () => {
     await expect(spawn(ctx, lead, 'fresh-worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_NAME_TAKEN' })
   })
 
+  it('passes a pinned child route unchanged and retains it through cold resume', async () => {
+    const { ctx, lead } = await setup([])
+    const effort = ReasoningEffortId('high')
+    const childAdapter = new MockAdapter(['hang', 'hang'], {
+      efforts: [{ id: effort, name: 'High' }],
+      defaultEffort: effort,
+    })
+    ctx.llm.registerAdapter(['selected-provider'], childAdapter)
+    const start = ctx.subagents.startContinuable.bind(ctx.subagents)
+    let passedAgentOptions: unknown
+    vi.spyOn(ctx.subagents, 'startContinuable').mockImplementation(async (spec) => {
+      passedAgentOptions = spec.request.agentOptions
+      return await start(spec)
+    })
+    const agentOptions = Object.freeze({
+      provider: 'selected-provider',
+      model: 'selected-model',
+      reasoningEffort: effort,
+    })
+
+    const started = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'routed-worker',
+      description: 'runs on one exact child route',
+      prompt: content('use the selected route'),
+      context: 'fresh',
+      provider: 'spawn',
+      agentOptions,
+      signal: SIGNAL,
+    })
+
+    expect(passedAgentOptions).toBe(agentOptions)
+    expect(ctx.agents.get(started.member.id)?.options).toMatchObject(agentOptions)
+    expect(started.member).toMatchObject({
+      model: 'selected-model',
+      requestedRoute: agentOptions,
+      resolvedRoute: agentOptions,
+    })
+    expect(durable(lead).members[0]).toMatchObject({
+      requestedRoute: agentOptions,
+      resolvedRoute: agentOptions,
+    })
+    expect(foldSubagentDescriptor(ctx.agents.get(started.member.id)!.session.ownEvents())).toMatchObject({
+      agentProvider: 'selected-provider',
+      agentModel: 'selected-model',
+      agentReasoningEffort: 'high',
+    })
+
+    ctx.agentTeams.interrupt(lead, 'routed-worker')
+    await waitNoAgent(ctx, started.member.id)
+    await ctx.agentTeams.sendMessage(lead, {
+      target: 'routed-worker',
+      content: content('resume on the same route'),
+      delivery: 'wakeup',
+      signal: SIGNAL,
+    })
+    const resumed = await waitRunning(ctx, started.member.id)
+    expect(resumed.options).toMatchObject(agentOptions)
+    expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({
+      model: 'selected-model',
+      requestedRoute: agentOptions,
+      resolvedRoute: agentOptions,
+    })
+    ctx.agentTeams.interrupt(lead, 'routed-worker')
+    await waitNoAgent(ctx, started.member.id)
+  })
+
   it('flushes the accepted child prompt before committing the active roster edge', async () => {
     const { ctx, lead } = await setup([textResponse('checkpointed child answer')])
     const flush = ctx.sessions.flush.bind(ctx.sessions)
@@ -313,6 +380,41 @@ describe('Team identity and provisioning', () => {
     await abortedFiber.dispose()
   })
 
+  it('reads a detached descriptor route and rejects a mismatched continuation provider', async () => {
+    const { ctx } = await setup([])
+    let persistedSession: Session | undefined
+    const persistedFiber = await ctx.plugin(Object.assign(function descriptorFixture(childCtx: Context) {
+      persistedSession = childCtx.sessions.create(SessionId('detached-route-child'))
+    }, { inject: ['sessions'] }))
+    if (persistedSession === undefined) throw new Error('descriptor fixture did not create its Session')
+    persistedSession.append('subagent/descriptor', {
+      version: SUBAGENT_DESCRIPTOR_VERSION,
+      mode: 'continuable',
+      provider: 'spawn',
+      label: 'route fixture',
+    })
+    await ctx.sessions.flush(persistedSession)
+    await persistedFiber.dispose()
+
+    const roster = teamInternals(ctx).roster
+    await expect(roster.resolveStartedRoute(persistedSession.id, 'spawn', SIGNAL)).resolves.toEqual({})
+
+    let mismatchedSession: Session | undefined
+    const mismatchFiber = await ctx.plugin(Object.assign(function mismatchFixture(childCtx: Context) {
+      mismatchedSession = childCtx.sessions.create(SessionId('mismatched-route-child'))
+    }, { inject: ['sessions'] }))
+    if (mismatchedSession === undefined) throw new Error('mismatch fixture did not create its Session')
+    mismatchedSession.append('subagent/descriptor', {
+      version: SUBAGENT_DESCRIPTOR_VERSION,
+      mode: 'continuable',
+      provider: 'other',
+      label: 'mismatched route fixture',
+    })
+    await expect(roster.resolveStartedRoute(mismatchedSession.id, 'spawn', SIGNAL))
+      .rejects.toMatchObject({ code: 'TEAM_PROVISIONING_CONFLICT' })
+    await mismatchFiber.dispose()
+  })
+
   it('drains an accepted child when its initial durability checkpoint fails', async () => {
     const { ctx, lead } = await setup(['hang'])
     vi.spyOn(teamInternals(ctx).roster, 'checkpointInitialPrompt')
@@ -322,6 +424,37 @@ describe('Team identity and provisioning', () => {
     const member = durable(lead).members[0]
     expect(member).toMatchObject({ phase: 'failed', error: 'checkpoint failed' })
     if (member !== undefined) await waitNoAgent(ctx, member.id)
+  })
+
+  it('fails and drains a child whose resolved route differs from the requested route', async () => {
+    const mismatches = [
+      { provider: 'other-provider', model: 'selected-model', reasoningEffort: 'high' },
+      { provider: 'selected-provider', model: 'other-model', reasoningEffort: 'high' },
+      { provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'low' },
+    ]
+    for (const [index, resolvedRoute] of mismatches.entries()) {
+      const { ctx, lead } = await setup(['hang'])
+      vi.spyOn(teamInternals(ctx).roster, 'resolveStartedRoute').mockResolvedValueOnce(resolvedRoute)
+      await expect(ctx.agentTeams.spawnTeammate(lead, {
+        name: `mismatched-route-${index}`,
+        description: 'must fail before becoming active',
+        prompt: content('do not run on a fallback route'),
+        context: 'fresh',
+        provider: 'spawn',
+        agentOptions: {
+          provider: 'selected-provider',
+          model: 'selected-model',
+          reasoningEffort: ReasoningEffortId('high'),
+        },
+        signal: SIGNAL,
+      })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_ROUTE_MISMATCH' })
+      const failed = durable(lead).members[0]
+      expect(failed).toMatchObject({
+        phase: 'failed',
+        error: `teammate "mismatched-route-${index}" resolved a different provider, model, or reasoning effort than requested`,
+      })
+      if (failed !== undefined) await waitNoAgent(ctx, failed.id)
+    }
   })
 
   it('records failed provisioning durably, reserves its name, and counts it against the limit', async () => {
@@ -393,6 +526,7 @@ describe('Team identity and provisioning', () => {
   it('handles a continuation that settles before the active roster view or conflict cleanup lookup', async () => {
     const first = await setup([])
     vi.spyOn(teamInternals(first.ctx).roster, 'checkpointInitialPrompt').mockResolvedValueOnce()
+    vi.spyOn(teamInternals(first.ctx).roster, 'resolveStartedRoute').mockResolvedValueOnce({})
     vi.spyOn(first.ctx.subagents, 'startContinuable').mockImplementationOnce(async spec => ({
       childId: spec.childId!,
       messageId: createUserMessage({ content: content('accepted'), source: { kind: 'user' } }).id,
@@ -403,6 +537,7 @@ describe('Team identity and provisioning', () => {
 
     const second = await setup([])
     vi.spyOn(teamInternals(second.ctx).roster, 'checkpointInitialPrompt').mockResolvedValueOnce()
+    vi.spyOn(teamInternals(second.ctx).roster, 'resolveStartedRoute').mockResolvedValueOnce({})
     const entered = Promise.withResolvers<undefined>()
     const release = Promise.withResolvers<undefined>()
     vi.spyOn(second.ctx.subagents, 'startContinuable').mockImplementationOnce(async (spec) => {

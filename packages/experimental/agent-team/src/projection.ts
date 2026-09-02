@@ -2,12 +2,13 @@
 
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {
   TeamId,
   TeamMemberSnapshot,
+  TeamMemberRouteSnapshot,
   TeamMessageId,
   TeamMessageSnapshot,
   TeamTaskSnapshot,
@@ -29,6 +30,12 @@ const teamTaskIdSchema = z.string().min(1).refine((value) => {
   return match === null || Number.isSafeInteger(Number(match[1]))
 }, { message: 'numeric task id suffix must be a safe integer' }).transform(value => toTeamTaskId(value))
 const teamMessageIdSchema = z.string().min(1).transform(value => toTeamMessageId(value))
+
+const teamMemberRouteSnapshotSchema = z.object({
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  reasoningEffort: z.string().min(1).transform(value => ReasoningEffortId(value)).optional(),
+}).strict() as z.ZodType<TeamMemberRouteSnapshot>
 
 const coreContentBlockTypes = new Set(['text', 'reasoning', 'image', 'tool-call', 'tool-result'])
 const imageAttachmentSchema = z.object({
@@ -70,6 +77,8 @@ const teamMemberSnapshotSchema = z.object({
   description: z.string(),
   provider: z.string(),
   context: z.enum(['fresh', 'fork']),
+  requestedRoute: teamMemberRouteSnapshotSchema.optional(),
+  resolvedRoute: teamMemberRouteSnapshotSchema.optional(),
   phase: z.enum(['provisioning', 'active', 'failed']),
   error: z.string().optional(),
 }).strict() as z.ZodType<TeamMemberSnapshot>
@@ -247,7 +256,10 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       if (prior === undefined) {
         if (member.phase !== 'provisioning') throw new Error(`teammate "${member.name}" must begin provisioning`)
       } else {
-        if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context) {
+        if (prior.name !== member.name
+          || prior.provider !== member.provider
+          || prior.context !== member.context
+          || JSON.stringify(prior.requestedRoute) !== JSON.stringify(member.requestedRoute)) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
         if (prior.phase !== 'provisioning' || member.phase === 'provisioning') {
