@@ -547,6 +547,32 @@ export interface Config {
 
 来源：[`packages/experimental/agent-team/src/types.ts:203`](../packages/experimental/agent-team/src/types.ts)
 
+<a id="deepseek-aidsh-experimental-agent-team-claude-code"></a>
+
+## `@deepseek-ai/dsh-experimental-agent-team-claude-code`
+
+需要：`agentTeams` · `subprocess`
+
+```ts config-catalog
+/** Deployment-owned durable Claude Code adapter settings. */
+export interface Config {
+  /** Stable provider id registered with Agent Teams. */
+  readonly providerName?: string
+  /** Workspace root fixed for every native Session owned by this instance. */
+  readonly cwd?: string
+  /** Optional deployment-pinned Claude model. */
+  readonly model?: string
+  /** Fixed confinement marker; no weaker value is accepted. */
+  readonly sandbox?: 'read-only'
+  /** Grace for exact process-tree termination. */
+  readonly disposeGraceMs?: number
+  /** Maximum fixed-shape evidence facts retained per attached Session. */
+  readonly maxEvidenceItems?: number
+}
+```
+
+来源：[`packages/experimental/agent-team-claude-code/src/index.ts:71`](../packages/experimental/agent-team-claude-code/src/index.ts)
+
 <a id="deepseek-aidsh-experimental-agent-team-codex"></a>
 
 ## `@deepseek-ai/dsh-experimental-agent-team-codex`

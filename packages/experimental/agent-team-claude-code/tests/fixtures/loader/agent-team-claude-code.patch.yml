@@ -1,0 +1,18 @@
+# Real Loader composition for the durable Claude Code provider. The application rows
+# stay disabled because this fixture inspects registration without starting a turn.
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+
+    - id: agent-team-claude-code
+      name: '@deepseek-ai/dsh-experimental-agent-team-claude-code'
+      config:
+        providerName: claude-code-loader
+        sandbox: read-only
+        maxEvidenceItems: 7

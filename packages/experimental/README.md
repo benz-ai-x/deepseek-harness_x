@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The experimental group contains prototype capabilities that are not part of any official release: they run on the real harness, but their contracts can change and they carry no support promise. The group holds Agent Teams, the cross-realm Inspector, the CPython subprocess backend for the code-execution seam, and the browser-worker runtime and image packer used by preview deployments. Use these packages to try an unreleased capability; they carry no stability promise, and released products must not depend on them.
+The experimental group contains prototype capabilities that are not part of any official release: they run on the real harness, but their contracts can change and they carry no support promise. The group holds Agent Teams and its durable Codex and Claude Code backends, the cross-realm Inspector, the CPython subprocess backend for the code-execution seam, and the browser-worker runtime and image packer used by preview deployments. Use these packages to try an unreleased capability; they carry no stability promise, and released products must not depend on them.
 
 ## Table of Contents
 
@@ -26,6 +26,7 @@ The experimental group contains prototype capabilities that are not part of any 
 |---|---|---|
 | [`agent-team-profile`](agent-team-profile/README.md) | Explicit source-checkout profile layer for Agent Teams | — |
 | [`agent-team`](agent-team/README.md) | Named teammates with durable messages and a shared task board | `ctx.agentTeams` |
+| [`agent-team-claude-code`](agent-team-claude-code/README.md) | Persistent Claude Agent SDK Session backend for external teammates | registers a provider on `ctx.agentTeams` |
 | [`agent-team-codex`](agent-team-codex/README.md) | Persistent Codex App Server backend for external teammates | registers a provider on `ctx.agentTeams` |
 | [`agent-team-web-profile`](agent-team-web-profile/README.md) | Explicit source-checkout Web layer for Agent Teams | — |
 | [`client-ui-agent-team`](client-ui-agent-team/README.md) | Team roster, task board, and teammate navigation for Web | — |

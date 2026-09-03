@@ -9,7 +9,7 @@ kind: "package-group"
 
 ## 概述
 
-实验组包含不属于任何正式发布的原型能力：它们运行在真实 harness 上，但约定可能变更，也不提供支持承诺。本组包含 Agent Teams、跨 realm Inspector、代码执行 seam 的 CPython 子进程后端，以及预览部署使用的浏览器 worker 运行时与镜像打包器。用这些包来尝试未发布的能力；它们没有稳定性承诺，已发布产品不得依赖它们。
+实验组包含不属于任何正式发布的原型能力：它们运行在真实 harness 上，但约定可能变更，也不提供支持承诺。本组包含 Agent Teams 及其持久 Codex 与 Claude Code 后端、跨 realm Inspector、代码执行 seam 的 CPython 子进程后端，以及预览部署使用的浏览器 worker 运行时与镜像打包器。用这些包来尝试未发布的能力；它们没有稳定性承诺，已发布产品不得依赖它们。
 
 ## 目录
 
@@ -26,6 +26,7 @@ kind: "package-group"
 |---|---|---|
 | [`agent-team-profile`](agent-team-profile/README.zh.md) | Agent Teams 的显式源码 checkout profile 层 | — |
 | [`agent-team`](agent-team/README.zh.md) | 具名 teammate，成员之间持久消息与共享任务板 | `ctx.agentTeams` |
+| [`agent-team-claude-code`](agent-team-claude-code/README.zh.md) | external teammate 的持久 Claude Agent SDK Session 后端 | 在 `ctx.agentTeams` 上注册 provider |
 | [`agent-team-codex`](agent-team-codex/README.zh.md) | external teammate 的持久 Codex App Server 后端 | 在 `ctx.agentTeams` 上注册 provider |
 | [`agent-team-web-profile`](agent-team-web-profile/README.zh.md) | Agent Teams 的显式源码 checkout Web 层 | — |
 | [`client-ui-agent-team`](client-ui-agent-team/README.zh.md) | Web Team roster、任务板与 teammate 导航 | — |

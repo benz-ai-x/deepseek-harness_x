@@ -33,6 +33,7 @@ const MANIFEST_BIN_ALLOWLIST = new Map<string, ManifestBin>([
 const EXECUTABLE_SOURCE_ALLOWLIST = new Map<string, string>([
   ['apps/cli/src/bin.ts', 'supported dsh application launcher'],
   ['packages/context/time-context/tests/fixtures/driver.ts', 'test-only subprocess driver'],
+  ['packages/experimental/agent-team-claude-code/tests/fixtures/loader/driver.ts', 'test-only subprocess driver'],
   ['packages/experimental/agent-team-codex/tests/fixtures/loader/driver.ts', 'test-only subprocess driver'],
   ['packages/experimental/webworker-packer/bin.js', 'private build-only wrapper'],
   ['packages/experimental/webworker-packer/src/bin.ts', 'private build-only implementation'],

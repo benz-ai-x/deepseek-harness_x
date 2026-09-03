@@ -206,6 +206,7 @@ flowchart TD
   end
   subgraph group_experimental["packages/experimental"]
     pkg_experimental_agent_team["experimental-agent-team"]
+    pkg_experimental_agent_team_claude_code["experimental-agent-team-claude-code"]
     pkg_experimental_agent_team_codex["experimental-agent-team-codex"]
     pkg_experimental_agent_team_profile["experimental-agent-team-profile"]
     pkg_experimental_agent_team_web_profile["experimental-agent-team-web-profile"]
@@ -1094,6 +1095,9 @@ flowchart TD
   pkg_subagent_fork_in_process --> pkg_subagent_in_process_driver
   pkg_subagent_spawn_in_process --> pkg_subagent
   pkg_subagent_spawn_in_process --> pkg_subagent_in_process_driver
+  pkg_experimental_agent_team_claude_code --> pkg_experimental_agent_team
+  pkg_experimental_agent_team_claude_code --> pkg_subprocess
+  pkg_experimental_agent_team_claude_code --> pkg_timeout
   pkg_experimental_agent_team_codex --> pkg_experimental_agent_team
   pkg_experimental_agent_team_codex --> pkg_sdk_protocol
   pkg_experimental_agent_team_codex --> pkg_subprocess
@@ -1393,6 +1397,7 @@ flowchart TD
 | [`workflow-worker-thread`](../packages/workflow/workflow-worker-thread) | `workflow` | [`agent`](../packages/core/agent), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`subagent`](../packages/subagent/subagent), [`tools`](../packages/core/tools), [`workflow`](../packages/workflow/workflow) |
 | [`subagent-fork-in-process`](../packages/subagent/subagent-fork-in-process) | `subagent` | [`agent`](../packages/core/agent), [`session`](../packages/core/session), [`subagent`](../packages/subagent/subagent), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) |
 | [`subagent-spawn-in-process`](../packages/subagent/subagent-spawn-in-process) | `subagent` | [`subagent`](../packages/subagent/subagent), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) |
+| [`experimental-agent-team-claude-code`](../packages/experimental/agent-team-claude-code) | `experimental` | [`experimental-agent-team`](../packages/experimental/agent-team), [`subprocess`](../packages/subprocess/subprocess), [`timeout`](../packages/util/timeout) |
 | [`experimental-agent-team-codex`](../packages/experimental/agent-team-codex) | `experimental` | [`experimental-agent-team`](../packages/experimental/agent-team), [`sdk-protocol`](../packages/sdk/protocol), [`subprocess`](../packages/subprocess/subprocess), [`timeout`](../packages/util/timeout) |
 | [`experimental-client-ui-agent-team`](../packages/experimental/client-ui-agent-team) | `experimental` | [`api-remotes`](../packages/api/remotes), [`api-session-controller`](../packages/api/session-controller), [`client-locale`](../packages/client/locale), [`client-ui-conversation`](../packages/client/ui-conversation), [`client-ui-primitives`](../packages/client/ui-primitives), [`client-ui-renderer`](../packages/client/ui-renderer), [`client-ui-session`](../packages/client/ui-session), [`client-ui-slots`](../packages/client/ui-slots), [`experimental-agent-team`](../packages/experimental/agent-team), [`session`](../packages/core/session), [`typert-protocol`](../packages/typert/protocol) |
 | [`experimental-tool-agent-team`](../packages/experimental/tool-agent-team) | `experimental` | [`agent`](../packages/core/agent), [`experimental-agent-team`](../packages/experimental/agent-team), [`session`](../packages/core/session), [`system-prompt`](../packages/core/system-prompt), [`tools`](../packages/core/tools) |
