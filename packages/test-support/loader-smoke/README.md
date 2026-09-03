@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-loader-smoke` runs a real application bin and its `cordis.yml` through the Cordis Loader inside an isolated temporary directory, capturing stdout and stderr, so a smoke test exercises the true composition path — plugin loading, service wiring, and the agent loop — rather than a hand-built test context. `runFixtureTurn` drives one task through the composition's single root agent and returns the final assistant text and accumulated token usage. The package also provides the mode-aware launch resolver (`src` under tsx for zero-build dev, built `lib` under plain Node for CI) shared by package-local subprocess harnesses. It is support-tier test infrastructure, not a product API.
+`dsh-loader-smoke` runs a real application bin and its `cordis.yml` through the Cordis Loader inside an isolated temporary directory, capturing stdout and stderr, so a smoke test exercises the true composition path — plugin loading, service wiring, and the agent loop — rather than a hand-built test context. `runFixtureTurn` drives one task through the composition's single root agent and returns the final assistant text and accumulated token usage. The package also provides the mode-aware launch resolver (`src` under tsx for zero-build dev, built `lib` under Node for CI) shared by package-local subprocess harnesses. It is support-tier test infrastructure, not a product API.
 
 ## Table of Contents
 
@@ -53,7 +53,7 @@ Profile integration drivers use the repository-only `tests/fixtures/production-p
 
 ### Source or built mode
 
-`resolveExampleLaunch` picks the artifact an example bin boots from. `src` mode runs the bin under tsx with `TSX_TSCONFIG_PATH` set, so workspace imports resolve through the tsconfig `paths` map — the zero-build dev path. `lib` mode runs the built `lib/` bin under plain Node, so bare package plugins resolve through real package `exports`, exactly as an installed consumer resolves them. The mode comes from an explicit value or `DSH_EXAMPLE_MODE` (CI sets `lib`, dev leaves it unset); anything else fails loud.
+`resolveExampleLaunch` picks the artifact an example bin boots from. `src` mode runs the bin under tsx with `TSX_TSCONFIG_PATH` set, so workspace imports resolve through the tsconfig `paths` map — the zero-build dev path. `lib` mode runs the built `lib/` bin under Node with no paths map, so bare package plugins resolve through real package `exports`, exactly as an installed consumer resolves them. A relative TypeScript test fixture uses native type stripping when available and the package-owned tsx hook only when the Node binary omits that optional feature. The mode comes from an explicit value or `DSH_EXAMPLE_MODE` (CI sets `lib`, dev leaves it unset); anything else fails loud.
 
 ### What can go wrong
 

@@ -545,7 +545,37 @@ export interface Config {
 }
 ```
 
-来源：[`packages/experimental/agent-team/src/types.ts:220`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:203`](../packages/experimental/agent-team/src/types.ts)
+
+<a id="deepseek-aidsh-experimental-agent-team-codex"></a>
+
+## `@deepseek-ai/dsh-experimental-agent-team-codex`
+
+需要：`agentTeams` · `subprocess`
+
+```ts config-catalog
+/** Deployment-owned durable Codex adapter settings. */
+export interface Config {
+  /** Stable provider id registered with Agent Teams. */
+  readonly providerName?: string
+  /** Workspace path resolved to absolute for every native thread owned by this instance. */
+  readonly cwd?: string
+  /** Optional native Codex model pinned for this provider generation. */
+  readonly model?: string
+  /** Explicit environment layered over the subprocess seam's scrubbed parent. */
+  readonly env?: Readonly<Record<string, string>>
+  /** Deployment-owned confinement; Profiles cannot weaken this value. */
+  readonly sandbox?: SandboxMode
+  /** Grace for exact process-tree termination. */
+  readonly disposeGraceMs?: number
+  /** Maximum fixed-shape evidence facts retained per attached thread. */
+  readonly maxEvidenceItems?: number
+}
+
+type SandboxMode = 'read-only' | 'workspace-write'
+```
+
+来源：[`packages/experimental/agent-team-codex/src/index.ts:52`](../packages/experimental/agent-team-codex/src/index.ts)
 
 <a id="deepseek-aidsh-experimental-code-runtime-python"></a>
 

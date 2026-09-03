@@ -1,45 +1,28 @@
 /** Public Agent Teams identities, durable records, and service request values. */
 
-import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm/brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type {
+  TeamId,
+  TeamMessageId,
+  TeamTaskId,
+  TeammateLaunchRequestId,
+  TeammateRuntimeHandle,
+} from './brand.ts'
 
-/** Identifies the implicit team rooted at one top-level Session. */
-export type TeamId = Branded<'TeamId'>
-
-/** Stable identifier for one task in a Team. */
-export type TeamTaskId = Branded<'TeamTaskId'>
-
-/** Stable identifier for one durable peer message. */
-export type TeamMessageId = Branded<'TeamMessageId'>
-
-/** Non-empty opaque caller identity, at most 200 UTF-8 bytes, retained across launch retries. */
-export type TeammateLaunchRequestId = Branded<'TeammateLaunchRequestId'>
-
-/** Stable non-empty opaque provider-native identity of at most 200 UTF-8 bytes. */
-export type TeammateRuntimeHandle = Branded<'TeammateRuntimeHandle'>
-
-
-/** Stable provider-native identity of one accepted work turn. */
-export type TeammateRuntimeTurnId = Branded<'TeammateRuntimeTurnId'>
-
-
-/** Caller-owned idempotency identity of one isolated evaluation request. */
-export type TeammateEvaluationId = Branded<'TeammateEvaluationId'>
-
-
-/** Stable provider-native identity of one isolated evaluation runtime. */
-export type TeammateEvaluationHandle = Branded<'TeammateEvaluationHandle'>
-
-
-/** Stable provider-native identity of one detached evidence fact. */
-export type TeammateRuntimeEvidenceId = Branded<'TeammateRuntimeEvidenceId'>
-
-
-/** Opaque continuation identity for one provider-native evidence window. */
-export type TeammateRuntimeEvidenceCursor = Branded<'TeammateRuntimeEvidenceCursor'>
-
+export type {
+  TeamId,
+  TeamMessageId,
+  TeamTaskId,
+  TeammateEvaluationHandle,
+  TeammateEvaluationId,
+  TeammateLaunchRequestId,
+  TeammateRuntimeEvidenceCursor,
+  TeammateRuntimeEvidenceId,
+  TeammateRuntimeHandle,
+  TeammateRuntimeTurnId,
+} from './brand.ts'
 
 /** Profile behavior a durable external teammate runtime can enforce. */
 export type TeammateProfileCapability =

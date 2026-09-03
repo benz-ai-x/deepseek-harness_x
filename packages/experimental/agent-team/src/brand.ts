@@ -1,41 +1,38 @@
 /** Runtime constructors for public Agent Teams branded identities. */
 
 import { Buffer } from 'node:buffer'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString, type Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {
-  TeamId as TeamIdType,
-  TeamMessageId as TeamMessageIdType,
-  TeamTaskId as TeamTaskIdType,
-  TeammateEvaluationHandle as TeammateEvaluationHandleType,
-  TeammateEvaluationId as TeammateEvaluationIdType,
-  TeammateLaunchRequestId as TeammateLaunchRequestIdType,
-  TeammateRuntimeEvidenceCursor as TeammateRuntimeEvidenceCursorType,
-  TeammateRuntimeEvidenceId as TeammateRuntimeEvidenceIdType,
-  TeammateRuntimeHandle as TeammateRuntimeHandleType,
-  TeammateRuntimeTurnId as TeammateRuntimeTurnIdType,
-} from './types.ts'
 
-/** Public Team identity paired with its runtime constructor. */
-export type TeamId = TeamIdType
-/** Public durable message identity paired with its runtime constructor. */
-export type TeamMessageId = TeamMessageIdType
-/** Public Team task identity paired with its runtime constructor. */
-export type TeamTaskId = TeamTaskIdType
-/** Public native evaluation handle paired with its runtime constructor. */
-export type TeammateEvaluationHandle = TeammateEvaluationHandleType
-/** Public evaluation request identity paired with its runtime constructor. */
-export type TeammateEvaluationId = TeammateEvaluationIdType
-/** Public durable launch identity paired with its runtime constructor. */
-export type TeammateLaunchRequestId = TeammateLaunchRequestIdType
-/** Public evidence cursor paired with its runtime constructor. */
-export type TeammateRuntimeEvidenceCursor = TeammateRuntimeEvidenceCursorType
-/** Public evidence identity paired with its runtime constructor. */
-export type TeammateRuntimeEvidenceId = TeammateRuntimeEvidenceIdType
-/** Public provider-native runtime handle paired with its runtime constructor. */
-export type TeammateRuntimeHandle = TeammateRuntimeHandleType
-/** Public provider-native turn identity paired with its runtime constructor. */
-export type TeammateRuntimeTurnId = TeammateRuntimeTurnIdType
+/** Identifies the implicit team rooted at one top-level Session. */
+export type TeamId = Branded<'TeamId'>
+
+/** Stable identifier for one task in a Team. */
+export type TeamTaskId = Branded<'TeamTaskId'>
+
+/** Stable identifier for one durable peer message. */
+export type TeamMessageId = Branded<'TeamMessageId'>
+
+/** Non-empty opaque caller identity, at most 200 UTF-8 bytes, retained across launch retries. */
+export type TeammateLaunchRequestId = Branded<'TeammateLaunchRequestId'>
+
+/** Stable non-empty opaque provider-native identity of at most 200 UTF-8 bytes. */
+export type TeammateRuntimeHandle = Branded<'TeammateRuntimeHandle'>
+
+/** Stable provider-native identity of one accepted work turn. */
+export type TeammateRuntimeTurnId = Branded<'TeammateRuntimeTurnId'>
+
+/** Caller-owned idempotency identity of one isolated evaluation request. */
+export type TeammateEvaluationId = Branded<'TeammateEvaluationId'>
+
+/** Stable provider-native identity of one isolated evaluation runtime. */
+export type TeammateEvaluationHandle = Branded<'TeammateEvaluationHandle'>
+
+/** Stable provider-native identity of one detached evidence fact. */
+export type TeammateRuntimeEvidenceId = Branded<'TeammateRuntimeEvidenceId'>
+
+/** Opaque continuation identity for one provider-native evidence window. */
+export type TeammateRuntimeEvidenceCursor = Branded<'TeammateRuntimeEvidenceCursor'>
 
 const MAX_DURABLE_OPAQUE_ID_BYTES = 200
 

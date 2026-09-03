@@ -82,10 +82,16 @@ describe('resolveExampleLaunch', () => {
     expect(env.DSH_HOME).toBe('/tmp/home')
   })
 
-  it('lib mode: uses an explicit plain-Node bin when provided', () => {
+  it('lib mode: uses an explicit bin and supplies tsx only without native stripping', () => {
     const fixture = '/repo/fixture.ts'
     const { args } = resolveExampleLaunch({ srcBin: fixture, libBin: fixture, mode: 'lib' })
-    expect(args).toContain(fixture)
+    expect(args.at(-1)).toBe(fixture)
+    if (Reflect.get(process.features, 'typescript')) {
+      expect(args).toEqual([fixture])
+    } else {
+      expect(args[0]).toBe('--import')
+      expect(args[1]).toContain('/tsx/')
+    }
   })
 
   it('lib mode: rewrites only the last /src/ segment', () => {

@@ -6,7 +6,8 @@
  * ({@link resolveExampleLaunch}): booting an example bin from TypeScript source under `tsx` (the
  * zero-build dev path, resolving `@deepseek-ai/dsh-*` / `@cordisjs/*` through the tsconfig `paths`
  * map) or from built `lib/` under plain Node (resolving bare packages through real `exports`, as an
- * installed consumer does, while Node type-strips relative example-local TypeScript plugins).
+ * installed consumer does, while Node type-strips relative example-local TypeScript plugins or
+ * uses the package-owned `tsx` hook on Node builds that omit native TypeScript support).
  *
  * @module @deepseek-ai/dsh-loader-smoke
  */
@@ -58,7 +59,7 @@ export function resolveExampleMode(raw: string | undefined = process.env[EXAMPLE
 export interface ExampleLaunchOptions {
   /** Absolute path to the example bin's TypeScript source entry (`<pkg>/src/bin.ts`); the `lib` bin is derived from it. */
   readonly srcBin: string
-  /** Explicit plain-Node entry for `lib` mode; test fixtures may point this at Node-type-strippable TypeScript. */
+  /** Explicit Node entry for `lib` mode; TypeScript fixtures use native stripping or a `tsx` fallback. */
   readonly libBin?: string | undefined
   /** Arguments passed after the bin — the config, positional (`[configPath]`) or flagged (`['--config', configPath]`). */
   readonly configArgs?: readonly string[]
@@ -99,10 +100,11 @@ function toLibBin(srcBin: string): string {
  *
  * `src` yields `node --import <tsx> <srcBin> <configArgs>` with `TSX_TSCONFIG_PATH` set so the
  * tsconfig `paths` map resolves workspace imports to source. `lib` yields
- * `node <libBin> <configArgs>` under plain Node with no tsx and no paths map, so
- * bare package plugins resolve through real package `exports` into built `lib/`; relative example-local
- * TypeScript plugins remain source files loaded through Node's built-in type stripping. Bare resolution
- * requires the config to live below a workspace that declares its `cordis.yml` package dependencies.
+ * `node <libBin> <configArgs>` under plain Node with no paths map, so bare package plugins resolve
+ * through real package `exports` into built `lib/`. Relative example-local TypeScript fixtures use
+ * Node's built-in type stripping when available, or the package-owned `tsx` import hook when the Node
+ * binary omits that optional feature. Bare resolution requires the config to live below a workspace
+ * that declares its `cordis.yml` package dependencies.
  *
  * @param options - the source bin, config arguments, mode, and environment.
  * @returns the command, argument vector, and mode-specific environment to spawn with.
@@ -127,7 +129,12 @@ export function resolveExampleLaunch(options: ExampleLaunchOptions): ExampleLaun
     return { command: process.execPath, args: ['--import', tsxLoader, options.srcBin, ...configArgs], env }
   }
 
-  return { command: process.execPath, args: [options.libBin ?? toLibBin(options.srcBin), ...configArgs], env }
+  const libBin = options.libBin ?? toLibBin(options.srcBin)
+  const needsTypeScriptHook = /\.tsx?$/u.test(libBin) && !Reflect.get(process.features, 'typescript')
+  const args = needsTypeScriptHook
+    ? ['--import', import.meta.resolve('tsx'), libBin, ...configArgs]
+    : [libBin, ...configArgs]
+  return { command: process.execPath, args, env }
 }
 
 /** Inputs that vary between real-Loader example smokes. */

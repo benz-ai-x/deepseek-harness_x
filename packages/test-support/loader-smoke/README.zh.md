@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-loader-smoke` 在隔离的临时目录中通过 Cordis Loader 运行真实的应用可执行文件及其 `cordis.yml`，捕获 stdout 与 stderr，使冒烟测试检验真实的组合路径——插件加载、服务接线与 agent loop（智能体循环）——而非手工搭建的测试上下文。`runFixtureTurn` 让一项任务通过组合中的唯一根 agent（智能体），并返回最终 assistant 文本与累计 token 用量。本包还为包内子进程 harness 提供共享的模式感知启动解析器（`src` 模式经 tsx，零构建开发路径；`lib` 模式经普通 Node 运行已构建产物，供 CI 使用）。它是支持层测试基础设施，而非产品 API。
+`dsh-loader-smoke` 在隔离的临时目录中通过 Cordis Loader 运行真实的应用可执行文件及其 `cordis.yml`，捕获 stdout 与 stderr，使冒烟测试检验真实的组合路径——插件加载、服务接线与 agent loop（智能体循环）——而非手工搭建的测试上下文。`runFixtureTurn` 让一项任务通过组合中的唯一根 agent（智能体），并返回最终 assistant 文本与累计 token 用量。本包还为包内子进程 harness 提供共享的模式感知启动解析器（`src` 模式经 tsx，零构建开发路径；`lib` 模式经 Node 运行已构建产物，供 CI 使用）。它是支持层测试基础设施，而非产品 API。
 
 ## 目录
 
@@ -53,7 +53,7 @@ Profile 集成 driver 使用仅限仓库内部的 `tests/fixtures/production-pro
 
 ### 源模式或构建模式
 
-`resolveExampleLaunch` 选择示例可执行文件从哪个产物启动。`src` 模式在 tsx 下运行可执行文件并设置 `TSX_TSCONFIG_PATH`，使工作区导入通过 tsconfig `paths` 映射解析——这是零构建开发路径。`lib` 模式在普通 Node 下运行构建后的 `lib/` 可执行文件，使裸包插件通过真实包 `exports` 解析，与已安装消费方的解析方式完全一致。模式来自显式值或 `DSH_EXAMPLE_MODE`（CI 设置 `lib`，开发时保持未设置）；其他任何值都会明确报错。
+`resolveExampleLaunch` 选择示例可执行文件从哪个产物启动。`src` 模式在 tsx 下运行可执行文件并设置 `TSX_TSCONFIG_PATH`，使工作区导入通过 tsconfig `paths` 映射解析——这是零构建开发路径。`lib` 模式在不设置 paths 映射的 Node 下运行构建后的 `lib/` 可执行文件，使裸包插件通过真实包 `exports` 解析，与已安装消费方的解析方式完全一致。相对 TypeScript 测试 fixture 在可用时使用原生类型剥离，仅当 Node 二进制未编译该可选能力时才使用本包自有的 tsx hook。模式来自显式值或 `DSH_EXAMPLE_MODE`（CI 设置 `lib`，开发时保持未设置）；其他任何值都会明确报错。
 
 ### 可能出什么问题
 

@@ -1,0 +1,18 @@
+# Real Loader composition for the durable Codex provider. The application rows
+# stay disabled because this fixture inspects registration without starting a turn.
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+
+    - id: agent-team-codex
+      name: '@deepseek-ai/dsh-experimental-agent-team-codex'
+      config:
+        providerName: codex-loader
+        sandbox: read-only
+        maxEvidenceItems: 7
