@@ -21,6 +21,8 @@ import TeamService, {
   TeammateRuntimeHandle,
   TeammateRuntimeEvidenceCursor,
   TeammateRuntimeEvidenceId,
+  TeammateRuntimeApprovalId,
+  TeammateRuntimeToolCallId,
   TeammateRuntimeTurnId,
   type TeammateRuntimeCreateRequest,
   type TeammateRuntimeDisposeRequest,
@@ -421,8 +423,12 @@ describe('durable teammate runtime registry', () => {
   it('admits bounded opaque durable identities and releases an oversized native result', async () => {
     expect(TeammateLaunchRequestId('launch/request/请求')).toBe('launch/request/请求')
     expect(TeammateRuntimeHandle('native/session/运行')).toBe('native/session/运行')
+    expect(TeammateRuntimeApprovalId('approval/request/请求')).toBe('approval/request/请求')
+    expect(TeammateRuntimeToolCallId('tool/call/运行')).toBe('tool/call/运行')
     expect(() => TeammateLaunchRequestId('')).toThrow(/non-empty.*200 UTF-8 bytes/u)
     expect(() => TeammateRuntimeHandle('运'.repeat(67))).toThrow(/non-empty.*200 UTF-8 bytes/u)
+    expect(() => TeammateRuntimeApprovalId('')).toThrow(/non-empty.*200 UTF-8 bytes/u)
+    expect(() => TeammateRuntimeToolCallId('运'.repeat(67))).toThrow(/non-empty.*200 UTF-8 bytes/u)
 
     const { ctx } = await setup()
     const provider = new FakeDurableRuntime(fakeStore())
@@ -468,6 +474,207 @@ describe('durable teammate runtime registry', () => {
     const received = provider.create.mock.calls[0]?.[0].profile
     expect(received).not.toBe(request.profile)
     expect(received).not.toHaveProperty('secret')
+    await providerFiber.dispose()
+  })
+
+  it('accepts a before-tool ask only with the exact-call approval capability', async () => {
+    const { ctx } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore())
+    const providerFiber = await register(ctx, providerWith(provider, {
+      profileCapabilities: ['persona', 'mission', 'hooks'],
+      runtimeCapabilities: ['exact-call-approval', 'evidence'],
+    }))
+    const profile = runtimeProfile({
+      hooks: [{
+        id: 'confirm-write',
+        point: 'before-tool',
+        effect: 'ask',
+        matcher: 'write*',
+        text: 'Confirm this exact write call.',
+      }],
+    })
+    const requirements = {
+      contextMode: 'fresh',
+      profileCapabilities: ['persona', 'mission', 'hooks'],
+      runtimeCapabilities: ['exact-call-approval'],
+    } as const satisfies TeammateRuntimeRequirements
+
+    expect(() => runtimeRegistry(ctx).validateLaunch('fake-native', {
+      ...requirements,
+      runtimeCapabilities: [],
+    }, profile)).toThrow(expect.objectContaining({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' }))
+    expect(runtimeRegistry(ctx).validateLaunch('fake-native', requirements, profile)).toEqual({
+      requirements,
+      profile,
+    })
+    await providerFiber.dispose()
+  })
+
+  it('normalizes one exact native approval audit identity without copying its proposed arguments', async () => {
+    const { ctx } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore())
+    const providerFiber = await register(ctx, providerWith(provider, {
+      profileCapabilities: ['persona', 'mission', 'hooks'],
+      runtimeCapabilities: ['exact-call-approval', 'evidence'],
+    }))
+    const requirements = {
+      contextMode: 'fresh',
+      profileCapabilities: ['persona', 'mission', 'hooks'],
+      runtimeCapabilities: ['exact-call-approval', 'evidence'],
+    } as const satisfies TeammateRuntimeRequirements
+    const created = await runtimeRegistry(ctx).create('fake-native', createRequest({
+      profile: runtimeProfile({
+        hooks: [{
+          id: 'confirm-write',
+          point: 'before-tool',
+          effect: 'ask',
+          matcher: 'write*',
+          text: 'Confirm this exact write call.',
+        }],
+      }),
+      requirements,
+    }))
+    provider.publishPresence(created.nativeHandle, 'running')
+    provider.evidence.mockResolvedValueOnce({
+      nativeHandle: created.nativeHandle,
+      items: [
+        {
+          id: TeammateRuntimeEvidenceId('approval-asked'),
+          kind: 'approval',
+          timestamp: 5,
+          turnId: created.turnId,
+          name: 'write_file',
+          outcome: 'asked',
+          approvalId: 'native-approval-1',
+          callId: 'native-call-1',
+          policyId: 'confirm-write',
+          arguments: 'SECRET_NATIVE_ARGUMENTS',
+        },
+        {
+          id: TeammateRuntimeEvidenceId('approval-decided'),
+          kind: 'approval',
+          timestamp: 6,
+          turnId: created.turnId,
+          name: 'write_file',
+          outcome: 'allowed-once',
+          approvalId: 'native-approval-1',
+          callId: 'native-call-1',
+          policyId: 'confirm-write',
+        },
+      ],
+      pendingApprovals: [{
+        turnId: created.turnId,
+        approvalId: 'native-approval-2',
+        callId: 'native-call-2',
+      }],
+      complete: true,
+    } as never)
+
+    const evidence = await runtimeRegistry(ctx).evidence('fake-native', {
+      nativeHandle: created.nativeHandle,
+      limit: 2,
+      signal: SIGNAL,
+    })
+
+    expect(evidence).toEqual({
+      nativeHandle: created.nativeHandle,
+      items: [
+        {
+          id: 'approval-asked',
+          kind: 'approval',
+          timestamp: 5,
+          turnId: created.turnId,
+          name: 'write_file',
+          outcome: 'asked',
+          approvalId: 'native-approval-1',
+          callId: 'native-call-1',
+          policyId: 'confirm-write',
+        },
+        {
+          id: 'approval-decided',
+          kind: 'approval',
+          timestamp: 6,
+          turnId: created.turnId,
+          name: 'write_file',
+          outcome: 'allowed-once',
+          approvalId: 'native-approval-1',
+          callId: 'native-call-1',
+          policyId: 'confirm-write',
+        },
+      ],
+      pendingApprovals: [{
+        turnId: created.turnId,
+        approvalId: 'native-approval-2',
+        callId: 'native-call-2',
+      }],
+      complete: true,
+    })
+    expect(JSON.stringify(evidence)).not.toContain('SECRET_NATIVE_ARGUMENTS')
+    await providerFiber.dispose()
+  })
+
+  it('quarantines pending approval correlations unless their exact runtime is currently running', async () => {
+    const { ctx } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore())
+    const providerFiber = await register(ctx, providerWith(provider, {
+      profileCapabilities: ['persona', 'mission', 'hooks'],
+      runtimeCapabilities: ['exact-call-approval', 'evidence'],
+    }))
+    const requirements = {
+      contextMode: 'fresh',
+      profileCapabilities: ['persona', 'mission', 'hooks'],
+      runtimeCapabilities: ['exact-call-approval', 'evidence'],
+    } as const satisfies TeammateRuntimeRequirements
+    const created = await runtimeRegistry(ctx).create('fake-native', createRequest({
+      profile: runtimeProfile({
+        hooks: [{
+          id: 'confirm-write',
+          point: 'before-tool',
+          effect: 'ask',
+          matcher: 'write*',
+          text: 'Confirm this exact write call.',
+        }],
+      }),
+      requirements,
+    }))
+    provider.evidence.mockResolvedValueOnce({
+      nativeHandle: created.nativeHandle,
+      items: [],
+      pendingApprovals: [{
+        turnId: created.turnId,
+        approvalId: 'native-approval-1',
+        callId: 'native-call-1',
+      }],
+      complete: false,
+    } as never)
+
+    await expect(runtimeRegistry(ctx).evidence('fake-native', {
+      nativeHandle: created.nativeHandle,
+      limit: 1,
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
+    expect(runtimeRegistry(ctx).available('fake-native')).toBe(false)
+    await providerFiber.dispose()
+  })
+
+  it('accepts an explicit empty pending set from an evidence provider without approval capability', async () => {
+    const { ctx } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore())
+    const providerFiber = await register(ctx, provider)
+    const created = await runtimeRegistry(ctx).create('fake-native', createRequest())
+    provider.evidence.mockResolvedValueOnce({
+      nativeHandle: created.nativeHandle,
+      items: [],
+      pendingApprovals: [],
+      complete: true,
+    })
+
+    await expect(runtimeRegistry(ctx).evidence('fake-native', {
+      nativeHandle: created.nativeHandle,
+      limit: 1,
+      signal: SIGNAL,
+    })).resolves.toMatchObject({ pendingApprovals: [] })
+    expect(runtimeRegistry(ctx).available('fake-native')).toBe(true)
     await providerFiber.dispose()
   })
 
@@ -630,6 +837,10 @@ describe('durable teammate runtime registry', () => {
       providerWith(invalidBase, { contextModes: ['fresh', 'fresh'] }),
       providerWith(invalidBase, { profileCapabilities: ['persona', 'persona'] }),
       providerWith(invalidBase, { runtimeCapabilities: ['evidence', 'evidence'] }),
+      providerWith(invalidBase, {
+        profileCapabilities: ['persona', 'mission', 'hooks'],
+        runtimeCapabilities: ['exact-call-approval'],
+      }),
     ]
     for (const invalid of invalidProviders) {
       expect(() => ctx.agentTeams.registerTeammateRuntimeProvider(invalid))
@@ -1304,16 +1515,17 @@ describe('durable teammate runtime registry', () => {
         nativeTurnId: 'native-turn-1',
       },
     })
-    await expect(first.ctx.agentTeams.readTeammateRuntimeEvidence(lead, 'native-worker', {
+    const evidence = await first.ctx.agentTeams.readTeammateRuntimeEvidence(lead, 'native-worker', {
       limit: 10,
       signal: SIGNAL,
-    })).resolves.toMatchObject({
+    })
+    expect(evidence).toMatchObject({
       nativeHandle: 'native-1',
       complete: true,
-      items: expect.arrayContaining([
-        expect.objectContaining({ turnId: 'native-turn-1', outcome: 'completed' }),
-      ]),
     })
+    expect(evidence.items).toContainEqual(
+      expect.objectContaining({ turnId: 'native-turn-1', outcome: 'completed' }),
+    )
     expect(first.ctx.agentTeams.interrupt(lead, 'native-worker')).toEqual({ previousStatus: 'idle' })
     expect(provider.interrupt).toHaveBeenLastCalledWith({ nativeHandle: 'native-1' })
 

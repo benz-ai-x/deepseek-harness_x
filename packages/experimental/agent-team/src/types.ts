@@ -21,7 +21,9 @@ export type {
   TeammateLaunchRequestId,
   TeammateRuntimeEvidenceCursor,
   TeammateRuntimeEvidenceId,
+  TeammateRuntimeApprovalId,
   TeammateRuntimeHandle,
+  TeammateRuntimeToolCallId,
   TeammateRuntimeTurnId,
 } from './brand.ts'
 
@@ -60,8 +62,10 @@ export type TeammateRuntimeHookPoint = 'session-start' | 'before-step' | 'before
 
 /** One enabled declarative Profile hook passed without executable code. */
 export interface TeammateRuntimeProfileHook {
+  /** Stable Profile-owned policy identity; required for exact-call approval hooks. */
+  readonly id?: string
   readonly point: TeammateRuntimeHookPoint
-  readonly effect: 'context' | 'deny'
+  readonly effect: 'context' | 'deny' | 'ask'
   readonly matcher?: string
   readonly text: string
 }

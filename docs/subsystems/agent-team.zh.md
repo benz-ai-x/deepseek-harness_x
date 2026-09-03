@@ -37,7 +37,7 @@ interface TeamMemberSnapshot {
 
 ## 持久运行时放置
 
-external provider 只声明它能够强制执行的 context mode 与 capability。Agent Teams 在预留 roster 身份或向 provider 发送工作前验证完整需求；one-shot subagent provider 不作为回退。
+external provider 只声明它能够强制执行的 context mode 与 capability。Agent Teams 在预留 roster 身份或向 provider 发送工作前验证完整需求；one-shot subagent provider 不作为回退。精确调用审批同时要求 Hook 强制执行与规范 evidence，每个 ask Hook 都携带由 Profile 拥有的稳定策略 id，并必须关联到相同不可变的原生 call 与 approval 身份。
 
 ```ts type-equiv
 /** Exact capability demand checked before a provider receives work. */
@@ -62,7 +62,7 @@ interface TeamMemberExternalRuntimeSnapshot {
 
 `launchRequestId` 让相同创建重试保持幂等，`requestFingerprint` 则拒绝用不同规范化输入复用该身份。provider 只有在持久接受初始工作后才返回 `nativeHandle`；若可以观察，同一 acknowledgement 还会携带 `initialTurnId`，并将其保留为规范原生关联。在记录不透明 runtime 身份前，external member 不能变为 `active`。provider process object、credential、prompt、evidence payload 与原生 session 状态不会进入 Team 日志。
 
-精确的 live Lead 可以读取 active external teammate 的有界规范 evidence page。Agent Teams 在内部解析 roster 所有的 native handle，因此调用方不能把检查重定向到无关 runtime。只有稳定 turn/tool 名称、终态、时间戳和 provider 报告的 token 计数可以跨越该接缝；原始 prompt、reply、tool argument/result、文件、环境值、credential 与 provider payload 始终被排除。
+精确的 live Lead 可以读取 active external teammate 的有界规范 evidence page。Agent Teams 在内部解析 roster 所有的 native handle，因此调用方不能把检查重定向到无关 runtime。只有稳定 turn/tool/approval 身份、规范结果、时间戳、pending approval 关联和 provider 报告的 token 计数可以跨越该接缝；原始 prompt、reply、拟议 tool argument/result、文件、环境值、credential 与 provider payload 始终被排除。只有该精确 runtime 报告 `running` 时才接受非空 pending 集合；不会从未匹配的 ask 推断 pending 状态。
 
 ```ts type-equiv
 /** Request for a bounded evidence window owned by one native runtime. */
@@ -75,10 +75,21 @@ interface TeammateRuntimeEvidenceRequest {
 ```
 
 ```ts type-equiv
+/** One provider-proven still-live exact approval correlation, independent of evidence pagination. */
+interface TeammateRuntimePendingApproval {
+  readonly turnId: TeammateRuntimeTurnId
+  readonly approvalId: TeammateRuntimeApprovalId
+  readonly callId: TeammateRuntimeToolCallId
+}
+```
+
+```ts type-equiv
 /** Detached evidence page correlated to its exact native runtime. */
 interface TeammateRuntimeEvidenceResult {
   readonly nativeHandle: TeammateRuntimeHandle
   readonly items: readonly TeammateRuntimeEvidenceItem[]
+  /** Complete current pending set; an omitted set is empty and never inferred from an unmatched ask. */
+  readonly pendingApprovals?: readonly TeammateRuntimePendingApproval[]
   readonly nextCursor?: TeammateRuntimeEvidenceCursor
   readonly complete: boolean
 }

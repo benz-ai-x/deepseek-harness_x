@@ -37,7 +37,7 @@ Every member starts in `provisioning` and reaches exactly one terminal roster ph
 
 ## Durable runtime placement
 
-An external provider declares only context modes and capabilities it can enforce. Agent Teams validates the complete demand before it reserves a roster identity or sends work to that provider; one-shot subagent providers are not a fallback.
+An external provider declares only context modes and capabilities it can enforce. Agent Teams validates the complete demand before it reserves a roster identity or sends work to that provider; one-shot subagent providers are not a fallback. Exact-call approval requires both Hook enforcement and normalized evidence, and each ask Hook carries a stable Profile-owned policy id that must correlate to the same immutable native call and approval identities.
 
 ```ts type-equiv
 /** Exact capability demand checked before a provider receives work. */
@@ -62,7 +62,7 @@ interface TeamMemberExternalRuntimeSnapshot {
 
 `launchRequestId` makes identical creation retries idempotent, while `requestFingerprint` rejects reuse with different normalized input. The provider returns `nativeHandle` only after it durably accepts initial work; when observable, the same acknowledgement carries `initialTurnId`, which is retained as the canonical native correlation. An external member cannot become `active` before the opaque runtime identity is recorded. Provider process objects, credentials, prompts, evidence payloads, and native session state do not enter the Team log.
 
-The exact live Lead may read a bounded normalized evidence page for an active external teammate. Agent Teams resolves the roster-owned native handle internally, so the caller cannot redirect inspection to an unrelated runtime. Only stable turn/tool names, terminal outcomes, timestamps, and provider-reported token counters may cross this seam; raw prompts, replies, tool arguments/results, files, environment values, credentials, and provider payloads remain excluded.
+The exact live Lead may read a bounded normalized evidence page for an active external teammate. Agent Teams resolves the roster-owned native handle internally, so the caller cannot redirect inspection to an unrelated runtime. Only stable turn/tool/approval identities, normalized outcomes, timestamps, pending approval correlations, and provider-reported token counters may cross this seam; raw prompts, replies, proposed tool arguments/results, files, environment values, credentials, and provider payloads remain excluded. A non-empty pending set is accepted only while that exact runtime reports `running`; an unmatched ask is never inferred to be pending.
 
 ```ts type-equiv
 /** Request for a bounded evidence window owned by one native runtime. */
@@ -75,10 +75,21 @@ interface TeammateRuntimeEvidenceRequest {
 ```
 
 ```ts type-equiv
+/** One provider-proven still-live exact approval correlation, independent of evidence pagination. */
+interface TeammateRuntimePendingApproval {
+  readonly turnId: TeammateRuntimeTurnId
+  readonly approvalId: TeammateRuntimeApprovalId
+  readonly callId: TeammateRuntimeToolCallId
+}
+```
+
+```ts type-equiv
 /** Detached evidence page correlated to its exact native runtime. */
 interface TeammateRuntimeEvidenceResult {
   readonly nativeHandle: TeammateRuntimeHandle
   readonly items: readonly TeammateRuntimeEvidenceItem[]
+  /** Complete current pending set; an omitted set is empty and never inferred from an unmatched ask. */
+  readonly pendingApprovals?: readonly TeammateRuntimePendingApproval[]
   readonly nextCursor?: TeammateRuntimeEvidenceCursor
   readonly complete: boolean
 }

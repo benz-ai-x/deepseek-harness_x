@@ -31,6 +31,12 @@ export type TeammateEvaluationHandle = Branded<'TeammateEvaluationHandle'>
 /** Stable provider-native identity of one detached evidence fact. */
 export type TeammateRuntimeEvidenceId = Branded<'TeammateRuntimeEvidenceId'>
 
+/** Stable provider-native audit identity of one exact approval request. */
+export type TeammateRuntimeApprovalId = Branded<'TeammateRuntimeApprovalId'>
+
+/** Stable provider-native identity of one immutable proposed tool call. */
+export type TeammateRuntimeToolCallId = Branded<'TeammateRuntimeToolCallId'>
+
 /** Opaque continuation identity for one provider-native evidence window. */
 export type TeammateRuntimeEvidenceCursor = Branded<'TeammateRuntimeEvidenceCursor'>
 
@@ -124,6 +130,26 @@ export function TeammateEvaluationHandle(id: string): TeammateEvaluationHandle {
  */
 export function TeammateRuntimeEvidenceId(id: string): TeammateRuntimeEvidenceId {
   return brandString<TeammateRuntimeEvidenceId>(id)
+}
+
+/**
+ * Admit one provider-native approval audit identity without imposing lexical grammar.
+ * @param id - Non-empty opaque identity of at most 200 UTF-8 bytes.
+ * @returns the same string branded as a native approval audit identity.
+ * @throws {TypeError} when the durable identity is empty or exceeds 200 UTF-8 bytes.
+ */
+export function TeammateRuntimeApprovalId(id: string): TeammateRuntimeApprovalId {
+  return brandString<TeammateRuntimeApprovalId>(boundedDurableOpaqueId(id, 'TeammateRuntimeApprovalId'))
+}
+
+/**
+ * Admit one immutable provider-native tool-call identity without imposing lexical grammar.
+ * @param id - Non-empty opaque identity of at most 200 UTF-8 bytes.
+ * @returns the same string branded as an immutable native tool-call identity.
+ * @throws {TypeError} when the durable identity is empty or exceeds 200 UTF-8 bytes.
+ */
+export function TeammateRuntimeToolCallId(id: string): TeammateRuntimeToolCallId {
+  return brandString<TeammateRuntimeToolCallId>(boundedDurableOpaqueId(id, 'TeammateRuntimeToolCallId'))
 }
 
 /**

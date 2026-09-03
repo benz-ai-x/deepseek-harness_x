@@ -1436,16 +1436,21 @@ describe('durable Claude Code teammate runtime', () => {
       ]))
       .digest('hex')
     marker.resolve(`[dsh-agent-team:launch:${digest}]`)
-    await expect(first).resolves.toEqual({
+    const firstResult = await first
+    const secondResult = await second
+    if (firstResult === undefined || secondResult === undefined) {
+      throw new Error('missing deterministic resumed runtime')
+    }
+    expect(firstResult).toMatchObject({
       nativeHandle: expectedHandle,
-      turnId: expect.any(String),
       presence: 'idle',
     })
-    await expect(second).resolves.toEqual({
+    expect(secondResult).toMatchObject({
       nativeHandle: expectedHandle,
-      turnId: expect.any(String),
       presence: 'idle',
     })
+    expect(typeof firstResult.turnId).toBe('string')
+    expect(typeof secondResult.turnId).toBe('string')
   })
 
   it('bounds adversarial native transcript traversal without accepting deep or oversized marker shapes', async () => {

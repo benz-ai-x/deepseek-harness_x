@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-03-durable-external-teammate-runtimes.md
-2026-09-03-durable-external-teammate-runtimes.md: b1aba5e5e5bb76c525d9b4a92b70bb8119cc1ff3
-2026-09-03-durable-external-teammate-runtimes.zh.md: ebefa46c3a256085ca88cf963f28013cee98f397
+2026-09-03-durable-external-teammate-runtimes.md: 6b10c736cfae757e7853856c966b06b11f52b7db
+2026-09-03-durable-external-teammate-runtimes.zh.md: 2508a38d6ea6f9314de926b4eeb26462e6eb903f

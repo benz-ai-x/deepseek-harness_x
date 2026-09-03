@@ -11,9 +11,11 @@ import type {
   TeammateRuntimeHandle,
   TeammateRuntimeEvidenceCursor,
   TeammateRuntimeEvidenceId,
+  TeammateRuntimeApprovalId,
   TeammateRuntimeMetadata,
   TeammateRuntimeProfileSnapshot,
   TeammateRuntimeRequirements,
+  TeammateRuntimeToolCallId,
   TeammateRuntimeTurnId,
 } from './types.ts'
 
@@ -118,13 +120,36 @@ export interface TeammateRuntimeInterruptResult {
 /** One bounded normalized native fact; raw prompts and provider payloads are excluded. */
 export interface TeammateRuntimeEvidenceItem {
   readonly id: TeammateRuntimeEvidenceId
-  readonly kind: 'turn' | 'tool' | 'usage' | 'diagnostic'
+  readonly kind: 'turn' | 'tool' | 'approval' | 'usage' | 'diagnostic'
   readonly timestamp: number
   readonly turnId?: TeammateRuntimeTurnId
   readonly name?: string
-  readonly outcome?: 'completed' | 'cancelled' | 'blocked' | 'failed' | 'interrupted' | 'unknown'
+  readonly outcome?:
+    | 'completed'
+    | 'cancelled'
+    | 'blocked'
+    | 'failed'
+    | 'interrupted'
+    | 'unknown'
+    | 'asked'
+    | 'allowed-once'
+    | 'rejected'
+    | 'unavailable'
+  /** Exact provider-native approval audit identity; valid only for approval facts. */
+  readonly approvalId?: TeammateRuntimeApprovalId
+  /** Immutable native proposed-call identity; valid for tool and approval facts. */
+  readonly callId?: TeammateRuntimeToolCallId
+  /** Stable Profile Hook id that produced the approval decision. */
+  readonly policyId?: string
   /** Latest provider-reported cumulative counters for this turn; repeated rows are snapshots, not deltas. */
   readonly usage?: Readonly<TokenUsage>
+}
+
+/** One provider-proven still-live exact approval correlation, independent of evidence pagination. */
+export interface TeammateRuntimePendingApproval {
+  readonly turnId: TeammateRuntimeTurnId
+  readonly approvalId: TeammateRuntimeApprovalId
+  readonly callId: TeammateRuntimeToolCallId
 }
 
 /** Request for a bounded evidence window owned by one native runtime. */
@@ -139,6 +164,8 @@ export interface TeammateRuntimeEvidenceRequest {
 export interface TeammateRuntimeEvidenceResult {
   readonly nativeHandle: TeammateRuntimeHandle
   readonly items: readonly TeammateRuntimeEvidenceItem[]
+  /** Complete current pending set; an omitted set is empty and never inferred from an unmatched ask. */
+  readonly pendingApprovals?: readonly TeammateRuntimePendingApproval[]
   readonly nextCursor?: TeammateRuntimeEvidenceCursor
   readonly complete: boolean
 }

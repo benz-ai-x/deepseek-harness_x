@@ -22,8 +22,10 @@ import type {
   TeammateRuntimeResumeRequest,
 } from './service-types.ts'
 import {
+  TeammateRuntimeApprovalId as toTeammateRuntimeApprovalId,
   TeammateLaunchRequestId as toTeammateLaunchRequestId,
   TeammateRuntimeHandle as toTeammateRuntimeHandle,
+  TeammateRuntimeToolCallId as toTeammateRuntimeToolCallId,
   TeammateRuntimeTurnId as toTeammateRuntimeTurnId,
 } from './brand.ts'
 import type {
@@ -61,6 +63,78 @@ function normalizedEvidenceUsage(
     ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
     ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
     ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
+  })
+}
+
+const TERMINAL_EVIDENCE_OUTCOMES = Object.freeze([
+  'completed',
+  'cancelled',
+  'blocked',
+  'failed',
+  'interrupted',
+  'unknown',
+] as const)
+const APPROVAL_EVIDENCE_OUTCOMES = Object.freeze([
+  'asked',
+  'allowed-once',
+  'rejected',
+  'cancelled',
+  'unavailable',
+] as const)
+
+function invalidEvidence(message: string): never {
+  throw new TeammateRuntimeError(message, 'TEAM_RUNTIME_IDENTITY_CONFLICT')
+}
+
+function normalizedEvidenceItem(
+  providerId: string,
+  item: TeammateRuntimeEvidenceItem,
+  exactCallApproval: boolean,
+): TeammateRuntimeEvidenceItem {
+  if (!Number.isFinite(item.timestamp) || item.timestamp < 0) {
+    return invalidEvidence(`provider "${providerId}" returned evidence with an invalid timestamp`)
+  }
+  const usage = normalizedEvidenceUsage(item.usage)
+  if (item.kind === 'approval') {
+    if (!exactCallApproval) {
+      return invalidEvidence(`provider "${providerId}" returned approval evidence without the capability`)
+    }
+    if (item.turnId === undefined || item.name === undefined || item.name.length === 0
+      || item.approvalId === undefined || item.callId === undefined || item.policyId === undefined
+      || !IDENTIFIER.test(item.policyId)
+      || item.outcome === undefined
+      || !APPROVAL_EVIDENCE_OUTCOMES.includes(item.outcome as never)
+      || usage !== undefined) {
+      return invalidEvidence(`provider "${providerId}" returned malformed exact-call approval evidence`)
+    }
+    return Object.freeze({
+      id: item.id,
+      kind: item.kind,
+      timestamp: item.timestamp,
+      turnId: toTeammateRuntimeTurnId(item.turnId),
+      name: item.name,
+      outcome: item.outcome,
+      approvalId: toTeammateRuntimeApprovalId(item.approvalId),
+      callId: toTeammateRuntimeToolCallId(item.callId),
+      policyId: item.policyId,
+    })
+  }
+  if (!['turn', 'tool', 'usage', 'diagnostic'].includes(item.kind)
+    || item.approvalId !== undefined
+    || item.policyId !== undefined
+    || (item.callId !== undefined && item.kind !== 'tool')
+    || (item.outcome !== undefined && !TERMINAL_EVIDENCE_OUTCOMES.includes(item.outcome as never))) {
+    return invalidEvidence(`provider "${providerId}" returned malformed normalized evidence`)
+  }
+  return Object.freeze({
+    id: item.id,
+    kind: item.kind,
+    timestamp: item.timestamp,
+    ...(item.turnId === undefined ? {} : { turnId: item.turnId }),
+    ...(item.name === undefined ? {} : { name: item.name }),
+    ...(item.outcome === undefined ? {} : { outcome: item.outcome }),
+    ...(item.callId === undefined ? {} : { callId: toTeammateRuntimeToolCallId(item.callId) }),
+    ...(usage === undefined ? {} : { usage }),
   })
 }
 
@@ -183,6 +257,13 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
       'TEAM_RUNTIME_INVALID_PROVIDER',
     )
   }
+  if (runtimeCapabilities.includes('exact-call-approval')
+    && (!profileCapabilities.includes('hooks') || !runtimeCapabilities.includes('evidence'))) {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" advertises exact-call approval without Hook enforcement and evidence`,
+      'TEAM_RUNTIME_INVALID_PROVIDER',
+    )
+  }
   return Object.freeze({
     id: providerId,
     displayName,
@@ -260,18 +341,26 @@ function normalizeToolPolicy(
 
 function normalizeProfileHooks(value: readonly TeammateRuntimeProfileHook[]): readonly TeammateRuntimeProfileHook[] {
   return Object.freeze(value.map((hook) => {
+    const id = hook.id === undefined ? undefined : profileText(hook.id, 'hook id')
     const point = hook.point
     const effect = hook.effect
     const matcher = hook.matcher === undefined ? undefined : profileText(hook.matcher, 'hook matcher')
     if (((point === 'session-start' || point === 'before-step') && (effect !== 'context' || matcher !== undefined))
-      || (point === 'before-tool' && (effect !== 'deny' || matcher === undefined))
+      || (point === 'before-tool' && (effect !== 'deny' && effect !== 'ask' || matcher === undefined))
       || (point === 'after-tool' && (effect !== 'context' || matcher === undefined))) {
       throw new TeammateRuntimeError(
         'teammate runtime Profile hook is invalid',
         'TEAM_RUNTIME_CAPABILITY_MISMATCH',
       )
     }
+    if ((id !== undefined && !IDENTIFIER.test(id)) || (effect === 'ask' && id === undefined)) {
+      throw new TeammateRuntimeError(
+        'teammate runtime Profile ask hooks require a stable policy id',
+        'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+      )
+    }
     return Object.freeze({
+      ...(id === undefined ? {} : { id }),
       point,
       effect,
       ...(matcher === undefined ? {} : { matcher }),
@@ -305,6 +394,13 @@ function normalizeProfile(
     || expected.some((capability, index) => requirements.profileCapabilities[index] !== capability)) {
     throw new TeammateRuntimeError(
       'teammate runtime Profile policy does not match its requested capabilities',
+      'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+    )
+  }
+  if (normalized.hooks.some(hook => hook.effect === 'ask')
+    && !requirements.runtimeCapabilities.includes('exact-call-approval')) {
+    throw new TeammateRuntimeError(
+      'teammate runtime Profile ask hooks require exact-call approval',
       'TEAM_RUNTIME_CAPABILITY_MISMATCH',
     )
   }
@@ -760,21 +856,36 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
           'TEAM_RUNTIME_IDENTITY_CONFLICT',
         )
       }
-      const items: TeammateRuntimeEvidenceItem[] = result.items.map((item) => {
-        const usage = normalizedEvidenceUsage(item.usage)
-        return Object.freeze({
-          id: item.id,
-          kind: item.kind,
-          timestamp: item.timestamp,
-          ...(item.turnId === undefined ? {} : { turnId: item.turnId }),
-          ...(item.name === undefined ? {} : { name: item.name }),
-          ...(item.outcome === undefined ? {} : { outcome: item.outcome }),
-          ...(usage === undefined ? {} : { usage }),
-        })
-      })
+      const exactCallApproval = record.metadata.runtimeCapabilities.includes('exact-call-approval')
+      const items = result.items.map(item => normalizedEvidenceItem(providerId, item, exactCallApproval))
+      const pendingApprovals = result.pendingApprovals?.map(pending => Object.freeze({
+        turnId: toTeammateRuntimeTurnId(pending.turnId),
+        approvalId: toTeammateRuntimeApprovalId(pending.approvalId),
+        callId: toTeammateRuntimeToolCallId(pending.callId),
+      }))
+      if (pendingApprovals !== undefined) {
+        const presence = this.presence.get(stableKey([providerId, request.nativeHandle]))
+        const identities = new Set(pendingApprovals.map(pending => stableKey([
+          pending.turnId,
+          pending.approvalId,
+          pending.callId,
+        ])))
+        if (pendingApprovals.length > this.maxEvidenceItems
+          || identities.size !== pendingApprovals.length
+          || (pendingApprovals.length > 0
+            && (!exactCallApproval || presence?.owner !== record || presence.presence !== 'running'))) {
+          throw new TeammateRuntimeError(
+            `provider "${providerId}" returned invalid pending approval correlations`,
+            'TEAM_RUNTIME_IDENTITY_CONFLICT',
+          )
+        }
+      }
       const normalized: TeammateRuntimeEvidenceResult = Object.freeze({
         nativeHandle: result.nativeHandle,
         items: Object.freeze(items),
+        ...(pendingApprovals === undefined
+          ? {}
+          : { pendingApprovals: Object.freeze(pendingApprovals) }),
         ...(result.nextCursor === undefined
           ? {}
           : { nextCursor: result.nextCursor }),

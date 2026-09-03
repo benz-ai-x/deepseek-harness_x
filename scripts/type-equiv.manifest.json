@@ -339,6 +339,11 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeammateRuntimePendingApproval",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeammateRuntimeEvidenceResult",
       "source": "packages/experimental/agent-team/src/service-types.ts"
     },

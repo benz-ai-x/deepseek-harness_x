@@ -56,6 +56,7 @@ export type {
   TeammateRuntimeEvidenceResult,
   TeammateRuntimeInterruptRequest,
   TeammateRuntimeInterruptResult,
+  TeammateRuntimePendingApproval,
   TeammateRuntimePresenceEvent,
   TeammateRuntimeProvider,
   TeammateRuntimeRegistration,
@@ -72,7 +73,9 @@ export {
   TeammateRuntimeHandle,
   TeammateRuntimeEvidenceCursor,
   TeammateRuntimeEvidenceId,
+  TeammateRuntimeApprovalId,
   TeammateRuntimeTurnId,
+  TeammateRuntimeToolCallId,
 } from './brand.ts'
 export { TeamError } from './error.ts'
 export { TeammateRuntimeError } from './teammate-runtime.ts'

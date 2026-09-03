@@ -5613,6 +5613,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeammateProfileCapability = \'persona\' | \'mission\' | \'context\' | \'memory\' | \'tool-policy\' | \'hooks\';',
   },
   {
+    name: 'TeammateRuntimeApprovalId',
+    declaration: 'export type TeammateRuntimeApprovalId = Branded<\'TeammateRuntimeApprovalId\'>;',
+  },
+  {
     name: 'TeammateRuntimeCapability',
     declaration: 'export type TeammateRuntimeCapability = \'exact-call-approval\' | \'sandbox\' | \'evaluation\' | \'evidence\' | \'usage\';',
   },
@@ -5646,7 +5650,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeEvidenceItem',
-    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'tool\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'interrupted\' | \'unknown\';\n    readonly usage?: Readonly<TokenUsage>;\n}',
+    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'tool\' | \'approval\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'interrupted\' | \'unknown\' | \'asked\' | \'allowed-once\' | \'rejected\' | \'unavailable\';\n    readonly approvalId?: TeammateRuntimeApprovalId;\n    readonly callId?: TeammateRuntimeToolCallId;\n    readonly policyId?: string;\n    readonly usage?: Readonly<TokenUsage>;\n}',
   },
   {
     name: 'TeammateRuntimeEvidenceRequest',
@@ -5654,7 +5658,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeEvidenceResult',
-    declaration: 'export interface TeammateRuntimeEvidenceResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly items: readonly TeammateRuntimeEvidenceItem[];\n    readonly nextCursor?: TeammateRuntimeEvidenceCursor;\n    readonly complete: boolean;\n}',
+    declaration: 'export interface TeammateRuntimeEvidenceResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly items: readonly TeammateRuntimeEvidenceItem[];\n    readonly pendingApprovals?: readonly TeammateRuntimePendingApproval[];\n    readonly nextCursor?: TeammateRuntimeEvidenceCursor;\n    readonly complete: boolean;\n}',
   },
   {
     name: 'TeammateRuntimeHandle',
@@ -5677,12 +5681,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeammateRuntimeMetadata {\n    readonly id: string;\n    readonly displayName: string;\n    readonly contextModes: readonly (\'fresh\' | \'fork\')[];\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n}',
   },
   {
+    name: 'TeammateRuntimePendingApproval',
+    declaration: 'export interface TeammateRuntimePendingApproval {\n    readonly turnId: TeammateRuntimeTurnId;\n    readonly approvalId: TeammateRuntimeApprovalId;\n    readonly callId: TeammateRuntimeToolCallId;\n}',
+  },
+  {
     name: 'TeammateRuntimePresenceEvent',
     declaration: 'export interface TeammateRuntimePresenceEvent {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly presence: \'running\' | \'idle\' | \'inactive\';\n}',
   },
   {
     name: 'TeammateRuntimeProfileHook',
-    declaration: 'export interface TeammateRuntimeProfileHook {\n    readonly point: TeammateRuntimeHookPoint;\n    readonly effect: \'context\' | \'deny\';\n    readonly matcher?: string;\n    readonly text: string;\n}',
+    declaration: 'export interface TeammateRuntimeProfileHook {\n    readonly id?: string;\n    readonly point: TeammateRuntimeHookPoint;\n    readonly effect: \'context\' | \'deny\' | \'ask\';\n    readonly matcher?: string;\n    readonly text: string;\n}',
   },
   {
     name: 'TeammateRuntimeProfileSnapshot',
@@ -5707,6 +5715,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeammateRuntimeResumeRequest',
     declaration: 'export interface TeammateRuntimeResumeRequest {\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly memberId: SessionId;\n    readonly nativeHandle?: TeammateRuntimeHandle;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'TeammateRuntimeToolCallId',
+    declaration: 'export type TeammateRuntimeToolCallId = Branded<\'TeammateRuntimeToolCallId\'>;',
   },
   {
     name: 'TeammateRuntimeToolPolicy',
