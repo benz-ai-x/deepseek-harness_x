@@ -386,6 +386,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'provider-normalized facts correlated to the roster-owned native handle.',
       },
       {
+        signature: 'async runTeammateEvaluation( caller: Agent, providerId: string, request: TeammateEvaluationCreateRequest, commit?: (result: TeammateEvaluationCreateResult) => void | Promise<void>, ): Promise<TeammateEvaluationCreateResult>',
+        description: 'Run one isolated provider-native evaluation for an exact live Team Lead.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead that owns the operation.' }, { name: 'providerId', description: 'registered provider selected for the isolated run.' }, { name: 'request', description: 'fresh context, detached Profile, input, confinement, and cancellation.' }, { name: 'commit', description: 'optional durable-result callback invoked while the exact handle is still attached.' }],
+        returns: 'the completed detached result, only after exact-handle release in finally.',
+      },
+      {
         signature: 'async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>',
         description: 'Create one unowned pending task in the Team Lead log.',
         parameters: [{ name: 'caller', description: 'exact live Team member creating the task.' }, { name: 'request', description: 'task text, blockers, and advisory write scopes.' }],
@@ -5590,11 +5596,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateEvaluationCreateRequest',
-    declaration: 'export interface TeammateEvaluationCreateRequest {\n    readonly evaluationId: TeammateEvaluationId;\n    readonly profile: TeammateRuntimeProfileSnapshot;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly input: readonly ContentBlock[];\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface TeammateEvaluationCreateRequest {\n    readonly evaluationId: TeammateEvaluationId;\n    readonly profile: TeammateRuntimeProfileSnapshot;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly input: readonly ContentBlock[];\n    readonly environment: TeammateEvaluationEnvironment;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'TeammateEvaluationCreateResult',
-    declaration: 'export interface TeammateEvaluationCreateResult {\n    readonly evaluationHandle: TeammateEvaluationHandle;\n}',
+    declaration: 'export interface TeammateEvaluationCreateResult {\n    readonly evaluationHandle: TeammateEvaluationHandle;\n    readonly turnId: TeammateRuntimeTurnId;\n    readonly terminal: TeammateEvaluationTerminal;\n    readonly output: readonly ContentBlock[];\n    readonly evidence: readonly TeammateRuntimeEvidenceItem[];\n    readonly complete: boolean;\n    readonly startedAt: number;\n    readonly endedAt: number;\n}',
+  },
+  {
+    name: 'TeammateEvaluationEnvironment',
+    declaration: 'export interface TeammateEvaluationEnvironment {\n    readonly sandbox: \'read-only\';\n    readonly approval: \'never\';\n    readonly toolAllowlist: readonly string[];\n    readonly fixtures: readonly TeammateEvaluationFixture[];\n    readonly maxSteps: number;\n    readonly maxOutputTokens: number;\n    readonly maxElapsedMs: number;\n}',
+  },
+  {
+    name: 'TeammateEvaluationFixture',
+    declaration: 'export interface TeammateEvaluationFixture {\n    readonly id: string;\n    readonly content: string;\n}',
   },
   {
     name: 'TeammateEvaluationHandle',
@@ -5603,6 +5617,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeammateEvaluationId',
     declaration: 'export type TeammateEvaluationId = Branded<\'TeammateEvaluationId\'>;',
+  },
+  {
+    name: 'TeammateEvaluationTerminal',
+    declaration: 'export type TeammateEvaluationTerminal = \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'max-tokens\' | \'interrupted\' | \'unknown\';',
   },
   {
     name: 'TeammateLaunchRequestId',
@@ -5650,7 +5668,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeEvidenceItem',
-    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'tool\' | \'approval\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'interrupted\' | \'unknown\' | \'asked\' | \'allowed-once\' | \'rejected\' | \'unavailable\';\n    readonly approvalId?: TeammateRuntimeApprovalId;\n    readonly callId?: TeammateRuntimeToolCallId;\n    readonly policyId?: string;\n    readonly usage?: Readonly<TokenUsage>;\n}',
+    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'step\' | \'tool\' | \'approval\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly step?: number;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'max-tokens\' | \'interrupted\' | \'unknown\' | \'asked\' | \'allowed-once\' | \'rejected\' | \'unavailable\';\n    readonly approvalId?: TeammateRuntimeApprovalId;\n    readonly callId?: TeammateRuntimeToolCallId;\n    readonly policyId?: string;\n    readonly usage?: Readonly<TokenUsage>;\n}',
   },
   {
     name: 'TeammateRuntimeEvidenceRequest',
@@ -5678,7 +5696,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeMetadata',
-    declaration: 'export interface TeammateRuntimeMetadata {\n    readonly id: string;\n    readonly displayName: string;\n    readonly contextModes: readonly (\'fresh\' | \'fork\')[];\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n}',
+    declaration: 'export interface TeammateRuntimeMetadata {\n    readonly id: string;\n    readonly displayName: string;\n    readonly contextModes: readonly (\'fresh\' | \'fork\')[];\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n    readonly evaluationTools?: readonly string[];\n}',
   },
   {
     name: 'TeammateRuntimePendingApproval',

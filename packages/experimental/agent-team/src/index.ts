@@ -32,6 +32,8 @@ import type {
 } from './types.ts'
 import type {
   SpawnTeammateRequest,
+  TeammateEvaluationCreateRequest,
+  TeammateEvaluationCreateResult,
   TeammateRuntimeEvidenceRequest,
   TeammateRuntimeEvidenceResult,
   TeammateRuntimeProvider,
@@ -46,6 +48,9 @@ export type {
   SpawnTeammateRequest,
   TeammateEvaluationCreateRequest,
   TeammateEvaluationCreateResult,
+  TeammateEvaluationEnvironment,
+  TeammateEvaluationFixture,
+  TeammateEvaluationTerminal,
   TeammateRuntimeCreateRequest,
   TeammateRuntimeCreateResult,
   TeammateRuntimeDeliverRequest,
@@ -277,6 +282,43 @@ export class TeamService extends TypertRemoteService {
       ...request,
       nativeHandle,
     })
+  }
+
+  /**
+   * Run one isolated provider-native evaluation for an exact live Team Lead.
+   * @param caller - exact live Team Lead that owns the operation.
+   * @param providerId - registered provider selected for the isolated run.
+   * @param request - fresh context, detached Profile, input, confinement, and cancellation.
+   * @param commit - optional durable-result callback invoked while the exact handle is still attached.
+   * @returns the completed detached result, only after exact-handle release in finally.
+   */
+  async runTeammateEvaluation(
+    caller: Agent,
+    providerId: string,
+    request: TeammateEvaluationCreateRequest,
+    commit?: (result: TeammateEvaluationCreateResult) => void | Promise<void>,
+  ): Promise<TeammateEvaluationCreateResult> {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') {
+      throw new TeamError('only the Team Lead can run teammate evaluations', 'TEAM_LEAD_REQUIRED')
+    }
+    let result: TeammateEvaluationCreateResult | undefined
+    try {
+      result = await this.teammateRuntimeRegistry.createEvaluationHandle(providerId, request)
+      await commit?.(result)
+      return result
+    } finally {
+      const completed = result
+      if (completed !== undefined) {
+        await this.lifecycle.settleWithAbortDeadline(async (signal) => {
+          await this.teammateRuntimeRegistry.dispose(providerId, {
+            kind: 'evaluation',
+            evaluationHandle: completed.evaluationHandle,
+            signal,
+          })
+        })
+      }
+    }
   }
 
   /**

@@ -18,7 +18,7 @@ Host 通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 在 owner Fiber �
 
 创建流程会先记录并 flush provisioning 关联，再调用选定 provider。provider 必须持久接受初始工作并返回一个稳定 native handle，Agent Teams 才会记录 active member。重复相同 launch/member 身份必须返回同一 handle；为另一身份复用 handle，或在 resume 时更改 handle，都会隔离该 provider generation。registry 会校验 provider 返回的持久 handle；被拒绝的结果仍归 cleanup 所有，因此即使已接受的 handle 无效，也会被精确 dispose。
 
-外部 mailbox 投递使用持久 Team message id 与精确 provider/native handle。provider 在 Team 记录 delivered 前返回稳定 native turn id。runtime delivery、interrupt、presence、evidence 与 disposal 都只通过已记录的精确 native handle 路由，不会回退到 DSH 或一次性 provider。evidence 可以包含规范 approval 事实与完整当前 pending 集合，但绝不包含拟议参数；只有精确 runtime 报告 `running` 时非空 pending 集合才有效，且重启后不会推断未匹配的 ask 仍为 pending。隔离 evaluation 的创建则使用调用方拥有的 evaluation id、Profile 与 input，返回独立的 provider-native evaluation handle，并精确 dispose 该 evaluation handle。可复用 provider conformance suite 为实现固定了幂等 create 与 deliver、调用方取消、重启 resume、evidence、evaluation、精确 interrupt 与精确 dispose 行为。
+外部 mailbox 投递使用持久 Team message id 与精确 provider/native handle。provider 在 Team 记录 delivered 前返回稳定 native turn id。runtime delivery、interrupt、presence、evidence 与 disposal 都只通过已记录的精确 native handle 路由，不会回退到 DSH 或一次性 provider。evidence 可以包含规范 approval 事实与完整当前 pending 集合，但绝不包含拟议参数；只有精确 runtime 报告 `running` 时非空 pending 集合才有效，且重启后不会推断未匹配的 ask 仍为 pending。隔离 evaluation 是独立且由 Lead 拥有的操作：它要求 fresh context、分离 Profile、只读 sandbox、无审批、有界资源，以及包含于 provider 已发布 tool inventory 的唯一 allowlist。provider 在独立 native handle 上把调用方拥有的 evaluation id 与声明 input 运行到规范 outcome。Agent Teams 会在该精确 handle 仍挂载时调用可选的调用方耐久 commit，再于公开操作 settle 前在 `finally` 中释放它。evaluation 绝不创建 roster identity、生产 workspace、transcript 或 activation。可复用 provider conformance suite 为实现固定了幂等 create 与 deliver、调用方取消、重启 resume、evidence、evaluation、精确 interrupt 与精确 dispose 行为。
 
 provider 注册归调用 Fiber 所有。移除时先关闭新准入、中止已准入工作并等待其 settlement，再停止 presence observer，并在注册消失前 dispose 每个 attached runtime 与 evaluation handle。cleanup 使用 abort deadline 请求取消，但仍等待真实 quiescence；超时不会被报告为成功 disposal。其他 provider id 保持可用。provider 缺席时，已持久 member 仍保持 active，只派生为 unavailable/inactive 运行状态。重新注册相同 provider id 会 resume 已记录 native handle 与 queued mailbox work，不会创建 replacement。
 
@@ -38,12 +38,16 @@ provider 注册归调用 Fiber 所有。移除时先关闭新准入、中止已�
 
 **在没有原生关联 evidence 时信任精确调用 capability 标记。** 拒绝，因为仅有标记无法证明审批覆盖了拟议调用，也无法证明 waiting 状态仍然存活；缺失或畸形关联必须封闭失败并隔离该 provider generation。
 
+**通过 active 生产 teammate 执行 evaluation。** 拒绝，因为候选运行可能继承生产 conversation 或 workspace 状态、修改运行资源，并使已提交结果无法证明来自哪次隔离 native execution。
+
 ## Consequences
 
 Agent Teams 包除了 DSH continuation 集成外，现在还拥有有类型的 provider registry。provider 作者必须实现完整持久契约，并通过 conformance suite 证明。active external member 在 provider 重新注册前可能 unavailable/inactive，恢复延迟由该 provider 承担。
 
 Lead 日志仍可检查且不含 secret，但不能独立重建 native 状态。因此恢复依赖能精确解析已持久 launch/member/handle tuple 的 provider。畸形 approval 或 pending 关联会隔离 provider generation；pending approval 状态是进程内存活 evidence，而不是可恢复事实。隔离违反契约的 generation，可能让该 provider 上所有 member 暂时不可用，直到 cleanup 与显式 replacement 完成。
 
+每次 evaluation 都会消耗 fresh provider-native execution resource，且 provider 必须发布它能约束的有界 tool inventory。需要持久 evidence 的调用方必须在 commit callback 内写入；callback 失败会使操作失败，但仍不能泄漏 evaluation handle。API 不会持久化 evaluation output，也不会把 evaluation 成功与 activation 耦合。
+
 ## Testing
 
-Package test 覆盖 capability preflight、分离 Profile 传递、精确调用审批 capability gate、approval 与 pending 关联、opaque UTF-8 身份、request 与 handle 冲突、跨冷 Host 重启的两个 turn、provider 消失与精确重挂接、queued delivery、presence、evidence、隔离 evaluation handle、取消所有权转移、quarantine、同 id replacement 与 quiescent cleanup。provider conformance suite 会针对可 reopen 的持久 fixture 重复验证可移植契约。headless 组合与两种 SDK 投影固定公开 event shape，并验证 `externalRuntime` 只包含有界持久关联数据。
+Package test 覆盖 capability preflight、分离 Profile 传递、精确调用审批 capability gate、approval 与 pending 关联、opaque UTF-8 身份、request 与 handle 冲突、跨冷 Host 重启的两个 turn、provider 消失与精确重挂接、queued delivery、presence、evidence、fresh-context evaluation 约束、有界 tool inventory、commit-before-dispose 顺序、取消所有权转移、quarantine、同 id replacement 与 quiescent cleanup。provider conformance suite 会针对可 reopen 的持久 fixture 重复验证可移植契约。headless 组合与两种 SDK 投影固定公开 event shape，并验证 `externalRuntime` 只包含有界持久关联数据。

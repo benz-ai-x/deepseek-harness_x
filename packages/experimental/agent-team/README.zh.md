@@ -69,6 +69,8 @@ kind: "package-reference"
 
 精确的 live Lead 可以对一个 active external teammate 调用 `ctx.agentTeams.readTeammateRuntimeEvidence()`。Agent Teams 会提供 roster 所有的 native handle，并且只返回有界的规范 turn、tool、approval、结果、时间戳与 provider 报告的 usage 事实。approval 事实保留稳定 turn、tool、call、approval 与 Profile 策略身份，但不包含拟议参数；只有精确 runtime 报告 `running` 时，非空 pending 集合才会被接受。prompt、reply、tool argument/result、文件、环境值、credential 与原始 provider payload 绝不会跨越服务边界。
 
+精确的 live Lead 还可以调用 `ctx.agentTeams.runTeammateEvaluation()`，而不创建 roster member 或预留 teammate 名字。每个请求都要求 fresh context 与 evaluation capability，携带分离的 Profile、声明的 input 与文本 fixture，并受限于只读 sandbox、`approval: never`、正数资源上限，以及取自 provider 已发布 evaluation tool inventory 的唯一 allowlist。该 inventory 最多包含 256 个唯一 identifier，每个不超过 128 UTF-8 字节。Agent Teams 会规范化并限制 terminal result、output、evidence、时间戳与身份。可选 commit callback 会在精确 evaluation handle 仍挂载时运行；包括 commit 失败与取消路径在内，该 handle 都会在 API resolve 或 reject 前于 `finally` 中释放。evaluation output 只是临时 runner input，不是 Team transcript 或 activation。
+
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。DSH teammate 行公开分离的请求与解析路由快照；外部行只公开耐久 provider 关联和不透明 native handle。未加载的成员会在唤醒后收到其消息。
 
 只有 Lead 可以创建 teammate 或中断它们。

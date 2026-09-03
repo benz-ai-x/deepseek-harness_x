@@ -120,15 +120,18 @@ export interface TeammateRuntimeInterruptResult {
 /** One bounded normalized native fact; raw prompts and provider payloads are excluded. */
 export interface TeammateRuntimeEvidenceItem {
   readonly id: TeammateRuntimeEvidenceId
-  readonly kind: 'turn' | 'tool' | 'approval' | 'usage' | 'diagnostic'
+  readonly kind: 'turn' | 'step' | 'tool' | 'approval' | 'usage' | 'diagnostic'
   readonly timestamp: number
   readonly turnId?: TeammateRuntimeTurnId
+  /** Provider-native step ordinal; valid only for step and tool facts. */
+  readonly step?: number
   readonly name?: string
   readonly outcome?:
     | 'completed'
     | 'cancelled'
     | 'blocked'
     | 'failed'
+    | 'max-tokens'
     | 'interrupted'
     | 'unknown'
     | 'asked'
@@ -170,18 +173,54 @@ export interface TeammateRuntimeEvidenceResult {
   readonly complete: boolean
 }
 
-/** Request for a fresh provider-native evaluation runtime. */
+/** One declared, immutable text fixture visible only to an evaluation Case. */
+export interface TeammateEvaluationFixture {
+  readonly id: string
+  readonly content: string
+}
+
+/** Exact confinement and resource contract for one isolated evaluation Case. */
+export interface TeammateEvaluationEnvironment {
+  readonly sandbox: 'read-only'
+  readonly approval: 'never'
+  /** Unique subset of the provider's published evaluation tool inventory. */
+  readonly toolAllowlist: readonly string[]
+  readonly fixtures: readonly TeammateEvaluationFixture[]
+  readonly maxSteps: number
+  readonly maxOutputTokens: number
+  readonly maxElapsedMs: number
+}
+
+/** Normalized terminal class returned after an isolated evaluation reaches quiescence. */
+export type TeammateEvaluationTerminal =
+  | 'completed'
+  | 'cancelled'
+  | 'blocked'
+  | 'failed'
+  | 'max-tokens'
+  | 'interrupted'
+  | 'unknown'
+
+/** Request to run one fresh provider-native evaluation to quiescence. */
 export interface TeammateEvaluationCreateRequest {
   readonly evaluationId: TeammateEvaluationId
   readonly profile: TeammateRuntimeProfileSnapshot
   readonly requirements: TeammateRuntimeRequirements
   readonly input: readonly ContentBlock[]
+  readonly environment: TeammateEvaluationEnvironment
   readonly signal: AbortSignal
 }
 
-/** Identity of one provider-owned isolated evaluation runtime. */
+/** Detached completed result; output is transient runner input and must not become a sidecar transcript. */
 export interface TeammateEvaluationCreateResult {
   readonly evaluationHandle: TeammateEvaluationHandle
+  readonly turnId: TeammateRuntimeTurnId
+  readonly terminal: TeammateEvaluationTerminal
+  readonly output: readonly ContentBlock[]
+  readonly evidence: readonly TeammateRuntimeEvidenceItem[]
+  readonly complete: boolean
+  readonly startedAt: number
+  readonly endedAt: number
 }
 
 /** Exact provider-owned resource released by one dispose operation. */
@@ -232,6 +271,7 @@ export interface TeammateRuntimeProvider extends TeammateRuntimeMetadata {
   /** Required when an accepted operation can remain running after its result settles. */
   onPresenceChanged?(listener: (event: TeammateRuntimePresenceEvent) => void): () => void
   evidence?(request: TeammateRuntimeEvidenceRequest): Promise<TeammateRuntimeEvidenceResult>
+  /** Run one idempotent fresh isolated evaluation; Agent Teams owns exact-handle disposal. */
   createEvaluationHandle?(request: TeammateEvaluationCreateRequest): Promise<TeammateEvaluationCreateResult>
   dispose(request: TeammateRuntimeDisposeRequest): Promise<void>
 }

@@ -111,7 +111,7 @@ export function TeammateRuntimeTurnId(id: string): TeammateRuntimeTurnId {
  * @returns the same string branded as an evaluation request identity.
  */
 export function TeammateEvaluationId(id: string): TeammateEvaluationId {
-  return brandString<TeammateEvaluationId>(id)
+  return brandString<TeammateEvaluationId>(boundedDurableOpaqueId(id, 'TeammateEvaluationId'))
 }
 
 /**
@@ -120,7 +120,7 @@ export function TeammateEvaluationId(id: string): TeammateEvaluationId {
  * @returns the same string branded as a native evaluation handle.
  */
 export function TeammateEvaluationHandle(id: string): TeammateEvaluationHandle {
-  return brandString<TeammateEvaluationHandle>(id)
+  return brandString<TeammateEvaluationHandle>(boundedDurableOpaqueId(id, 'TeammateEvaluationHandle'))
 }
 
 /**

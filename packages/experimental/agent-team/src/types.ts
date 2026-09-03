@@ -94,6 +94,8 @@ export interface TeammateRuntimeMetadata {
   readonly contextModes: readonly ('fresh' | 'fork')[]
   readonly profileCapabilities: readonly TeammateProfileCapability[]
   readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
+  /** Sorted provider-native evaluation inventory: at most 256 unique identifiers of at most 128 UTF-8 bytes. */
+  readonly evaluationTools?: readonly string[]
 }
 
 /** Durable provider correlation retained with one external roster member. */

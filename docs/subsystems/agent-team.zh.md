@@ -211,6 +211,16 @@ async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendT
 async readTeammateRuntimeEvidence( caller: Agent, targetName: string, request: Omit<TeammateRuntimeEvidenceRequest, 'nativeHandle'>, ): Promise<TeammateRuntimeEvidenceResult>
 
 /**
+ * Run one isolated provider-native evaluation for an exact live Team Lead.
+ * @param caller - exact live Team Lead that owns the operation.
+ * @param providerId - registered provider selected for the isolated run.
+ * @param request - fresh context, detached Profile, input, confinement, and cancellation.
+ * @param commit - optional durable-result callback invoked while the exact handle is still attached.
+ * @returns the completed detached result, only after exact-handle release in finally.
+ */
+async runTeammateEvaluation( caller: Agent, providerId: string, request: TeammateEvaluationCreateRequest, commit?: (result: TeammateEvaluationCreateResult) => void | Promise<void>, ): Promise<TeammateEvaluationCreateResult>
+
+/**
  * Create one unowned pending task in the Team Lead log.
  * @param caller - exact live Team member creating the task.
  * @param request - task text, blockers, and advisory write scopes.

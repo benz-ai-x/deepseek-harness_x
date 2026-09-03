@@ -22,6 +22,8 @@ import type {
   TeammateRuntimeResumeRequest,
 } from './service-types.ts'
 import {
+  TeammateEvaluationHandle as toTeammateEvaluationHandle,
+  TeammateEvaluationId as toTeammateEvaluationId,
   TeammateRuntimeApprovalId as toTeammateRuntimeApprovalId,
   TeammateLaunchRequestId as toTeammateLaunchRequestId,
   TeammateRuntimeHandle as toTeammateRuntimeHandle,
@@ -71,6 +73,7 @@ const TERMINAL_EVIDENCE_OUTCOMES = Object.freeze([
   'cancelled',
   'blocked',
   'failed',
+  'max-tokens',
   'interrupted',
   'unknown',
 ] as const)
@@ -80,6 +83,15 @@ const APPROVAL_EVIDENCE_OUTCOMES = Object.freeze([
   'rejected',
   'cancelled',
   'unavailable',
+] as const)
+const EVALUATION_TERMINALS = Object.freeze([
+  'completed',
+  'cancelled',
+  'blocked',
+  'failed',
+  'max-tokens',
+  'interrupted',
+  'unknown',
 ] as const)
 
 function invalidEvidence(message: string): never {
@@ -119,10 +131,12 @@ function normalizedEvidenceItem(
       policyId: item.policyId,
     })
   }
-  if (!['turn', 'tool', 'usage', 'diagnostic'].includes(item.kind)
+  if (!['turn', 'step', 'tool', 'usage', 'diagnostic'].includes(item.kind)
     || item.approvalId !== undefined
     || item.policyId !== undefined
     || (item.callId !== undefined && item.kind !== 'tool')
+    || (item.step !== undefined && item.kind !== 'step' && item.kind !== 'tool')
+    || (item.step !== undefined && (!Number.isSafeInteger(item.step) || item.step < 1))
     || (item.outcome !== undefined && !TERMINAL_EVIDENCE_OUTCOMES.includes(item.outcome as never))) {
     return invalidEvidence(`provider "${providerId}" returned malformed normalized evidence`)
   }
@@ -131,6 +145,7 @@ function normalizedEvidenceItem(
     kind: item.kind,
     timestamp: item.timestamp,
     ...(item.turnId === undefined ? {} : { turnId: item.turnId }),
+    ...(item.step === undefined ? {} : { step: item.step }),
     ...(item.name === undefined ? {} : { name: item.name }),
     ...(item.outcome === undefined ? {} : { outcome: item.outcome }),
     ...(item.callId === undefined ? {} : { callId: toTeammateRuntimeToolCallId(item.callId) }),
@@ -154,6 +169,8 @@ const RUNTIME_CAPABILITIES = Object.freeze([
   'evidence',
   'usage',
 ] as const satisfies readonly TeammateRuntimeCapability[])
+const MAX_EVALUATION_TOOLS = 256
+const MAX_EVALUATION_TOOL_ID_BYTES = 128
 
 /** Stable failures owned by the typed teammate-runtime boundary. */
 export class TeammateRuntimeError extends Error {
@@ -245,6 +262,18 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
     provider.runtimeCapabilities,
     RUNTIME_CAPABILITIES,
   )
+  const evaluationTools = provider.evaluationTools === undefined
+    ? undefined
+    : Object.freeze([...provider.evaluationTools].sort())
+  if (evaluationTools !== undefined && (evaluationTools.length > MAX_EVALUATION_TOOLS
+    || new Set(evaluationTools).size !== evaluationTools.length
+    || evaluationTools.some(tool => !IDENTIFIER.test(tool)
+      || Buffer.byteLength(tool, 'utf8') > MAX_EVALUATION_TOOL_ID_BYTES))) {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" has invalid evaluation tools`,
+      'TEAM_RUNTIME_INVALID_PROVIDER',
+    )
+  }
   if (runtimeCapabilities.includes('evidence') && provider.evidence === undefined) {
     throw new TeammateRuntimeError(
       `teammate runtime provider "${providerId}" advertises evidence without implementing it`,
@@ -254,6 +283,12 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
   if (runtimeCapabilities.includes('evaluation') && provider.createEvaluationHandle === undefined) {
     throw new TeammateRuntimeError(
       `teammate runtime provider "${providerId}" advertises evaluation without implementing it`,
+      'TEAM_RUNTIME_INVALID_PROVIDER',
+    )
+  }
+  if (runtimeCapabilities.includes('evaluation') !== (evaluationTools !== undefined)) {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" must publish evaluation tools exactly when evaluation is supported`,
       'TEAM_RUNTIME_INVALID_PROVIDER',
     )
   }
@@ -270,6 +305,7 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
     contextModes,
     profileCapabilities,
     runtimeCapabilities,
+    ...(evaluationTools === undefined ? {} : { evaluationTools }),
   })
 }
 
@@ -408,6 +444,69 @@ function normalizeProfile(
   if (bytes > maxBytes) {
     throw new TeammateRuntimeError(
       `teammate runtime Profile is ${bytes} UTF-8 bytes; maximum is ${maxBytes}`,
+      'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+    )
+  }
+  return normalized
+}
+
+function positiveEvaluationLimit(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new TeammateRuntimeError(
+      `teammate runtime evaluation ${name} must be a positive safe integer`,
+      'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+    )
+  }
+  return value
+}
+
+function normalizeEvaluationEnvironment(
+  providerId: string,
+  metadata: TeammateRuntimeMetadata,
+  environment: TeammateEvaluationCreateRequest['environment'],
+  maxBytes: number,
+): TeammateEvaluationCreateRequest['environment'] {
+  const confinement = environment as unknown as { readonly sandbox?: unknown; readonly approval?: unknown }
+  if (confinement.sandbox !== 'read-only' || confinement.approval !== 'never') {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" evaluations require read-only sandboxing and approval never`,
+      'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+    )
+  }
+  const toolAllowlist = environment.toolAllowlist.map(tool => tool.trim()).sort()
+  const supported = new Set(metadata.evaluationTools ?? [])
+  if (new Set(toolAllowlist).size !== toolAllowlist.length
+    || toolAllowlist.some(tool => !IDENTIFIER.test(tool) || !supported.has(tool))) {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" cannot confine the requested evaluation tools`,
+      'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+    )
+  }
+  const fixtureIds = new Set<string>()
+  const fixtures = environment.fixtures.map((fixture) => {
+    const id = fixture.id.trim()
+    if (!IDENTIFIER.test(id) || fixtureIds.has(id) || fixture.content.trim() === '') {
+      throw new TeammateRuntimeError(
+        `teammate runtime provider "${providerId}" received invalid evaluation fixtures`,
+        'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+      )
+    }
+    fixtureIds.add(id)
+    return Object.freeze({ id, content: fixture.content })
+  })
+  const normalized = Object.freeze({
+    sandbox: 'read-only' as const,
+    approval: 'never' as const,
+    toolAllowlist: Object.freeze(toolAllowlist),
+    fixtures: Object.freeze(fixtures),
+    maxSteps: positiveEvaluationLimit(environment.maxSteps, 'maxSteps'),
+    maxOutputTokens: positiveEvaluationLimit(environment.maxOutputTokens, 'maxOutputTokens'),
+    maxElapsedMs: positiveEvaluationLimit(environment.maxElapsedMs, 'maxElapsedMs'),
+  })
+  const bytes = Buffer.byteLength(JSON.stringify(normalized), 'utf8')
+  if (bytes > maxBytes) {
+    throw new TeammateRuntimeError(
+      `teammate runtime evaluation environment is ${bytes} UTF-8 bytes; maximum is ${maxBytes}`,
       'TEAM_RUNTIME_CAPABILITY_MISMATCH',
     )
   }
@@ -905,10 +1004,10 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
   }
 
   /**
-   * Create one idempotent isolated provider-native evaluation handle.
+   * Run one idempotent fresh provider-native evaluation to a bounded terminal result.
    * @param providerId - stable provider identity.
-   * @param request - evaluation identity, enforced requirements, input, and cancellation.
-   * @returns the stable provider-owned evaluation identity.
+   * @param request - evaluation identity, enforced fresh requirements, input, confinement, and cancellation.
+   * @returns the normalized result while its exact provider-owned handle remains attached for caller commit.
    */
   async createEvaluationHandle(
     providerId: string,
@@ -917,6 +1016,12 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     const record = this.requireProvider(providerId)
     const provider = this.providerFor(record)
     const requirements = this.assertRequirements(record.metadata, request.requirements)
+    if (requirements.contextMode !== 'fresh') {
+      throw new TeammateRuntimeError(
+        'isolated evaluations require fresh context',
+        'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+      )
+    }
     if (!requirements.runtimeCapabilities.includes('evaluation')) {
       throw new TeammateRuntimeError(
         'evaluation creation requires the evaluation capability',
@@ -932,19 +1037,81 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       )
     }
     const profile = normalizeProfile(request.profile, requirements, this.maxProfileBytes)
+    const evaluationId = toTeammateEvaluationId(request.evaluationId)
+    const environment = normalizeEvaluationEnvironment(
+      providerId,
+      record.metadata,
+      request.environment,
+      this.maxProfileBytes,
+    )
+    const input = structuredClone(request.input)
+    if (Buffer.byteLength(JSON.stringify({ input, environment }), 'utf8') > this.maxProfileBytes) {
+      throw new TeammateRuntimeError(
+        `teammate runtime provider "${providerId}" received an oversized evaluation request`,
+        'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+      )
+    }
     const result = await this.invoke(record, request.signal, signal => createEvaluationHandle({
       ...request,
+      evaluationId,
       profile,
       requirements,
-      input: structuredClone(request.input),
+      input,
+      environment,
       signal,
     }), async (late) => { await this.releaseLateEvaluation(record, late) })
     try {
       record.evaluations.add(result.evaluationHandle)
+      const evaluationHandle = toTeammateEvaluationHandle(result.evaluationHandle)
+      const turnId = toTeammateRuntimeTurnId(result.turnId)
+      if (!EVALUATION_TERMINALS.includes(result.terminal)
+        || !Number.isSafeInteger(result.startedAt) || result.startedAt < 0
+        || !Number.isSafeInteger(result.endedAt) || result.endedAt < result.startedAt
+        || (result.complete && result.terminal === 'unknown')
+        || result.evidence.length > this.maxEvidenceItems) {
+        throw new TeammateRuntimeError(
+          `provider "${providerId}" returned an invalid evaluation result`,
+          'TEAM_RUNTIME_IDENTITY_CONFLICT',
+        )
+      }
+      const evidence = result.evidence.map(item => normalizedEvidenceItem(
+        providerId,
+        item,
+        record.metadata.runtimeCapabilities.includes('exact-call-approval'),
+      ))
+      const evidenceIds = new Set(evidence.map(item => String(item.id)))
+      const terminalItems = evidence.filter(item => item.kind === 'turn'
+        && item.turnId === turnId
+        && item.outcome !== undefined)
+      if (evidenceIds.size !== evidence.length
+        || evidence.some(item => item.turnId !== undefined && item.turnId !== turnId)
+        || evidence.some(item => item.step !== undefined && item.step > environment.maxSteps)
+        || (result.complete
+          && (terminalItems.length !== 1 || terminalItems[0]?.outcome !== result.terminal))) {
+        throw new TeammateRuntimeError(
+          `provider "${providerId}" returned evaluation evidence with conflicting identities`,
+          'TEAM_RUNTIME_IDENTITY_CONFLICT',
+        )
+      }
+      const output = Object.freeze(structuredClone(result.output))
       const normalized: TeammateEvaluationCreateResult = Object.freeze({
-        evaluationHandle: result.evaluationHandle,
+        evaluationHandle,
+        turnId,
+        terminal: result.terminal,
+        output,
+        evidence: Object.freeze(evidence),
+        complete: result.complete,
+        startedAt: result.startedAt,
+        endedAt: result.endedAt,
       })
-      const key = stableKey([providerId, request.evaluationId])
+      const bytes = Buffer.byteLength(JSON.stringify(normalized), 'utf8')
+      if (bytes > this.maxEvidenceBytes) {
+        throw new TeammateRuntimeError(
+          `provider "${providerId}" returned an evaluation result of ${bytes} UTF-8 bytes; maximum is ${this.maxEvidenceBytes}`,
+          'TEAM_RUNTIME_IDENTITY_CONFLICT',
+        )
+      }
+      const key = stableKey([providerId, evaluationId])
       const known = this.evaluationHandles.get(key)
       if (known !== undefined && known !== normalized.evaluationHandle) {
         throw new TeammateRuntimeError(

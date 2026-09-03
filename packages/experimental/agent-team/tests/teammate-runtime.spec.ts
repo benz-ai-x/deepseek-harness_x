@@ -24,6 +24,9 @@ import TeamService, {
   TeammateRuntimeApprovalId,
   TeammateRuntimeToolCallId,
   TeammateRuntimeTurnId,
+  type TeammateEvaluationCreateRequest,
+  type TeammateEvaluationCreateResult,
+  type TeammateEvaluationEnvironment,
   type TeammateRuntimeCreateRequest,
   type TeammateRuntimeDisposeRequest,
   type TeammateRuntimeProvider,
@@ -95,6 +98,7 @@ class FakeDurableRuntime implements TeammateRuntimeProvider {
   readonly contextModes = ['fresh'] as const
   readonly profileCapabilities = ['persona', 'mission'] as const
   readonly runtimeCapabilities = ['evidence', 'evaluation'] as const
+  readonly evaluationTools = ['read', 'search'] as const
   readonly attachedRuntimes = new Set<ReturnType<typeof TeammateRuntimeHandle>>()
   readonly attachedEvaluations = new Set<ReturnType<typeof TeammateEvaluationHandle>>()
   private readonly presenceListeners = new Set<(event: TeammateRuntimePresenceEvent) => void>()
@@ -172,7 +176,33 @@ class FakeDurableRuntime implements TeammateRuntimeProvider {
       this.store.evaluations.set(request.evaluationId, handle)
     }
     this.attachedEvaluations.add(handle)
-    return { evaluationHandle: handle }
+    const turnId = TeammateRuntimeTurnId(`${handle}:turn`)
+    return {
+      evaluationHandle: handle,
+      turnId,
+      terminal: 'completed' as const,
+      output: [{ type: 'text' as const, text: 'Evaluation passed.' }],
+      evidence: [
+        {
+          id: TeammateRuntimeEvidenceId(`${handle}:step`),
+          kind: 'step' as const,
+          timestamp: 1,
+          turnId,
+          step: 1,
+          outcome: 'completed' as const,
+        },
+        {
+          id: TeammateRuntimeEvidenceId(`${handle}:turn-end`),
+          kind: 'turn' as const,
+          timestamp: 2,
+          turnId,
+          outcome: 'completed' as const,
+        },
+      ],
+      complete: true,
+      startedAt: 1,
+      endedAt: 2,
+    }
   })
   readonly dispose = vi.fn<TeammateRuntimeProvider['dispose']>(async (request: TeammateRuntimeDisposeRequest) => {
     request.signal.throwIfAborted()
@@ -256,6 +286,18 @@ function createRequest(overrides: Partial<TeammateRuntimeCreateRequest> = {}): T
   }
 }
 
+function evaluationEnvironment() {
+  return {
+    sandbox: 'read-only' as const,
+    approval: 'never' as const,
+    toolAllowlist: [] as const,
+    fixtures: [] as const,
+    maxSteps: 4,
+    maxOutputTokens: 256,
+    maxElapsedMs: 5_000,
+  }
+}
+
 type ProviderOverrides = Omit<
   Partial<TeammateRuntimeProvider>,
   'evidence' | 'createEvaluationHandle' | 'onPresenceChanged'
@@ -277,12 +319,14 @@ function providerWith(
   const resolvedPresence = Object.hasOwn(overrides, 'onPresenceChanged')
     ? onPresenceChanged
     : provider.onPresenceChanged
+  const runtimeCapabilities = requiredOverrides.runtimeCapabilities ?? provider.runtimeCapabilities
   return {
     id: provider.id,
     displayName: provider.displayName,
     contextModes: provider.contextModes,
     profileCapabilities: provider.profileCapabilities,
-    runtimeCapabilities: provider.runtimeCapabilities,
+    runtimeCapabilities,
+    ...(runtimeCapabilities.includes('evaluation') ? { evaluationTools: provider.evaluationTools } : {}),
     create: provider.create,
     resume: provider.resume,
     deliver: provider.deliver,
@@ -837,6 +881,12 @@ describe('durable teammate runtime registry', () => {
       providerWith(invalidBase, { contextModes: ['fresh', 'fresh'] }),
       providerWith(invalidBase, { profileCapabilities: ['persona', 'persona'] }),
       providerWith(invalidBase, { runtimeCapabilities: ['evidence', 'evidence'] }),
+      providerWith(invalidBase, { evaluationTools: ['read', 'read'] }),
+      providerWith(invalidBase, { evaluationTools: ['invalid/tool'] }),
+      providerWith(invalidBase, { evaluationTools: ['x'.repeat(129)] }),
+      providerWith(invalidBase, {
+        evaluationTools: Array.from({ length: 257 }, (_, index) => `tool-${index}`),
+      }),
       providerWith(invalidBase, {
         profileCapabilities: ['persona', 'mission', 'hooks'],
         runtimeCapabilities: ['exact-call-approval'],
@@ -1052,16 +1102,58 @@ describe('durable teammate runtime registry', () => {
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evidence'] },
       input: [],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    const forkCapableProvider = new FakeDurableRuntime(fakeStore(), 'fork-capable-evaluation')
+    const forkCapableFiber = await register(ctx, providerWith(forkCapableProvider, {
+      contextModes: ['fresh', 'fork'],
+    }))
+    await expect(registry.createEvaluationHandle('fork-capable-evaluation', {
+      evaluationId: TeammateEvaluationId('forked-evaluation'),
+      profile: runtimeProfile(),
+      requirements: {
+        ...createRequest().requirements,
+        contextMode: 'fork',
+        runtimeCapabilities: ['evaluation'],
+      },
+      input: [],
+      environment: evaluationEnvironment(),
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    expect(forkCapableProvider.createEvaluationHandle).not.toHaveBeenCalled()
     const evaluationRequest = {
       evaluationId: TeammateEvaluationId('stable-evaluation'),
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] as const },
       input: [{ type: 'text' as const, text: 'Evaluate.' }],
+      environment: {
+        sandbox: 'read-only' as const,
+        approval: 'never' as const,
+        toolAllowlist: ['search', 'read'],
+        fixtures: [{ id: 'fixture-a', content: 'Declared fixture.' }],
+        maxSteps: 4,
+        maxOutputTokens: 256,
+        maxElapsedMs: 5_000,
+      },
       signal: SIGNAL,
     }
     const evaluation = await registry.createEvaluationHandle('fake-native', evaluationRequest)
+    expect(evaluation).toMatchObject({
+      evaluationHandle: 'native-eval-1',
+      turnId: 'native-eval-1:turn',
+      terminal: 'completed',
+      output: [{ type: 'text', text: 'Evaluation passed.' }],
+      evidence: [
+        { kind: 'step', step: 1, turnId: 'native-eval-1:turn' },
+        { kind: 'turn', outcome: 'completed', turnId: 'native-eval-1:turn' },
+      ],
+      complete: true,
+      startedAt: 1,
+      endedAt: 2,
+    })
+    expect(provider.createEvaluationHandle.mock.lastCall?.[0].environment.toolAllowlist)
+      .toEqual(['read', 'search'])
     await expect(registry.dispose('fake-native', {
       kind: 'evaluation',
       evaluationHandle: TeammateEvaluationHandle('unknown-evaluation'),
@@ -1080,6 +1172,284 @@ describe('durable teammate runtime registry', () => {
     expect(registry.runtimePresence('fake-native', created.nativeHandle)).toBe('inactive')
     expect(() => registry.interrupt('fake-native', { nativeHandle: created.nativeHandle }))
       .toThrow(expect.objectContaining({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' }))
+    await forkCapableFiber.dispose()
+    await providerFiber.dispose()
+  })
+
+  it('runs a Lead-owned isolated evaluation and disposes its exact native handle in finally', async () => {
+    const { ctx, lead } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore())
+    const providerFiber = await register(ctx, provider)
+    const service = ctx.agentTeams
+    const evaluationRequest = (evaluationId: string): TeammateEvaluationCreateRequest => ({
+      evaluationId: TeammateEvaluationId(evaluationId),
+      profile: runtimeProfile(),
+      requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation', 'evidence'] },
+      input: [{ type: 'text', text: 'Evaluate safely.' }],
+      environment: {
+        sandbox: 'read-only',
+        approval: 'never',
+        toolAllowlist: ['read'],
+        fixtures: [],
+        maxSteps: 2,
+        maxOutputTokens: 128,
+        maxElapsedMs: 2_000,
+      },
+      signal: SIGNAL,
+    })
+    const roster = (ctx.agentTeams as unknown as {
+      roster: { membership(agent: Agent): ReturnType<typeof ctx.agentTeams.membership> }
+    }).roster
+    const membership = vi.spyOn(roster, 'membership').mockReturnValueOnce({
+      ...ctx.agentTeams.membership(lead),
+      role: 'teammate',
+      name: 'evaluation-worker',
+    })
+    try {
+      await expect(service.runTeammateEvaluation(
+        lead,
+        'fake-native',
+        evaluationRequest('worker-evaluation'),
+      )).rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
+    } finally {
+      membership.mockRestore()
+    }
+    await expect(service.runTeammateEvaluation(lead, 'fake-native', {
+      ...evaluationRequest('forked-service-evaluation'),
+      requirements: { ...evaluationRequest('unused').requirements, contextMode: 'fork' },
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    expect(provider.createEvaluationHandle).not.toHaveBeenCalled()
+    const rosterBefore = ctx.agentTeams.listMembers(lead)
+    const result = await service.runTeammateEvaluation(
+      lead,
+      'fake-native',
+      evaluationRequest('lead-evaluation'),
+      (completed) => {
+        expect(completed).toMatchObject({ evaluationHandle: 'native-eval-1', terminal: 'completed' })
+        expect(provider.attachedEvaluations).toContain(TeammateEvaluationHandle('native-eval-1'))
+      },
+    )
+
+    expect(result).toMatchObject({ terminal: 'completed', complete: true })
+    expect(ctx.agentTeams.listMembers(lead)).toEqual(rosterBefore)
+    expect(provider.attachedEvaluations).toHaveLength(0)
+    expect(provider.dispose).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'evaluation',
+      evaluationHandle: 'native-eval-1',
+    }))
+
+    const commitFailure = new Error('durable evaluation commit failed')
+    await expect(service.runTeammateEvaluation(
+      lead,
+      'fake-native',
+      evaluationRequest('failed-commit-evaluation'),
+      () => {
+        expect(provider.attachedEvaluations).toContain(TeammateEvaluationHandle('native-eval-2'))
+        throw commitFailure
+      },
+    )).rejects.toBe(commitFailure)
+    expect(provider.attachedEvaluations).toHaveLength(0)
+    expect(provider.dispose).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: 'evaluation',
+      evaluationHandle: 'native-eval-2',
+    }))
+    await providerFiber.dispose()
+  })
+
+  it('rejects evaluation confinement drift before provider work', async () => {
+    const { ctx } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore())
+    const providerFiber = await register(ctx, provider)
+    const registry = runtimeRegistry(ctx)
+    const baseEnvironment = evaluationEnvironment()
+    const invalidEnvironments: TeammateEvaluationEnvironment[] = [
+      { ...baseEnvironment, sandbox: 'workspace-write' as never },
+      { ...baseEnvironment, approval: 'on-request' as never },
+      { ...baseEnvironment, toolAllowlist: ['read', 'read'] },
+      { ...baseEnvironment, toolAllowlist: ['read/path'] },
+      { ...baseEnvironment, toolAllowlist: ['write'] },
+      { ...baseEnvironment, fixtures: [{ id: 'bad/id', content: 'fixture' }] },
+      { ...baseEnvironment, fixtures: [{ id: 'same', content: 'one' }, { id: 'same', content: 'two' }] },
+      { ...baseEnvironment, fixtures: [{ id: 'empty', content: ' ' }] },
+      { ...baseEnvironment, maxSteps: 0 },
+      { ...baseEnvironment, maxOutputTokens: 1.5 },
+      { ...baseEnvironment, maxElapsedMs: Number.MAX_SAFE_INTEGER + 1 },
+    ]
+    for (const [index, environment] of invalidEnvironments.entries()) {
+      await expect(registry.createEvaluationHandle('fake-native', {
+        evaluationId: TeammateEvaluationId(`invalid-environment-${index}`),
+        profile: runtimeProfile(),
+        requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
+        input: [],
+        environment,
+        signal: SIGNAL,
+      })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    }
+    expect(provider.createEvaluationHandle).not.toHaveBeenCalled()
+    await providerFiber.dispose()
+
+    const profile = runtimeProfile()
+    const environment = evaluationEnvironment()
+    const maxProfileBytes = Math.max(
+      Buffer.byteLength(JSON.stringify(profile), 'utf8'),
+      Buffer.byteLength(JSON.stringify(environment), 'utf8'),
+    ) + 4
+    const oversized = await setup({ maxProfileBytes })
+    const oversizedProvider = new FakeDurableRuntime(fakeStore(), 'oversized-evaluation')
+    const oversizedFiber = await register(oversized.ctx, oversizedProvider)
+    await expect(runtimeRegistry(oversized.ctx).createEvaluationHandle('oversized-evaluation', {
+      evaluationId: TeammateEvaluationId('oversized-evaluation-request'),
+      profile,
+      requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
+      input: [{ type: 'text', text: 'x'.repeat(maxProfileBytes) }],
+      environment,
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    expect(oversizedProvider.createEvaluationHandle).not.toHaveBeenCalled()
+    await oversizedFiber.dispose()
+  })
+
+  it('quarantines malformed bounded evaluation results and releases their exact handles', async () => {
+    const validResult = (id: string): TeammateEvaluationCreateResult => {
+      const evaluationHandle = TeammateEvaluationHandle(`${id}-handle`)
+      const turnId = TeammateRuntimeTurnId(`${id}-turn`)
+      return {
+        evaluationHandle,
+        turnId,
+        terminal: 'completed',
+        output: [],
+        evidence: [{
+          id: TeammateRuntimeEvidenceId(`${id}-terminal`),
+          kind: 'turn',
+          timestamp: 2,
+          turnId,
+          outcome: 'completed',
+        }],
+        complete: true,
+        startedAt: 1,
+        endedAt: 2,
+      }
+    }
+    const violations: Array<{
+      readonly id: string
+      readonly config?: ConstructorParameters<typeof TeamService>[1]
+      readonly mutate: (result: TeammateEvaluationCreateResult) => TeammateEvaluationCreateResult
+    }> = [
+      {
+        id: 'invalid-terminal',
+        mutate: result => ({ ...result, terminal: 'not-terminal' as never }),
+      },
+      {
+        id: 'invalid-time',
+        mutate: result => ({ ...result, endedAt: 0 }),
+      },
+      {
+        id: 'complete-unknown',
+        mutate: result => ({ ...result, terminal: 'unknown' }),
+      },
+      {
+        id: 'too-many-evidence',
+        config: { maxEvidenceItems: 1 },
+        mutate: result => ({
+          ...result,
+          evidence: [
+            { id: TeammateRuntimeEvidenceId('extra'), kind: 'diagnostic', timestamp: 1 },
+            ...result.evidence,
+          ],
+        }),
+      },
+      {
+        id: 'duplicate-evidence',
+        mutate: result => ({ ...result, evidence: [result.evidence[0]!, result.evidence[0]!] }),
+      },
+      {
+        id: 'wrong-turn',
+        mutate: result => ({
+          ...result,
+          evidence: [{ ...result.evidence[0]!, turnId: TeammateRuntimeTurnId('another-turn') }],
+        }),
+      },
+      {
+        id: 'too-many-steps',
+        mutate: result => ({
+          ...result,
+          evidence: [
+            {
+              id: TeammateRuntimeEvidenceId('late-step'),
+              kind: 'step',
+              timestamp: 1,
+              turnId: result.turnId,
+              step: 5,
+              outcome: 'completed',
+            },
+            ...result.evidence,
+          ],
+        }),
+      },
+      {
+        id: 'terminal-mismatch',
+        mutate: result => ({ ...result, terminal: 'failed' }),
+      },
+      {
+        id: 'oversized-result',
+        config: { maxEvidenceBytes: 1 },
+        mutate: result => result,
+      },
+    ]
+    for (const violation of violations) {
+      const testCase = await setup(violation.config)
+      const provider = new FakeDurableRuntime(fakeStore(), violation.id)
+      const providerFiber = await register(testCase.ctx, provider)
+      const result = violation.mutate(validResult(violation.id))
+      provider.createEvaluationHandle.mockResolvedValueOnce(result)
+      const registry = runtimeRegistry(testCase.ctx)
+      await expect(registry.createEvaluationHandle(violation.id, {
+        evaluationId: TeammateEvaluationId(`${violation.id}-evaluation`),
+        profile: runtimeProfile(),
+        requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
+        input: [],
+        environment: evaluationEnvironment(),
+        signal: SIGNAL,
+      })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
+      expect(registry.available(violation.id)).toBe(false)
+      expect(provider.dispose).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'evaluation',
+        evaluationHandle: result.evaluationHandle,
+      }))
+      await providerFiber.dispose()
+    }
+  })
+
+  it('rejects an idempotent evaluation whose provider changes its exact handle', async () => {
+    const { ctx } = await setup()
+    const provider = new FakeDurableRuntime(fakeStore(), 'changed-evaluation-handle')
+    const providerFiber = await register(ctx, provider)
+    const registry = runtimeRegistry(ctx)
+    const request: TeammateEvaluationCreateRequest = {
+      evaluationId: TeammateEvaluationId('stable-evaluation-identity'),
+      profile: runtimeProfile(),
+      requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
+      input: [],
+      environment: evaluationEnvironment(),
+      signal: SIGNAL,
+    }
+    const first = await registry.createEvaluationHandle('changed-evaluation-handle', request)
+    await registry.dispose('changed-evaluation-handle', {
+      kind: 'evaluation',
+      evaluationHandle: first.evaluationHandle,
+      signal: SIGNAL,
+    })
+    const changed = {
+      ...first,
+      evaluationHandle: TeammateEvaluationHandle('changed-evaluation-handle-value'),
+    }
+    provider.createEvaluationHandle.mockResolvedValueOnce(changed)
+    await expect(registry.createEvaluationHandle('changed-evaluation-handle', request))
+      .rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
+    expect(provider.dispose).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: 'evaluation',
+      evaluationHandle: changed.evaluationHandle,
+    }))
     await providerFiber.dispose()
   })
 
@@ -1131,6 +1501,7 @@ describe('durable teammate runtime registry', () => {
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
       input: [],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })
     evaluationProvider.createEvaluationHandle.mockResolvedValueOnce(firstEvaluation)
@@ -1139,6 +1510,7 @@ describe('durable teammate runtime registry', () => {
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
       input: [],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
     expect(evaluationRegistry.available('invalid-evaluation')).toBe(false)
@@ -1314,6 +1686,7 @@ describe('durable teammate runtime registry', () => {
       contextModes: ['fresh'],
       profileCapabilities: ['persona', 'mission'],
       runtimeCapabilities: ['evaluation', 'evidence'],
+      evaluationTools: ['read', 'search'],
     }])
     expect(Object.isFrozen(snapshot)).toBe(true)
     expect(Object.isFrozen(snapshot[0])).toBe(true)
@@ -1401,6 +1774,7 @@ describe('durable teammate runtime registry', () => {
         runtimeCapabilities: ['evaluation', 'evidence'],
       },
       input: [{ type: 'text', text: 'Evaluate this.' }],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })
     expect(provider.attachedEvaluations).toContain(evaluation.evaluationHandle)
@@ -2200,6 +2574,7 @@ describe('durable teammate runtime registry', () => {
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
       input: [],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })
     provider.dispose.mockRejectedValue(new Error('native cleanup failed'))
@@ -2303,6 +2678,7 @@ describe('durable teammate runtime registry', () => {
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
       input: [],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })
 
@@ -2424,6 +2800,7 @@ describe('durable teammate runtime registry', () => {
       profile: runtimeProfile(),
       requirements: { ...createRequest().requirements, runtimeCapabilities: ['evaluation'] },
       input: [],
+      environment: evaluationEnvironment(),
       signal: SIGNAL,
     })
     void lateResume.catch(() => undefined)
@@ -2441,7 +2818,22 @@ describe('durable teammate runtime registry', () => {
     })
     resumed.resolve({ nativeHandle: created.nativeHandle, presence: 'idle' })
     missing.resolve(undefined)
-    evaluated.resolve({ evaluationHandle: lateEvaluationHandle })
+    evaluated.resolve({
+      evaluationHandle: lateEvaluationHandle,
+      turnId: TeammateRuntimeTurnId('native-eval-late:turn'),
+      terminal: 'completed',
+      output: [],
+      evidence: [{
+        id: TeammateRuntimeEvidenceId('native-eval-late:end'),
+        kind: 'turn',
+        timestamp: 1,
+        turnId: TeammateRuntimeTurnId('native-eval-late:turn'),
+        outcome: 'completed',
+      }],
+      complete: true,
+      startedAt: 0,
+      endedAt: 1,
+    })
     await expect(lateResume).rejects.toMatchObject({ code: 'TEAM_RUNTIME_UNAVAILABLE' })
     await expect(lateMissing).rejects.toMatchObject({ code: 'TEAM_RUNTIME_UNAVAILABLE' })
     await expect(lateEvaluation).rejects.toMatchObject({ code: 'TEAM_RUNTIME_UNAVAILABLE' })

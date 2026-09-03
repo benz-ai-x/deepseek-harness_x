@@ -139,9 +139,19 @@ export function defineTeammateRuntimeProviderConformance(
           runtimeCapabilities: ['evaluation', 'evidence'] as const,
         },
         input: [{ type: 'text' as const, text: 'Conformance evaluation.' }],
+        environment: {
+          sandbox: 'read-only' as const,
+          approval: 'never' as const,
+          toolAllowlist: [...provider.evaluationTools ?? []],
+          fixtures: [],
+          maxSteps: 4,
+          maxOutputTokens: 256,
+          maxElapsedMs: 5_000,
+        },
         signal: createRequest.signal,
       }
       const evaluation = await createEvaluationHandle(evaluationRequest)
+      options.testApi.expect(evaluation).toMatchObject({ complete: true, terminal: 'completed' })
       const replayedEvaluation = await createEvaluationHandle(evaluationRequest)
       options.testApi.expect(replayedEvaluation.evaluationHandle).toBe(evaluation.evaluationHandle)
       const distinctEvaluation = await createEvaluationHandle({
