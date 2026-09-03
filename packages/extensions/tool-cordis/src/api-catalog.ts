@@ -380,6 +380,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable message identity and immediate-delivery observation.',
       },
       {
+        signature: 'async readTeammateRuntimeEvidence( caller: Agent, targetName: string, request: Omit<TeammateRuntimeEvidenceRequest, \'nativeHandle\'>, ): Promise<TeammateRuntimeEvidenceResult>',
+        description: 'Read bounded normalized evidence for one exact external teammate.',
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent used as the authority credential.' }, { name: 'targetName', description: 'active provider-native teammate name.' }, { name: 'request', description: 'bounded evidence cursor, limit, and caller cancellation.' }],
+        returns: 'provider-normalized facts correlated to the roster-owned native handle.',
+      },
+      {
         signature: 'async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>',
         description: 'Create one unowned pending task in the Team Lead log.',
         parameters: [{ name: 'caller', description: 'exact live Team member creating the task.' }, { name: 'request', description: 'task text, blockers, and advisory write scopes.' }],
@@ -5616,7 +5622,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeCreateResult',
-    declaration: 'export interface TeammateRuntimeCreateResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly presence: \'running\' | \'idle\';\n}',
+    declaration: 'export interface TeammateRuntimeCreateResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly presence: \'running\' | \'idle\';\n}',
   },
   {
     name: 'TeammateRuntimeDeliverRequest',
@@ -5640,7 +5646,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeEvidenceItem',
-    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'tool\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'interrupted\' | \'unknown\';\n}',
+    declaration: 'export interface TeammateRuntimeEvidenceItem {\n    readonly id: TeammateRuntimeEvidenceId;\n    readonly kind: \'turn\' | \'tool\' | \'usage\' | \'diagnostic\';\n    readonly timestamp: number;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly name?: string;\n    readonly outcome?: \'completed\' | \'cancelled\' | \'blocked\' | \'failed\' | \'interrupted\' | \'unknown\';\n    readonly usage?: Readonly<TokenUsage>;\n}',
   },
   {
     name: 'TeammateRuntimeEvidenceRequest',
@@ -5712,7 +5718,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberExternalRuntimeSnapshot',
-    declaration: 'export interface TeamMemberExternalRuntimeSnapshot {\n    readonly kind: \'external-agent\';\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly requestFingerprint: string;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly nativeHandle?: TeammateRuntimeHandle;\n}',
+    declaration: 'export interface TeamMemberExternalRuntimeSnapshot {\n    readonly kind: \'external-agent\';\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly requestFingerprint: string;\n    readonly requirements: TeammateRuntimeRequirements;\n    readonly nativeHandle?: TeammateRuntimeHandle;\n    readonly initialTurnId?: TeammateRuntimeTurnId;\n}',
   },
   {
     name: 'TeamMemberRouteSnapshot',

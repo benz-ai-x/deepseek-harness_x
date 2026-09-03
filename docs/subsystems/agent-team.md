@@ -56,10 +56,33 @@ interface TeamMemberExternalRuntimeSnapshot {
   readonly requestFingerprint: string
   readonly requirements: TeammateRuntimeRequirements
   readonly nativeHandle?: TeammateRuntimeHandle
+  readonly initialTurnId?: TeammateRuntimeTurnId
 }
 ```
 
-`launchRequestId` makes identical creation retries idempotent, while `requestFingerprint` rejects reuse with different normalized input. The provider returns `nativeHandle` only after it durably accepts initial work; an external member cannot become `active` before that opaque identity is recorded. Provider process objects, credentials, prompts, evidence payloads, and native session state do not enter the Team log.
+`launchRequestId` makes identical creation retries idempotent, while `requestFingerprint` rejects reuse with different normalized input. The provider returns `nativeHandle` only after it durably accepts initial work; when observable, the same acknowledgement carries `initialTurnId`, which is retained as the canonical native correlation. An external member cannot become `active` before the opaque runtime identity is recorded. Provider process objects, credentials, prompts, evidence payloads, and native session state do not enter the Team log.
+
+The exact live Lead may read a bounded normalized evidence page for an active external teammate. Agent Teams resolves the roster-owned native handle internally, so the caller cannot redirect inspection to an unrelated runtime. Only stable turn/tool names, terminal outcomes, timestamps, and provider-reported token counters may cross this seam; raw prompts, replies, tool arguments/results, files, environment values, credentials, and provider payloads remain excluded.
+
+```ts type-equiv
+/** Request for a bounded evidence window owned by one native runtime. */
+interface TeammateRuntimeEvidenceRequest {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly cursor?: TeammateRuntimeEvidenceCursor
+  readonly limit: number
+  readonly signal: AbortSignal
+}
+```
+
+```ts type-equiv
+/** Detached evidence page correlated to its exact native runtime. */
+interface TeammateRuntimeEvidenceResult {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly items: readonly TeammateRuntimeEvidenceItem[]
+  readonly nextCursor?: TeammateRuntimeEvidenceCursor
+  readonly complete: boolean
+}
+```
 
 Provider registration belongs to the calling Fiber. Removal closes admission, cancels and settles that provider's work, removes its process-local handles, and leaves other providers untouched. A persisted external member becomes unavailable and inactive without changing its durable identity; the same provider id can later resume its exact native handle without creating a replacement.
 
@@ -166,6 +189,15 @@ registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRunt
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Read bounded normalized evidence for one exact external teammate.
+ * @param caller - exact live Lead Agent used as the authority credential.
+ * @param targetName - active provider-native teammate name.
+ * @param request - bounded evidence cursor, limit, and caller cancellation.
+ * @returns provider-normalized facts correlated to the roster-owned native handle.
+ */
+async readTeammateRuntimeEvidence( caller: Agent, targetName: string, request: Omit<TeammateRuntimeEvidenceRequest, 'nativeHandle'>, ): Promise<TeammateRuntimeEvidenceResult>
 
 /**
  * Create one unowned pending task in the Team Lead log.

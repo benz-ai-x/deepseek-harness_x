@@ -56,10 +56,33 @@ interface TeamMemberExternalRuntimeSnapshot {
   readonly requestFingerprint: string
   readonly requirements: TeammateRuntimeRequirements
   readonly nativeHandle?: TeammateRuntimeHandle
+  readonly initialTurnId?: TeammateRuntimeTurnId
 }
 ```
 
-`launchRequestId` 让相同创建重试保持幂等，`requestFingerprint` 则拒绝用不同规范化输入复用该身份。provider 只有在持久接受初始工作后才返回 `nativeHandle`；在记录该不透明身份前，external member 不能变为 `active`。provider process object、credential、prompt、evidence payload 与原生 session 状态不会进入 Team 日志。
+`launchRequestId` 让相同创建重试保持幂等，`requestFingerprint` 则拒绝用不同规范化输入复用该身份。provider 只有在持久接受初始工作后才返回 `nativeHandle`；若可以观察，同一 acknowledgement 还会携带 `initialTurnId`，并将其保留为规范原生关联。在记录不透明 runtime 身份前，external member 不能变为 `active`。provider process object、credential、prompt、evidence payload 与原生 session 状态不会进入 Team 日志。
+
+精确的 live Lead 可以读取 active external teammate 的有界规范 evidence page。Agent Teams 在内部解析 roster 所有的 native handle，因此调用方不能把检查重定向到无关 runtime。只有稳定 turn/tool 名称、终态、时间戳和 provider 报告的 token 计数可以跨越该接缝；原始 prompt、reply、tool argument/result、文件、环境值、credential 与 provider payload 始终被排除。
+
+```ts type-equiv
+/** Request for a bounded evidence window owned by one native runtime. */
+interface TeammateRuntimeEvidenceRequest {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly cursor?: TeammateRuntimeEvidenceCursor
+  readonly limit: number
+  readonly signal: AbortSignal
+}
+```
+
+```ts type-equiv
+/** Detached evidence page correlated to its exact native runtime. */
+interface TeammateRuntimeEvidenceResult {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly items: readonly TeammateRuntimeEvidenceItem[]
+  readonly nextCursor?: TeammateRuntimeEvidenceCursor
+  readonly complete: boolean
+}
+```
 
 provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消并等待该 provider 的工作、移除其进程内 handle，且不影响其他 provider。持久 external member 会在不改变持久身份的情况下变为不可用且不驻留；同一 provider id 之后可以恢复完全相同的原生 handle，而不会创建替代项。
 
@@ -166,6 +189,15 @@ registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRunt
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Read bounded normalized evidence for one exact external teammate.
+ * @param caller - exact live Lead Agent used as the authority credential.
+ * @param targetName - active provider-native teammate name.
+ * @param request - bounded evidence cursor, limit, and caller cancellation.
+ * @returns provider-normalized facts correlated to the roster-owned native handle.
+ */
+async readTeammateRuntimeEvidence( caller: Agent, targetName: string, request: Omit<TeammateRuntimeEvidenceRequest, 'nativeHandle'>, ): Promise<TeammateRuntimeEvidenceResult>
 
 /**
  * Create one unowned pending task in the Team Lead log.

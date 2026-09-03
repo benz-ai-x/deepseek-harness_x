@@ -1,7 +1,7 @@
 /** Host-only Agent Teams service request values. */
 
 import type { AgentOptions } from '@deepseek-ai/dsh-agent'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
+import type { ContentBlock, TokenUsage } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamMessageId,
@@ -69,6 +69,8 @@ export interface TeammateRuntimeCreateRequest {
 /** Stable native identity returned only after initial work is durably accepted. */
 export interface TeammateRuntimeCreateResult {
   readonly nativeHandle: TeammateRuntimeHandle
+  /** Stable provider-native identity of the accepted initial-work turn, when observable. */
+  readonly turnId?: TeammateRuntimeTurnId
   readonly presence: 'running' | 'idle'
 }
 
@@ -121,6 +123,8 @@ export interface TeammateRuntimeEvidenceItem {
   readonly turnId?: TeammateRuntimeTurnId
   readonly name?: string
   readonly outcome?: 'completed' | 'cancelled' | 'blocked' | 'failed' | 'interrupted' | 'unknown'
+  /** Latest provider-reported cumulative counters for this turn; repeated rows are snapshots, not deltas. */
+  readonly usage?: Readonly<TokenUsage>
 }
 
 /** Request for a bounded evidence window owned by one native runtime. */

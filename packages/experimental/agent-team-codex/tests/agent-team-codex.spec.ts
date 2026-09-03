@@ -846,7 +846,16 @@ describe('durable Codex teammate runtime', () => {
         params: {
           threadId: '03999999-1111-7777-8111-111111111111',
           turnId: '03999999-2222-7777-8222-222222222222',
-          tokenUsage: { rawLoginState: 'SECRET_LOGIN_STATE' },
+          tokenUsage: {
+            total: {
+              inputTokens: 12,
+              cachedInputTokens: 2,
+              outputTokens: 5,
+              reasoningOutputTokens: 1,
+              totalTokens: 17,
+            },
+            rawLoginState: 'SECRET_LOGIN_STATE',
+          },
         },
       },
       {
@@ -896,7 +905,16 @@ describe('durable Codex teammate runtime', () => {
     const items = (evidence as { items: Array<Record<string, unknown>> }).items
     expect(items).toHaveLength(3)
     expect(items.some(item => item.kind === 'tool' && item.name === 'mcp-tool' && item.outcome === 'failed')).toBe(true)
-    expect(items.some(item => item.kind === 'usage')).toBe(true)
+    expect(items).toContainEqual(expect.objectContaining({
+      kind: 'usage',
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 17,
+        cacheReadTokens: 2,
+        reasoningTokens: 1,
+      },
+    }))
     expect(items.some(item => item.kind === 'turn' && item.outcome === 'completed')).toBe(true)
     const serialized = JSON.stringify(evidence)
     for (const secret of [
@@ -1374,6 +1392,7 @@ describe('durable Codex teammate runtime', () => {
     const created = await creating
     expect(created).toEqual({
       nativeHandle: '0c999999-1111-7777-8111-111111111111',
+      turnId: '0c999999-2222-7777-8222-222222222222',
       presence: 'running',
     })
     await expect(provider.deliver({
@@ -1978,6 +1997,7 @@ describe('durable Codex teammate runtime', () => {
 
     await expect(replay).resolves.toEqual({
       nativeHandle: created.nativeHandle,
+      turnId: 'recreated-initial-turn',
       presence: 'idle',
     })
     expect(spawn).toHaveBeenCalledTimes(2)

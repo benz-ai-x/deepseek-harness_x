@@ -423,6 +423,7 @@ describe('durable Claude Code teammate runtime', () => {
 
     await expect(secondHost.provider.create(createRequest())).resolves.toEqual({
       nativeHandle: created.nativeHandle,
+      turnId: created.turnId,
       presence: 'idle',
     })
     expect(sdkMocks.query).toHaveBeenCalledTimes(1)
@@ -488,7 +489,7 @@ describe('durable Claude Code teammate runtime', () => {
       nativeHandle: created.nativeHandle,
       requirements: createRequest().requirements,
       signal: new AbortController().signal,
-    })).resolves.toEqual({ nativeHandle: created.nativeHandle, presence: 'idle' })
+    })).resolves.toEqual({ nativeHandle: created.nativeHandle, turnId: created.turnId, presence: 'idle' })
     await expect(secondHost.provider.deliver({
       nativeHandle: created.nativeHandle,
       deliveryId: TeamMessageId('delivery-one'),
@@ -661,6 +662,10 @@ describe('durable Claude Code teammate runtime', () => {
 
     expect(evidence.items).toHaveLength(2)
     expect(evidence.items.map(item => item.kind)).toEqual(['usage', 'turn'])
+    expect(evidence.items[0]).toMatchObject({
+      kind: 'usage',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    })
     const serialized = JSON.stringify(evidence)
     expect(serialized).not.toContain('/private/')
     expect(serialized).not.toContain('SECRET_TOKEN')
@@ -805,7 +810,7 @@ describe('durable Claude Code teammate runtime', () => {
       nativeHandle: created.nativeHandle,
       requirements: createRequest().requirements,
       signal: new AbortController().signal,
-    })).resolves.toEqual({ nativeHandle: created.nativeHandle, presence: 'running' })
+    })).resolves.toEqual({ nativeHandle: created.nativeHandle, turnId: created.turnId, presence: 'running' })
     await expect(host.provider.resume({
       launchRequestId: createRequest().launchRequestId,
       memberId: createRequest().memberId,
@@ -1431,8 +1436,16 @@ describe('durable Claude Code teammate runtime', () => {
       ]))
       .digest('hex')
     marker.resolve(`[dsh-agent-team:launch:${digest}]`)
-    await expect(first).resolves.toEqual({ nativeHandle: expectedHandle, presence: 'idle' })
-    await expect(second).resolves.toEqual({ nativeHandle: expectedHandle, presence: 'idle' })
+    await expect(first).resolves.toEqual({
+      nativeHandle: expectedHandle,
+      turnId: expect.any(String),
+      presence: 'idle',
+    })
+    await expect(second).resolves.toEqual({
+      nativeHandle: expectedHandle,
+      turnId: expect.any(String),
+      presence: 'idle',
+    })
   })
 
   it('bounds adversarial native transcript traversal without accepting deep or oversized marker shapes', async () => {

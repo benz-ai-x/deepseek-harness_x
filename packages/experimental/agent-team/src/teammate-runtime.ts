@@ -24,6 +24,7 @@ import type {
 import {
   TeammateLaunchRequestId as toTeammateLaunchRequestId,
   TeammateRuntimeHandle as toTeammateRuntimeHandle,
+  TeammateRuntimeTurnId as toTeammateRuntimeTurnId,
 } from './brand.ts'
 import type {
   TeammateEvaluationHandle,
@@ -38,6 +39,30 @@ import type {
   TeammateRuntimeTurnId,
 } from './types.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
+
+function normalizedEvidenceUsage(
+  usage: TeammateRuntimeEvidenceItem['usage'],
+): TeammateRuntimeEvidenceItem['usage'] {
+  if (usage === undefined) return undefined
+  const required = [usage.inputTokens, usage.outputTokens]
+  const optional = [
+    usage.totalTokens,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens,
+    usage.reasoningTokens,
+  ].filter((value): value is number => value !== undefined)
+  if ([...required, ...optional].some(value => !Number.isSafeInteger(value) || value < 0)) {
+    throw new TypeError('teammate runtime evidence usage requires non-negative safe-integer counters')
+  }
+  return Object.freeze({
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(usage.totalTokens === undefined ? {} : { totalTokens: usage.totalTokens }),
+    ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
+    ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
+    ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
+  })
+}
 
 const IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u
 const PROFILE_CAPABILITIES = Object.freeze([
@@ -306,6 +331,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
   private readonly providers = new Map<string, ProviderRecord>()
   private readonly records = new Set<ProviderRecord>()
   private readonly creationHandles = new Map<string, TeammateRuntimeHandle>()
+  private readonly creationTurns = new Map<string, TeammateRuntimeTurnId>()
   private readonly runtimeIdentities = new Map<string, string>()
   private readonly deliveryTurns = new Map<string, TeammateRuntimeTurnId>()
   private readonly turnIdentities = new Map<string, string>()
@@ -735,6 +761,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
         )
       }
       const items: TeammateRuntimeEvidenceItem[] = result.items.map((item) => {
+        const usage = normalizedEvidenceUsage(item.usage)
         return Object.freeze({
           id: item.id,
           kind: item.kind,
@@ -742,6 +769,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
           ...(item.turnId === undefined ? {} : { turnId: item.turnId }),
           ...(item.name === undefined ? {} : { name: item.name }),
           ...(item.outcome === undefined ? {} : { outcome: item.outcome }),
+          ...(usage === undefined ? {} : { usage }),
         })
       })
       const normalized: TeammateRuntimeEvidenceResult = Object.freeze({
@@ -984,9 +1012,11 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
   ): TeammateRuntimeCreateResult {
     record.runtimes.add(result.nativeHandle)
     const nativeHandle = toTeammateRuntimeHandle(result.nativeHandle)
+    const turnId = result.turnId === undefined ? undefined : toTeammateRuntimeTurnId(result.turnId)
     this.assertObservablePresence(record, result.presence)
     return Object.freeze({
       nativeHandle,
+      ...(turnId === undefined ? {} : { turnId }),
       presence: result.presence,
     })
   }
@@ -1020,6 +1050,22 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       key,
       `provider "${providerId}" reused one native runtime handle for different teammate identities`,
     )
+    const knownTurn = this.creationTurns.get(key)
+    if (knownTurn !== undefined && normalized.turnId !== undefined && knownTurn !== normalized.turnId) {
+      throw new TeammateRuntimeError(
+        `provider "${providerId}" changed the native turn for an identical launch`,
+        'TEAM_RUNTIME_IDENTITY_CONFLICT',
+      )
+    }
+    if (normalized.turnId !== undefined) {
+      this.claimIdentity(
+        this.turnIdentities,
+        stableKey([providerId, normalized.nativeHandle, normalized.turnId]),
+        key,
+        `provider "${providerId}" reused one native turn for different accepted work`,
+      )
+      this.creationTurns.set(key, normalized.turnId)
+    }
     this.creationHandles.set(key, normalized.nativeHandle)
     this.attachRuntime(record, providerId, normalized)
     return normalized
@@ -1289,6 +1335,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
 
   private clearCorrelations(): void {
     this.creationHandles.clear()
+    this.creationTurns.clear()
     this.runtimeIdentities.clear()
     this.deliveryTurns.clear()
     this.turnIdentities.clear()

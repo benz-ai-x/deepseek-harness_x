@@ -12,6 +12,7 @@ import {
   TeamTaskId as toTeamTaskId,
   TeammateLaunchRequestId,
   TeammateRuntimeHandle,
+  TeammateRuntimeTurnId,
 } from './brand.ts'
 import type {
   TeamId,
@@ -37,6 +38,7 @@ const durableOpaqueIdSchema = z.string().min(1).refine(
   value => Buffer.byteLength(value, 'utf8') <= 200,
   { message: 'durable opaque identity must be at most 200 UTF-8 bytes' },
 )
+const teammateRuntimeTurnIdSchema = durableOpaqueIdSchema.transform(value => TeammateRuntimeTurnId(value))
 
 const teamMemberRouteSnapshotSchema = z.object({
   provider: z.string().min(1).optional(),
@@ -91,6 +93,7 @@ const externalRuntimeSchema = z.object({
   requirements: teammateRuntimeRequirementsSchema,
   nativeHandle: durableOpaqueIdSchema
     .transform(value => TeammateRuntimeHandle(value)).optional(),
+  initialTurnId: teammateRuntimeTurnIdSchema.optional(),
 }).strict()
 
 const coreContentBlockTypes = new Set(['text', 'reasoning', 'image', 'tool-call', 'tool-result'])
@@ -204,6 +207,7 @@ const teamMessageDeliveredEventSchema = z.object({
   teamId: teamIdSchema,
   messageId: teamMessageIdSchema,
   targetId: sessionIdSchema,
+  nativeTurnId: teammateRuntimeTurnIdSchema.optional(),
 }).strict() as z.ZodType<SessionEventMap['team/message/delivered']>
 
 /** Current Team state selected by durable Team identity. */
@@ -357,7 +361,9 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
           || priorExternal?.requestFingerprint !== nextExternal?.requestFingerprint
           || JSON.stringify(priorExternal?.requirements) !== JSON.stringify(nextExternal?.requirements)
           || (priorExternal?.nativeHandle !== undefined
-            && priorExternal.nativeHandle !== nextExternal?.nativeHandle)) {
+            && priorExternal.nativeHandle !== nextExternal?.nativeHandle)
+          || (priorExternal?.initialTurnId !== undefined
+            && priorExternal.initialTurnId !== nextExternal?.initialTurnId)) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
         if (prior.phase !== 'provisioning' || member.phase === 'provisioning') {

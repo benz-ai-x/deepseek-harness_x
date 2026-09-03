@@ -10,6 +10,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import { TeamId, TeamMessageId as toTeamMessageId } from './brand.ts'
+import type { TeammateRuntimeTurnId } from './brand.ts'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -242,7 +243,7 @@ export class TeamMailbox {
         && member.phase === 'active'
         && member.externalRuntime?.nativeHandle !== undefined)
       if (externalMember?.externalRuntime?.nativeHandle !== undefined) {
-        await this.teammateRuntimes.deliver(externalMember.provider, {
+        const delivered = await this.teammateRuntimes.deliver(externalMember.provider, {
           nativeHandle: externalMember.externalRuntime.nativeHandle,
           deliveryId: message.id,
           senderId: message.senderId,
@@ -250,7 +251,7 @@ export class TeamMailbox {
           content: this.deliveryContent(message),
           signal,
         })
-        await this.markDelivered(root, message.id, message.targetId)
+        await this.markDelivered(root, message.id, message.targetId, delivered.turnId)
         return true
       }
       const target = message.targetId === root.id ? root : this.ctx.agents.get(message.targetId)
@@ -301,7 +302,12 @@ export class TeamMailbox {
   }
 
   /** Record delivery unless the acknowledgement already exists. */
-  private async markDelivered(root: Agent, messageId: TeamMessageId, targetId: SessionId): Promise<void> {
+  private async markDelivered(
+    root: Agent,
+    messageId: TeamMessageId,
+    targetId: SessionId,
+    nativeTurnId?: TeammateRuntimeTurnId,
+  ): Promise<void> {
     await this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
       if (state.delivered.includes(messageId)) return
@@ -312,6 +318,7 @@ export class TeamMailbox {
         teamId: TeamId(root.id),
         messageId,
         targetId,
+        ...(nativeTurnId === undefined ? {} : { nativeTurnId }),
       })
     })
   }

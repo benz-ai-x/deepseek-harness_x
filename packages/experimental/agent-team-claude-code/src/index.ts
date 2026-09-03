@@ -67,6 +67,29 @@ const FIXED_TOOLS = ['Read', 'Glob', 'Grep'] as const
 type TurnOutcome = 'completed' | 'interrupted' | 'failed'
 type FailureStage = 'creation' | 'resume' | 'delivery' | 'query-start' | 'query-run' | 'teardown'
 
+function claudeUsage(value: unknown): TeammateRuntimeEvidenceItem['usage'] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const usage = value as Record<string, unknown>
+  const inputTokens = usage.input_tokens
+  const outputTokens = usage.output_tokens
+  if (!Number.isSafeInteger(inputTokens) || (inputTokens as number) < 0
+    || !Number.isSafeInteger(outputTokens) || (outputTokens as number) < 0) return undefined
+  const optional = (key: string): number | undefined => {
+    const candidate = usage[key]
+    return Number.isSafeInteger(candidate) && (candidate as number) >= 0 ? candidate as number : undefined
+  }
+  const cacheReadTokens = optional('cache_read_input_tokens')
+  const cacheWriteTokens = optional('cache_creation_input_tokens')
+  return Object.freeze({
+    inputTokens: inputTokens as number,
+    outputTokens: outputTokens as number,
+    totalTokens: (inputTokens as number) + (outputTokens as number)
+      + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0),
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+  })
+}
+
 /** Deployment-owned durable Claude Code adapter settings. */
 export interface Config {
   /** Stable provider id registered with Agent Teams. */
@@ -326,7 +349,9 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
     assertProfile(request.profile)
     const handle = this.handle(request.launchRequestId, request.memberId)
     const attached = this.sessions.get(handle)
-    if (attached !== undefined && !attached.disposed) return this.result(attached)
+    if (attached !== undefined && !attached.disposed) {
+      return this.result(attached, turnId(handle, request.launchRequestId))
+    }
     const active = this.creations.get(handle)
     if (active !== undefined) return await raceAbort(active, signal)
     const creation = this.createOnce(handle, { ...request, signal })
@@ -351,7 +376,9 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
       )
     }
     const attached = this.sessions.get(expected)
-    if (attached !== undefined && !attached.disposed) return this.result(attached)
+    if (attached !== undefined && !attached.disposed) {
+      return this.result(attached, turnId(expected, request.launchRequestId))
+    }
     try {
       const marker = operationMarker('launch', this.id, request.launchRequestId, request.memberId)
       const inspection = await this.inspect(expected, signal)
@@ -363,7 +390,7 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
         )
       }
       const session = this.attachSession(expected)
-      return this.result(session)
+      return this.result(session, turnId(expected, request.launchRequestId))
     } catch (error: unknown) {
       if (error instanceof TeammateRuntimeError) throw error
       throw this.failure('resume', error)
@@ -497,7 +524,7 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
       const inspection = await this.inspect(handle, request.signal)
       if (transcriptContains(inspection.messages, marker)) {
         session = this.attachSession(handle)
-        return this.result(session)
+        return this.result(session, turnId(handle, request.launchRequestId))
       }
       if (inspection.exists) {
         throw new TeammateRuntimeError(
@@ -516,7 +543,7 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
         request.signal,
       )
       await turn.accepted
-      return this.result(session)
+      return this.result(session, id)
     } catch (error: unknown) {
       if (session !== undefined) await this.disposeSession(session)
       if (error instanceof TeammateRuntimeError) throw error
@@ -740,11 +767,13 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
       })
     }
     if (value.type !== 'result') return undefined
+    const usage = claudeUsage(value.usage)
     this.addEvidence(session, {
       id: evidenceId('usage', session.handle, id, String(session.evidence.length)),
       kind: 'usage',
       timestamp: Date.now(),
       turnId: id,
+      ...(usage === undefined ? {} : { usage }),
     })
     return value.subtype === 'success' && value.is_error === false ? 'completed' : 'failed'
   }
@@ -859,8 +888,15 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
     return stableUuid(this.id, launchRequestId, memberId)
   }
 
-  private result(session: NativeSession): TeammateRuntimeCreateResult {
-    return { nativeHandle: session.handle, presence: session.presence }
+  private result(
+    session: NativeSession,
+    acceptedTurnId?: ReturnType<typeof TeammateRuntimeTurnId>,
+  ): TeammateRuntimeCreateResult {
+    return {
+      nativeHandle: session.handle,
+      ...(acceptedTurnId === undefined ? {} : { turnId: acceptedTurnId }),
+      presence: session.presence,
+    }
   }
 
   private assertOpen(): void {

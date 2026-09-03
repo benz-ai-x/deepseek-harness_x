@@ -9,6 +9,7 @@ import type {
   TeamTaskId,
   TeammateLaunchRequestId,
   TeammateRuntimeHandle,
+  TeammateRuntimeTurnId,
 } from './brand.ts'
 
 export type {
@@ -98,6 +99,7 @@ export interface TeamMemberExternalRuntimeSnapshot {
   readonly requestFingerprint: string
   readonly requirements: TeammateRuntimeRequirements
   readonly nativeHandle?: TeammateRuntimeHandle
+  readonly initialTurnId?: TeammateRuntimeTurnId
 }
 
 /** Durable teammate lifecycle. */
@@ -298,6 +300,8 @@ declare module '@deepseek-ai/dsh-session/types' {
       teamId: TeamId
       messageId: TeamMessageId
       targetId: SessionId
+      /** Provider-native turn accepted for an external teammate delivery. */
+      nativeTurnId?: TeammateRuntimeTurnId
     }
   }
 }

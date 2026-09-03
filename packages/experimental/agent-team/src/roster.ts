@@ -504,6 +504,7 @@ export class TeamRoster {
       externalRuntime: {
         ...external,
         nativeHandle: result.nativeHandle,
+        ...(result.turnId === undefined ? {} : { initialTurnId: result.turnId }),
       },
       phase: 'active' as const,
     } satisfies TeamMemberSnapshot
@@ -748,7 +749,11 @@ export class TeamRoster {
         teamId: toTeamId(root.id),
         member: {
           ...current,
-          externalRuntime: { ...current.externalRuntime, nativeHandle: resumed.nativeHandle },
+          externalRuntime: {
+            ...current.externalRuntime,
+            nativeHandle: resumed.nativeHandle,
+            ...(resumed.turnId === undefined ? {} : { initialTurnId: resumed.turnId }),
+          },
           phase: 'active',
         },
       })

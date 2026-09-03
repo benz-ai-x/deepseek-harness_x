@@ -65,7 +65,9 @@ kind: "package-reference"
 
 宿主可以用规范化的 child 级 LLM provider、model 和 reasoning-effort options 固定 teammate 路由。Agent Teams 会把这些 options 原样传给 continuation manager，同时记录请求路由和解析进 child descriptor 的路由；如果任何显式请求字段发生变化，就会拒绝创建。descriptor 继续作为冷恢复的权威来源，因此之后的 Lead 路由或部署默认路由都不能替换固定路由。
 
-宿主也可以通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 注册耐久外部 teammate provider。provider 只公开分离的上下文、Profile 策略与运行能力元数据；凭据、进程对象和原生载荷始终留在 Host。外部启动携带调用方生成的 launch id 与 Team 已预留的 member id。持久 launch id 与 native handle 是非空、最多 200 UTF-8 字节的 opaque 字符串，不施加词法 identifier 语法。provider 必须先持久接受初始工作并返回一个稳定、不透明的 native handle，roster 才能进入 active。同一启动或 mailbox 重试保持相同原生 runtime 与 turn identity；Agent Teams 绝不替换成一次性 subagent。provider 移除后成员变为 inactive；后续 provider generation 会恢复精确 handle，而不是创建替代品。
+宿主也可以通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 注册耐久外部 teammate provider。provider 只公开分离的上下文、Profile 策略与运行能力元数据；凭据、进程对象和原生载荷始终留在 Host。外部启动携带调用方生成的 launch id 与 Team 已预留的 member id。持久 launch id 与 native handle 是非空、最多 200 UTF-8 字节的 opaque 字符串，不施加词法 identifier 语法。provider 必须先持久接受初始工作并返回一个稳定、不透明的 native handle，roster 才能进入 active；若可观察，其稳定 initial turn id 会与 active member 一起保留。同一启动或 mailbox 重试保持相同原生 runtime 与 turn identity；Agent Teams 绝不替换成一次性 subagent。provider 移除后成员变为 inactive；后续 provider generation 会恢复精确 handle，而不是创建替代品。
+
+精确的 live Lead 可以对一个 active external teammate 调用 `ctx.agentTeams.readTeammateRuntimeEvidence()`。Agent Teams 会提供 roster 所有的 native handle，并且只返回有界的规范 turn/tool 身份、终态、时间戳和 provider 报告的 usage。prompt、reply、tool argument/result、文件、环境值、credential 与原始 provider payload 绝不会跨越服务边界。
 
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。DSH teammate 行公开分离的请求与解析路由快照；外部行只公开耐久 provider 关联和不透明 native handle。未加载的成员会在唤醒后收到其消息。
 

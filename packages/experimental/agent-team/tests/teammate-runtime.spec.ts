@@ -64,6 +64,7 @@ interface NativeSession {
   readonly launchRequestId: ReturnType<typeof TeammateLaunchRequestId>
   readonly memberId: SessionId
   readonly handle: ReturnType<typeof TeammateRuntimeHandle>
+  readonly initialTurnId: ReturnType<typeof TeammateRuntimeTurnId>
   readonly turns: Map<string, ReturnType<typeof TeammateRuntimeTurnId>>
   status: 'running' | 'idle'
 }
@@ -108,13 +109,14 @@ class FakeDurableRuntime implements TeammateRuntimeProvider {
         launchRequestId: request.launchRequestId,
         memberId: request.memberId,
         handle: TeammateRuntimeHandle(`native-${this.store.nextHandle++}`),
+        initialTurnId: TeammateRuntimeTurnId(`native-initial-${this.store.nextHandle - 1}`),
         turns: new Map(),
         status: 'idle',
       }
       this.store.sessions.set(key, session)
     }
     this.attachedRuntimes.add(session.handle)
-    return { nativeHandle: session.handle, presence: session.status }
+    return { nativeHandle: session.handle, turnId: session.initialTurnId, presence: session.status }
   })
   readonly resume = vi.fn<TeammateRuntimeProvider['resume']>(async (request) => {
     request.signal.throwIfAborted()
@@ -124,7 +126,7 @@ class FakeDurableRuntime implements TeammateRuntimeProvider {
       && (request.nativeHandle === undefined || candidate.handle === request.nativeHandle))
     if (session === undefined) return undefined
     this.attachedRuntimes.add(session.handle)
-    return { nativeHandle: session.handle, presence: session.status }
+    return { nativeHandle: session.handle, turnId: session.initialTurnId, presence: session.status }
   })
   readonly deliver = vi.fn<TeammateRuntimeProvider['deliver']>(async (request) => {
     request.signal.throwIfAborted()
@@ -148,7 +150,7 @@ class FakeDurableRuntime implements TeammateRuntimeProvider {
     const session = this.session(request.nativeHandle)
     return {
       nativeHandle: session.handle,
-      items: [...session.turns.values()].map((turnId, index) => ({
+      items: [session.initialTurnId, ...session.turns.values()].map((turnId, index) => ({
         id: TeammateRuntimeEvidenceId(`evidence-${index + 1}`),
         kind: 'turn' as const,
         timestamp: index + 1,
@@ -937,6 +939,15 @@ describe('durable teammate runtime registry', () => {
 
     const resultViolations: Array<(fixture: AttachedRuntimeCase) => Promise<unknown>> = [
       async (fixture) => {
+        fixture.provider.create.mockResolvedValueOnce({
+          ...fixture.created,
+          turnId: TeammateRuntimeTurnId('changed-initial-turn'),
+        })
+        return await fixture.registry.create(fixture.provider.id, createRequest({
+          launchRequestId: TeammateLaunchRequestId(`launch-${fixture.provider.id}`),
+        }))
+      },
+      async (fixture) => {
         const request = runtimeDelivery(fixture)
         await fixture.registry.deliver(fixture.provider.id, request)
         fixture.provider.deliver.mockResolvedValueOnce({
@@ -1262,6 +1273,7 @@ describe('durable teammate runtime registry', () => {
       externalRuntime: {
         launchRequestId,
         nativeHandle: 'native-1',
+        initialTurnId: 'native-initial-1',
       },
     })
     expect(firstOneShot).not.toHaveBeenCalled()
@@ -1284,6 +1296,24 @@ describe('durable teammate runtime registry', () => {
       delivery: 'wakeup',
       signal: SIGNAL,
     })).resolves.toMatchObject({ status: 'accepted' })
+    const delivered = lead.session.ownEvents().findLast(event => event.type === 'team/message/delivered')
+    expect(delivered).toMatchObject({
+      type: 'team/message/delivered',
+      data: {
+        targetId: started.member.id,
+        nativeTurnId: 'native-turn-1',
+      },
+    })
+    await expect(first.ctx.agentTeams.readTeammateRuntimeEvidence(lead, 'native-worker', {
+      limit: 10,
+      signal: SIGNAL,
+    })).resolves.toMatchObject({
+      nativeHandle: 'native-1',
+      complete: true,
+      items: expect.arrayContaining([
+        expect.objectContaining({ turnId: 'native-turn-1', outcome: 'completed' }),
+      ]),
+    })
     expect(first.ctx.agentTeams.interrupt(lead, 'native-worker')).toEqual({ previousStatus: 'idle' })
     expect(provider.interrupt).toHaveBeenLastCalledWith({ nativeHandle: 'native-1' })
 

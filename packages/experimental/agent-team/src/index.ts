@@ -12,7 +12,7 @@ import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
-import { TeamRoster } from './roster.ts'
+import { resolveActiveMember, TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
 import { TeammateRuntimeRegistryHost } from './teammate-runtime.ts'
@@ -32,6 +32,8 @@ import type {
 } from './types.ts'
 import type {
   SpawnTeammateRequest,
+  TeammateRuntimeEvidenceRequest,
+  TeammateRuntimeEvidenceResult,
   TeammateRuntimeProvider,
   TeammateRuntimeRegistration,
 } from './service-types.ts'
@@ -244,6 +246,34 @@ export class TeamService extends TypertRemoteService {
    */
   async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult> {
     return await this.mailbox.send(caller, request)
+  }
+
+  /**
+   * Read bounded normalized evidence for one exact external teammate.
+   * @param caller - exact live Lead Agent used as the authority credential.
+   * @param targetName - active provider-native teammate name.
+   * @param request - bounded evidence cursor, limit, and caller cancellation.
+   * @returns provider-normalized facts correlated to the roster-owned native handle.
+   */
+  async readTeammateRuntimeEvidence(
+    caller: Agent,
+    targetName: string,
+    request: Omit<TeammateRuntimeEvidenceRequest, 'nativeHandle'>,
+  ): Promise<TeammateRuntimeEvidenceResult> {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') {
+      throw new TeamError('only the Team Lead can read teammate runtime evidence', 'TEAM_LEAD_REQUIRED')
+    }
+    const target = resolveActiveMember(membership.root, this.journal.state(membership.root), targetName)
+    const member = this.journal.state(membership.root).members.find(candidate => candidate.id === target.id)
+    const nativeHandle = member?.externalRuntime?.nativeHandle
+    if (member === undefined || nativeHandle === undefined) {
+      throw new TeamError(`external teammate "${target.name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+    }
+    return await this.teammateRuntimeRegistry.evidence(member.provider, {
+      ...request,
+      nativeHandle,
+    })
   }
 
   /**

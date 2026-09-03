@@ -514,6 +514,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   SendTeamMessageResult: 'agent-team.md',
   SpawnTeammateRequest: 'agent-team.md',
   SpawnTeammateResult: 'agent-team.md',
+  TeammateRuntimeEvidenceRequest: 'agent-team.md',
+  TeammateRuntimeEvidenceResult: 'agent-team.md',
   TeammateRuntimeProvider: 'agent-team.md',
   TeammateRuntimeRegistration: 'agent-team.md',
   TeamId: 'agent-team.md',

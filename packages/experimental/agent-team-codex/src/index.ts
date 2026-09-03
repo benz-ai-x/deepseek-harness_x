@@ -120,6 +120,32 @@ function string(value: unknown, label: string): string {
   return value
 }
 
+function codexUsage(value: unknown): TeammateRuntimeEvidenceItem['usage'] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const envelope = value as JsonObject
+  const selected = envelope.total !== null && typeof envelope.total === 'object' && !Array.isArray(envelope.total)
+    ? envelope.total as JsonObject
+    : envelope
+  const count = (key: string): number | undefined => {
+    const candidate = selected[key]
+    return Number.isSafeInteger(candidate) && (candidate as number) >= 0 ? candidate as number : undefined
+  }
+  const aggregateInput = count('inputTokens')
+  const outputTokens = count('outputTokens')
+  if (aggregateInput === undefined || outputTokens === undefined) return undefined
+  const cacheReadTokens = count('cachedInputTokens')
+  const inputTokens = Math.max(0, aggregateInput - (cacheReadTokens ?? 0))
+  const totalTokens = count('totalTokens') ?? aggregateInput + outputTokens
+  const reasoningTokens = count('reasoningOutputTokens')
+  return Object.freeze({
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  })
+}
+
 function abortError(signal: AbortSignal): Error {
   return signal.reason instanceof Error
     ? signal.reason
@@ -688,11 +714,15 @@ class CodexTeammateRuntimeProvider implements TeammateRuntimeProvider {
       const inputId = launchInputId(request.launchRequestId)
       const recoveredTurn = session.recoveredInputs.get(inputId)
       if (recoveredTurn !== undefined) {
-        return this.result(session)
+        return this.result(session, TeammateRuntimeTurnId(recoveredTurn))
       }
       const turn = await session.connection.startTurn(texts, inputId, request.signal)
       this.observeTurn(session, turn)
-      return { nativeHandle: session.handle, presence: 'running' }
+      return {
+        nativeHandle: session.handle,
+        turnId: TeammateRuntimeTurnId(turn.id),
+        presence: 'running',
+      }
     } catch (error: unknown) {
       if (session !== undefined) await this.disposeSession(session).catch(() => {})
       if (error instanceof TeammateRuntimeError) throw error
@@ -869,11 +899,13 @@ class CodexTeammateRuntimeProvider implements TeammateRuntimeProvider {
 
   private recordUsage(session: NativeSession, params: JsonObject): void {
     if (typeof params.turnId !== 'string') return
+    const usage = codexUsage(params.tokenUsage)
     this.addEvidence(session, {
       id: evidenceId('usage', session.handle, params.turnId, String(session.evidence.length)),
       kind: 'usage',
       timestamp: Date.now(),
       turnId: TeammateRuntimeTurnId(params.turnId),
+      ...(usage === undefined ? {} : { usage }),
     })
   }
 
@@ -918,9 +950,13 @@ class CodexTeammateRuntimeProvider implements TeammateRuntimeProvider {
     }
   }
 
-  private result(session: NativeSession): TeammateRuntimeCreateResult {
+  private result(
+    session: NativeSession,
+    acceptedTurnId?: ReturnType<typeof TeammateRuntimeTurnId>,
+  ): TeammateRuntimeCreateResult {
     return {
       nativeHandle: session.handle,
+      ...(acceptedTurnId === undefined ? {} : { turnId: acceptedTurnId }),
       presence: session.presence,
     }
   }

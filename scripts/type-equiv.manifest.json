@@ -334,6 +334,16 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeammateRuntimeEvidenceRequest",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeammateRuntimeEvidenceResult",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamMessageSnapshot",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

@@ -781,7 +781,7 @@ Source: [`packages/subagent/tool-subagent/src/model-selection-state.ts:17`](../p
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMemberSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:290`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:292`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -794,12 +794,14 @@ Source: [`packages/experimental/agent-team/src/types.ts:290`](../packages/experi
   teamId: TeamId
   messageId: TeamMessageId
   targetId: SessionId
+  /** Provider-native turn accepted for an external teammate delivery. */
+  nativeTurnId?: TeammateRuntimeTurnId
 }
 ```
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:296`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:298`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -812,7 +814,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:296`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:294`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:296`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -825,7 +827,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:294`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamTaskSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:292`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:294`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 
