@@ -25,6 +25,7 @@ describe('durable Claude Code provider Loader composition', () => {
 
     expect(stderr).toBe('')
     expect(JSON.parse(stdout)).toEqual({
+      ownerRegistrations: 1,
       active: [{
         id: 'claude-code-loader',
         displayName: 'Claude Code',
@@ -32,6 +33,7 @@ describe('durable Claude Code provider Loader composition', () => {
         profileCapabilities: ['persona', 'mission', 'context', 'memory'],
         runtimeCapabilities: ['sandbox', 'evidence', 'usage'],
       }],
+      ownerDisposals: 1,
       afterDispose: [],
     })
   }, TEST_TIMEOUT_MS)

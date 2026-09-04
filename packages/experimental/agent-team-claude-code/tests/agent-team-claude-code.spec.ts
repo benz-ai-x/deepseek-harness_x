@@ -12,7 +12,7 @@ import type {
   SessionMessage,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -207,6 +207,13 @@ function result(sessionId: string, outcome: 'success' | 'error_during_execution'
     } as SDKResultMessage
 }
 
+function resultWithUsage(sessionId: string, usage: unknown): SDKResultMessage {
+  return {
+    ...result(sessionId),
+    usage,
+  } as SDKResultMessage
+}
+
 function assistantWithTool(sessionId: string): SDKMessage {
   return {
     type: 'assistant',
@@ -264,6 +271,39 @@ function transcript(sessionId: string, prompt: string): SessionMessage {
 
 async function nextTask(): Promise<void> {
   await new Promise<void>((resolve) => { setImmediate(resolve) })
+}
+
+async function mountRuntimeRegistrationDependencies(
+  ctx: Context,
+  directRegistration: ReturnType<typeof vi.fn>,
+  subprocessSpawn: ReturnType<typeof vi.fn> = vi.fn(),
+): Promise<void> {
+  class AgentTeamsFixture extends Service {
+    readonly registerTeammateRuntimeProvider = directRegistration
+
+    constructor(serviceCtx: Context) {
+      super(serviceCtx, 'agentTeams')
+    }
+  }
+  class SubprocessFixture extends Service {
+    readonly spawn = subprocessSpawn
+
+    constructor(serviceCtx: Context) {
+      super(serviceCtx, 'subprocess')
+    }
+  }
+  await ctx.plugin(AgentTeamsFixture)
+  await ctx.plugin(SubprocessFixture)
+}
+
+function runtimeCatalogFixture(catalogRegistration: unknown) {
+  return class RuntimeCatalogFixture extends Service {
+    readonly registerExternalRuntimeProvider = catalogRegistration
+
+    constructor(serviceCtx: Context) {
+      super(serviceCtx, 'runtimeCatalog')
+    }
+  }
 }
 
 function profile() {
@@ -664,6 +704,59 @@ describe('durable Claude Code teammate runtime', () => {
     expect(serialized).not.toContain('SECRET_TOKEN')
     expect(serialized).not.toContain('private model output')
     expect(serialized).not.toContain('native summary')
+  })
+
+  it('normalizes optional cache usage and omits every malformed native usage shape', async () => {
+    const child = fakeChild()
+    plans.push({
+      child,
+      messages: (options) => {
+        const sessionId = options.sessionId ?? ''
+        return [
+          system(sessionId),
+          resultWithUsage(sessionId, null),
+          resultWithUsage(sessionId, 'not-an-object'),
+          resultWithUsage(sessionId, []),
+          resultWithUsage(sessionId, { input_tokens: '10', output_tokens: 5 }),
+          resultWithUsage(sessionId, { input_tokens: -1, output_tokens: 5 }),
+          resultWithUsage(sessionId, { input_tokens: 10, output_tokens: '5' }),
+          resultWithUsage(sessionId, { input_tokens: 10, output_tokens: -1 }),
+          resultWithUsage(sessionId, {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 'invalid',
+            cache_creation_input_tokens: -1,
+          }),
+          resultWithUsage(sessionId, {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 2,
+            cache_creation_input_tokens: 3,
+          }),
+        ]
+      },
+    })
+    const { provider } = await setup([child], { maxEvidenceItems: 32 })
+    const created = await provider.create(createRequest())
+    await vi.waitFor(() => { expect(child.terminate).toHaveBeenCalled() })
+    if (provider.evidence === undefined) throw new Error('missing advertised evidence operation')
+
+    const evidence = await provider.evidence({
+      nativeHandle: created.nativeHandle,
+      limit: 32,
+      signal: new AbortController().signal,
+    })
+    const usage = evidence.items.filter(item => item.kind === 'usage')
+    expect(usage).toHaveLength(9)
+    expect(usage.slice(0, 7).every(item => item.usage === undefined)).toBe(true)
+    expect(usage[7]?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+    expect(usage[8]?.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 2,
+      cacheWriteTokens: 3,
+      totalTokens: 20,
+    })
   })
 
   it('cancels a pre-acceptance launch, returns bounded diagnostics, and removes the exact child', async () => {
@@ -1339,6 +1432,26 @@ describe('durable Claude Code teammate runtime', () => {
     await creating.catch(() => {})
     expect(rejectedBeforeNativeSettlement).toBe(true)
     expect(sdkMocks.query).not.toHaveBeenCalled()
+  })
+
+  it('routes an explicitly owned catalog registration through that service', async () => {
+    const directRegistration = vi.fn()
+    const ownedDisposal = vi.fn(async () => {})
+    const catalogRegistration = vi.fn(() => ownedDisposal)
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountRuntimeRegistrationDependencies(ctx, directRegistration)
+    await ctx.plugin(runtimeCatalogFixture(catalogRegistration))
+
+    const providerFiber = await ctx.plugin(claudeRuntime, {
+      catalogOwnerService: 'runtimeCatalog',
+    })
+
+    expect(catalogRegistration).toHaveBeenCalledWith(expect.objectContaining({ id: 'claude-code' }))
+    expect(directRegistration).not.toHaveBeenCalled()
+    await providerFiber.dispose()
+    await providerFiber.dispose()
+    expect(ownedDisposal).toHaveBeenCalledTimes(1)
   })
 
   it('applies direct-call defaults without relying on Loader schema hydration', () => {

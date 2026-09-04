@@ -15,6 +15,7 @@ import {
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
+  mountTeammateRuntimeProvider,
   TeammateRuntimeError,
   TeammateRuntimeEvidenceCursor,
   TeammateRuntimeEvidenceId,
@@ -55,6 +56,10 @@ export {
   claudeCodeProductEligibility,
 } from './product.ts'
 export type { ClaudeCodeProductEligibility } from './product.ts'
+export type {
+  RuntimeCatalogOwnerService,
+  RuntimeCatalogRegistration,
+} from '@deepseek-ai/dsh-experimental-agent-team'
 
 export const name = 'agent-team-claude-code'
 export const inject = ['agentTeams', 'subprocess']
@@ -98,6 +103,8 @@ export interface Config {
   readonly cwd?: string
   /** Optional deployment-pinned Claude model. */
   readonly model?: string
+  /** Optional service whose registerExternalRuntimeProvider(provider) call returns this generation's disposer. */
+  readonly catalogOwnerService?: string
   /** Fixed confinement marker; no weaker value is accepted. */
   readonly sandbox?: 'read-only'
   /** Grace for exact process-tree termination. */
@@ -106,11 +113,12 @@ export interface Config {
   readonly maxEvidenceItems?: number
 }
 
-/** Runtime schema for {@link Config}. */
+/** Loader schema for deployment-owned Claude Code adapter settings. */
 export const Config: z<Config> = z.object({
   providerName: z.string().min(1).default(DEFAULT_PROVIDER_NAME),
   cwd: z.string().min(1).default(process.cwd()),
   model: z.string().min(1),
+  catalogOwnerService: z.string().min(1),
   sandbox: z.const('read-only').default('read-only'),
   disposeGraceMs: z.number().default(DEFAULT_DISPOSE_GRACE_MS),
   maxEvidenceItems: z.number().step(1).min(1).default(DEFAULT_MAX_EVIDENCE_ITEMS),
@@ -889,11 +897,11 @@ class ClaudeCodeTeammateRuntimeProvider implements TeammateRuntimeProvider {
 
   private result(
     session: NativeSession,
-    acceptedTurnId?: ReturnType<typeof TeammateRuntimeTurnId>,
+    acceptedTurnId: ReturnType<typeof TeammateRuntimeTurnId>,
   ): TeammateRuntimeCreateResult {
     return {
       nativeHandle: session.handle,
-      ...(acceptedTurnId === undefined ? {} : { turnId: acceptedTurnId }),
+      turnId: acceptedTurnId,
       presence: session.presence,
     }
   }
@@ -1012,6 +1020,10 @@ export function apply(ctx: Context, config: Config): void {
     disposeGraceMs,
     maxEvidenceItems,
   })
-  ctx.agentTeams.registerTeammateRuntimeProvider(provider)
-  ctx.effect(() => async () => { await provider.close() }, 'agentTeamClaudeCode.lifecycle()')
+  mountTeammateRuntimeProvider(
+    ctx,
+    provider,
+    async () => { await provider.close() },
+    config.catalogOwnerService,
+  )
 }

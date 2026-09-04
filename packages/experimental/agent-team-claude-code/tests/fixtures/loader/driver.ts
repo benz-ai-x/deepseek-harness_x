@@ -19,7 +19,13 @@ const registry = (ctx.agentTeams as unknown as {
     snapshot(): readonly unknown[]
   }
 }).teammateRuntimeRegistry
+const stats = ctx.claudeCodeCatalogOwner.stats
 const active = registry.snapshot()
 await ctx.fiber.dispose()
 
-process.stdout.write(`${JSON.stringify({ active, afterDispose: registry.snapshot() })}\n`)
+process.stdout.write(`${JSON.stringify({
+  ownerRegistrations: stats.registrations,
+  active,
+  ownerDisposals: stats.disposals,
+  afterDispose: registry.snapshot(),
+})}\n`)

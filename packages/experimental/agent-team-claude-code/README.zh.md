@@ -38,6 +38,8 @@ kind: "package-reference"
     sandbox: read-only
 ```
 
+当一个目录属主必须原子地发布 Runtime Backend 并转发其 Agent Teams 注册时，把 `catalogOwnerService` 设为该服务名。该服务必须暴露 `registerExternalRuntimeProvider(provider)`，并为生成的世代返回一个可调用的同步或异步 disposer。适配器会在服务出现时校验此契约，在服务缺席时等待，并在服务或适配器 Fiber 卸载时移除该世代。省略本字段会保留直接 Agent Teams 注册。
+
 ### 资格判定
 
 只有 `@anthropic-ai/claude-agent-sdk` 恰好为 `0.3.241`、其 manifest 标识 Claude Code `2.1.241`，且匹配平台的包内载荷包含可执行原生产品时，才会注册。本适配器支持 SDK 声明的 Linux glibc 与 musl、macOS、Windows x64/arm64 载荷。它绝不从 `PATH` 解析 `claude`；产品不可用时只报告不含安装路径的有界原因。
@@ -47,6 +49,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `providerName` | `claude-code` | 稳定的 Agent Teams Runtime Backend id；多个挂载实例必须使用不同 id |
+| `catalogOwnerService` | 直接注册 | 可选服务；其 `registerExternalRuntimeProvider(provider)` 调用同时拥有目录发布与 Agent Teams 注册，并返回该世代的 disposer |
 | `cwd` | Host 进程 cwd | 解析为绝对路径并固定给本实例所有原生 Session 的工作区根目录 |
 | `model` | Claude 原生默认值 | 新建与恢复轮次使用的可选部署方固定模型 |
 | `sandbox` | `read-only` | 固定约束标记；拒绝其他所有值 |
@@ -97,7 +100,7 @@ Evidence 只包含固定形状的 turn outcome、规范化 `read`/`glob`/`grep` 
 
 Claude Code 拥有自己的 Session transcript；Agent Teams 拥有 roster 与 mailbox 持久性。本适配器只在内存中保留已附着 Session handle、delivery 关联、presence 与有界规范化 evidence，不创建第二份 transcript store。
 
-Provider 注册归本包 Fiber 所有。释放会关闭接纳、打断活跃 Query、等待每棵受管理进程树、清空内存索引、发出 inactive presence 并移除注册。它刻意不删除 SDK 拥有的 Session，因为 Host 重启必须能够恢复它。显式 Team runtime removal 会分离同一组资源。
+直接注册遵循适配器 Fiber 的生命周期。目录属主注册同时遵循该 Fiber 和当前属主服务世代，因此属主缺席时不会留下部分 Agent Teams 注册，替换属主则会收到新世代。适配器释放会先等待注册 disposer，再关闭提供方接纳、打断活跃 Query、等待每棵受管理进程树、清空内存索引并发出 inactive presence。它刻意不删除 SDK 拥有的 Session，因为 Host 重启必须能够恢复它。显式 Team runtime removal 会分离同一组资源。
 
 </details>
 

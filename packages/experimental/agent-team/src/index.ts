@@ -84,6 +84,11 @@ export {
 } from './brand.ts'
 export { TeamError } from './error.ts'
 export { TeammateRuntimeError } from './teammate-runtime.ts'
+export { mountTeammateRuntimeProvider } from './runtime-provider-mount.ts'
+export type {
+  RuntimeCatalogOwnerService,
+  RuntimeCatalogRegistration,
+} from './runtime-provider-mount.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

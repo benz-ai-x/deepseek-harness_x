@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-04-catalog-owned-durable-runtime-registration.md
-2026-09-04-catalog-owned-durable-runtime-registration.md: d71b52ba6ac97b3e5275825c774147c1fce11e2e
-2026-09-04-catalog-owned-durable-runtime-registration.zh.md: c9dc64dee7157840b5c63465c6dc05a5e08b5a44
+2026-09-04-catalog-owned-durable-runtime-registration.md: 62da92eaa5ff6deca666233848406d55f4216ab0
+2026-09-04-catalog-owned-durable-runtime-registration.zh.md: 781e134f32691c1274f022148d4e4da18ae69964

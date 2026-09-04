@@ -8,6 +8,7 @@ import z from '@deepseek-ai/schemastery'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
+  mountTeammateRuntimeProvider,
   TeammateRuntimeError,
   TeammateRuntimeEvidenceCursor,
   TeammateRuntimeEvidenceId,
@@ -36,6 +37,10 @@ import { codexPackageBin, codexProductEligibility } from './product.ts'
 
 export { codexProductEligibility } from './product.ts'
 export type { CodexProductEligibility } from './product.ts'
+export type {
+  RuntimeCatalogOwnerService,
+  RuntimeCatalogRegistration,
+} from '@deepseek-ai/dsh-experimental-agent-team'
 
 export const name = 'agent-team-codex'
 export const inject = ['agentTeams', 'subprocess']
@@ -68,7 +73,7 @@ export interface Config {
   readonly maxEvidenceItems?: number
 }
 
-/** Runtime schema for {@link Config}. */
+/** Loader schema for deployment-owned Codex adapter settings. */
 export const Config: z<Config> = z.object({
   providerName: z.string().min(1).default(DEFAULT_PROVIDER_NAME),
   catalogOwnerService: z.string().min(1),
@@ -88,100 +93,6 @@ interface ResolvedConfig {
   readonly sandbox: SandboxMode
   readonly disposeGraceMs: number
   readonly maxEvidenceItems: number
-}
-
-/** Callable cleanup returned by a configured Runtime Backend catalog owner. */
-export type RuntimeCatalogRegistration = () => void | Promise<void>
-
-/** Structural contract implemented by the Host service named by {@link Config.catalogOwnerService}. */
-export interface RuntimeCatalogOwnerService {
-  /**
-   * Publish one provider generation through the owning Runtime Backend catalog and Agent Teams registry.
-   * @param provider - complete Host-only provider generation to publish atomically.
-   * @returns the callable synchronous or asynchronous disposer for that exact generation.
-   */
-  registerExternalRuntimeProvider(provider: TeammateRuntimeProvider): RuntimeCatalogRegistration
-}
-
-function onceAsync(dispose: RuntimeCatalogRegistration): () => Promise<void> {
-  let disposal: Promise<void> | undefined
-  return () => {
-    if (disposal !== undefined) return disposal
-    try {
-      disposal = Promise.resolve(dispose())
-    } catch (error: unknown) {
-      disposal = Promise.resolve().then(() => { throw error })
-    }
-    return disposal
-  }
-}
-
-function registerWithCatalogOwner(
-  owner: unknown,
-  serviceName: string,
-  provider: TeammateRuntimeProvider,
-): () => Promise<void> {
-  const register: unknown = Reflect.get(Object(owner), 'registerExternalRuntimeProvider')
-  if (typeof register !== 'function') {
-    throw new TypeError(
-      `agent-team-codex: catalog owner service "${serviceName}" must expose registerExternalRuntimeProvider(provider)`,
-    )
-  }
-  const dispose: unknown = Reflect.apply(register, owner, [provider])
-  if (typeof dispose !== 'function') {
-    throw new TypeError(
-      `agent-team-codex: catalog owner service "${serviceName}" registerExternalRuntimeProvider(provider) must return a disposer`,
-    )
-  }
-  return onceAsync(dispose as RuntimeCatalogRegistration)
-}
-
-function injectCatalogOwnerRegistration(
-  ctx: Context,
-  serviceName: string,
-  provider: TeammateRuntimeProvider,
-): () => Promise<void> {
-  const disposalFailures: unknown[] = []
-  const ownerFiber = ctx.inject([serviceName], (ownerCtx) => {
-    const dispose = registerWithCatalogOwner(ownerCtx.get(serviceName), serviceName, provider)
-    return onceAsync(async () => {
-      try {
-        await dispose()
-      } catch (error: unknown) {
-        disposalFailures.push(error)
-        throw error
-      }
-    })
-  })
-  return onceAsync(async () => {
-    await ownerFiber.dispose()
-    if (disposalFailures.length > 0) {
-      throw new AggregateError(
-        [...disposalFailures],
-        `agent-team-codex: catalog owner service "${serviceName}" registration cleanup failed`,
-      )
-    }
-  })
-}
-
-async function disposeProviderGeneration(
-  disposeRegistration: () => Promise<void>,
-  provider: CodexTeammateRuntimeProvider,
-): Promise<void> {
-  try {
-    await disposeRegistration()
-  } catch (registrationError: unknown) {
-    try {
-      await provider.close()
-    } catch (providerError: unknown) {
-      throw new AggregateError(
-        [registrationError, providerError],
-        'Codex runtime registration and provider cleanup failed',
-      )
-    }
-    throw registrationError
-  }
-  await provider.close()
 }
 
 interface ThreadSnapshot {
@@ -1174,15 +1085,10 @@ export function apply(ctx: Context, config: Config): void {
     disposeGraceMs,
     maxEvidenceItems,
   })
-  let disposeRegistration: () => Promise<void>
-  if (config.catalogOwnerService === undefined) {
-    disposeRegistration = onceAsync(ctx.agentTeams.registerTeammateRuntimeProvider(provider))
-  } else {
-    const serviceName = config.catalogOwnerService
-    disposeRegistration = injectCatalogOwnerRegistration(ctx, serviceName, provider)
-  }
-  ctx.effect(
-    () => async () => { await disposeProviderGeneration(disposeRegistration, provider) },
-    'agentTeamCodex.lifecycle()',
+  mountTeammateRuntimeProvider(
+    ctx,
+    provider,
+    async () => { await provider.close() },
+    config.catalogOwnerService,
   )
 }

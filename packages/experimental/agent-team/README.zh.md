@@ -67,6 +67,8 @@ kind: "package-reference"
 
 宿主也可以通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 注册耐久外部 teammate provider。provider 只公开分离的上下文、Profile 策略与运行能力元数据；凭据、进程对象和原生载荷始终留在 Host。外部启动携带调用方生成的 launch id 与 Team 已预留的 member id。持久 launch id 与 native handle 是非空、最多 200 UTF-8 字节的 opaque 字符串，不施加词法 identifier 语法。provider 必须先持久接受初始工作并返回一个稳定、不透明的 native handle，roster 才能进入 active；若可观察，其稳定 initial turn id 会与 active member 一起保留。同一启动或 mailbox 重试保持相同原生 runtime 与 turn identity；Agent Teams 绝不替换成一次性 subagent。provider 只有同时提供 Hook 强制执行能力，以及使用稳定 Profile 策略 id、相同不可变原生 call id 与 approval id 的 evidence，才能声明精确调用审批。provider 移除后成员变为 inactive；后续 provider generation 会恢复精确 handle，而不是创建替代品。
 
+支持可选目录属主的 provider 适配器使用 `mountTeammateRuntimeProvider()`，让这个 Host-only 包统一拥有共享属主契约、动态服务世代、注册的恰好一次清理以及 provider 析构顺序。
+
 精确的 live Lead 可以对一个 active external teammate 调用 `ctx.agentTeams.readTeammateRuntimeEvidence()`。Agent Teams 会提供 roster 所有的 native handle，并且只返回有界的规范 turn、tool、approval、结果、时间戳与 provider 报告的 usage 事实。approval 事实保留稳定 turn、tool、call、approval 与 Profile 策略身份，但不包含拟议参数；只有精确 runtime 报告 `running` 时，非空 pending 集合才会被接受。prompt、reply、tool argument/result、文件、环境值、credential 与原始 provider payload 绝不会跨越服务边界。
 
 精确的 live Lead 还可以调用 `ctx.agentTeams.runTeammateEvaluation()`，而不创建 roster member 或预留 teammate 名字。每个请求都要求 fresh context 与 evaluation capability，携带分离的 Profile、声明的 input 与文本 fixture，并受限于只读 sandbox、`approval: never`、正数资源上限，以及取自 provider 已发布 evaluation tool inventory 的唯一 allowlist。该 inventory 最多包含 256 个唯一 identifier，每个不超过 128 UTF-8 字节。Agent Teams 会规范化并限制 terminal result、output、evidence、时间戳与身份。可选 commit callback 会在精确 evaluation handle 仍挂载时运行；包括 commit 失败与取消路径在内，该 handle 都会在 API resolve 或 reject 前于 `finally` 中释放。evaluation output 只是临时 runner input，不是 Team transcript 或 activation。

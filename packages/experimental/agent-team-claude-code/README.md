@@ -38,6 +38,8 @@ Mount this Host package in a local source composition that already provides Agen
     sandbox: read-only
 ```
 
+Set `catalogOwnerService` to a service name when one catalog owner must publish the Runtime Backend and forward its Agent Teams registration atomically. That service must expose `registerExternalRuntimeProvider(provider)` and return a callable synchronous or asynchronous disposer for the resulting generation. The adapter validates this contract when the service appears, waits while it is absent, and removes the generation when either the service or adapter Fiber unloads. Omitting the field keeps direct Agent Teams registration.
+
 ### Eligibility
 
 Registration occurs only when `@anthropic-ai/claude-agent-sdk` is exactly version `0.3.241`, its manifest identifies Claude Code `2.1.241`, and the matching package-local platform payload contains the executable native product. The adapter supports the SDK's declared Linux glibc and musl, macOS, and Windows x64/arm64 payloads. It never resolves `claude` from `PATH`, and an unavailable product reports only a bounded reason without installation paths.
@@ -47,6 +49,7 @@ Registration occurs only when `@anthropic-ai/claude-agent-sdk` is exactly versio
 | Field | Default | Meaning |
 |---|---|---|
 | `providerName` | `claude-code` | Stable Agent Teams Runtime Backend id; mounted instances need distinct ids |
+| `catalogOwnerService` | direct registration | Optional service whose `registerExternalRuntimeProvider(provider)` call owns catalog publication plus Agent Teams registration and returns the generation disposer |
 | `cwd` | Host process cwd | Absolute workspace root fixed for every native Session owned by this instance |
 | `model` | native Claude default | Optional deployment-pinned model for new and resumed turns |
 | `sandbox` | `read-only` | Fixed confinement marker; every other value is rejected |
@@ -97,7 +100,7 @@ Errors crossing the provider seam contain a fixed lifecycle stage and typed Agen
 
 Claude Code owns its Session transcript. Agent Teams owns roster and mailbox durability. This adapter retains only attached Session handles, delivery correlations, presence, and bounded normalized evidence in memory. It does not create a second transcript store.
 
-Provider registration belongs to the package Fiber. Disposal closes admission, interrupts active Queries, waits for every managed process tree, clears in-memory indexes, emits inactive presence, and removes the registration. It intentionally does not delete the SDK-owned Session, because Host restart must be able to resume it. Explicit Team runtime removal detaches the same resources.
+Direct registration follows the adapter Fiber lifetime. A catalog-owned registration follows both that Fiber and the current owner-service generation, so an absent owner leaves no partial Agent Teams registration and a replacement owner receives a fresh generation. Adapter disposal waits for the registration disposer before closing provider admission, interrupting active Queries, waiting for every managed process tree, clearing in-memory indexes, and emitting inactive presence. It intentionally does not delete the SDK-owned Session, because Host restart must be able to resume it. Explicit Team runtime removal detaches the same resources.
 
 </details>
 

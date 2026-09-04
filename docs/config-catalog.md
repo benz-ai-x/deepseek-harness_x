@@ -560,6 +560,8 @@ export interface Config {
   readonly cwd?: string
   /** Optional deployment-pinned Claude model. */
   readonly model?: string
+  /** Optional service whose registerExternalRuntimeProvider(provider) call returns this generation's disposer. */
+  readonly catalogOwnerService?: string
   /** Fixed confinement marker; no weaker value is accepted. */
   readonly sandbox?: 'read-only'
   /** Grace for exact process-tree termination. */
@@ -569,7 +571,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/experimental/agent-team-claude-code/src/index.ts:94`](../packages/experimental/agent-team-claude-code/src/index.ts)
+Source: [`packages/experimental/agent-team-claude-code/src/index.ts:99`](../packages/experimental/agent-team-claude-code/src/index.ts)
 
 <a id="deepseek-aidsh-experimental-agent-team-codex"></a>
 
@@ -601,7 +603,7 @@ export interface Config {
 type SandboxMode = 'read-only' | 'workspace-write'
 ```
 
-Source: [`packages/experimental/agent-team-codex/src/index.ts:52`](../packages/experimental/agent-team-codex/src/index.ts)
+Source: [`packages/experimental/agent-team-codex/src/index.ts:57`](../packages/experimental/agent-team-codex/src/index.ts)
 
 <a id="deepseek-aidsh-experimental-code-runtime-python"></a>
 

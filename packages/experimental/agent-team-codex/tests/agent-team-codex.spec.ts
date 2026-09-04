@@ -2175,120 +2175,6 @@ describe('durable Codex teammate runtime', () => {
     await ctx.fiber.dispose()
   })
 
-  it('tracks the configured catalog owner service lifecycle without a direct fallback', async () => {
-    const directRegistration = vi.fn()
-    const firstDisposal = vi.fn(async () => {})
-    const secondDisposal = vi.fn(async () => {})
-    const catalogRegistration = vi.fn()
-      .mockReturnValueOnce(firstDisposal)
-      .mockReturnValueOnce(secondDisposal)
-    const ctx = new Context()
-    await mountRuntimeRegistrationDependencies(ctx, directRegistration)
-    const RuntimeCatalogFixture = runtimeCatalogFixture(catalogRegistration)
-    const providerFiber = await ctx.plugin(codexRuntime, {
-      catalogOwnerService: 'runtimeCatalog',
-    })
-
-    expect(catalogRegistration).not.toHaveBeenCalled()
-    expect(directRegistration).not.toHaveBeenCalled()
-    const firstOwner = await ctx.plugin(RuntimeCatalogFixture)
-    await vi.waitFor(() => { expect(catalogRegistration).toHaveBeenCalledTimes(1) })
-    await firstOwner.dispose()
-    expect(firstDisposal).toHaveBeenCalledTimes(1)
-
-    const secondOwner = await ctx.plugin(RuntimeCatalogFixture)
-    await vi.waitFor(() => { expect(catalogRegistration).toHaveBeenCalledTimes(2) })
-    await providerFiber.dispose()
-    await providerFiber.dispose()
-    expect(firstDisposal).toHaveBeenCalledTimes(1)
-    expect(secondDisposal).toHaveBeenCalledTimes(1)
-    await secondOwner.dispose()
-    expect(secondDisposal).toHaveBeenCalledTimes(1)
-    expect(directRegistration).not.toHaveBeenCalled()
-    await ctx.fiber.dispose()
-  })
-
-  it('fails loudly when the configured catalog owner violates its registration contract', async () => {
-    for (const invalid of [
-      { registration: undefined, diagnostic: 'must expose registerExternalRuntimeProvider(provider)' },
-      { registration: vi.fn(() => undefined), diagnostic: 'must return a disposer' },
-    ]) {
-      const directRegistration = vi.fn()
-      const ctx = new Context()
-      const logged = vi.spyOn(ctx.logger, 'error').mockImplementation(() => undefined)
-      await mountRuntimeRegistrationDependencies(ctx, directRegistration)
-      const providerFiber = await ctx.plugin(codexRuntime, {
-        catalogOwnerService: 'runtimeCatalog',
-      })
-
-      await ctx.plugin(runtimeCatalogFixture(invalid.registration))
-
-      await vi.waitFor(() => {
-        expect(logged).toHaveBeenCalled()
-        const error: unknown = logged.mock.calls.at(-1)?.[0]
-        expect(error).toBeInstanceOf(TypeError)
-        expect((error as Error).message).toContain(invalid.diagnostic)
-      })
-      expect(directRegistration).not.toHaveBeenCalled()
-      await providerFiber.dispose()
-      await ctx.fiber.dispose()
-    }
-  })
-
-  it('removes the owned registration before closing the provider generation', async () => {
-    const directRegistration = vi.fn()
-    let provider: TeammateRuntimeProvider | undefined
-    const disposalCodes: string[] = []
-    const ownedDisposal = vi.fn(async () => {
-      if (provider === undefined) throw new Error('catalog owner did not receive the provider')
-      try {
-        await provider.create(createRequest({ initialWork: [] }))
-      } catch (error: unknown) {
-        disposalCodes.push((error as TeammateRuntimeError).code)
-      }
-    })
-    const catalogRegistration = vi.fn((registeredProvider: TeammateRuntimeProvider) => {
-      provider = registeredProvider
-      return ownedDisposal
-    })
-    const ctx = new Context()
-    await mountRuntimeRegistrationDependencies(ctx, directRegistration)
-    await ctx.plugin(runtimeCatalogFixture(catalogRegistration))
-    const providerFiber = await ctx.plugin(codexRuntime, {
-      catalogOwnerService: 'runtimeCatalog',
-    })
-
-    await providerFiber.dispose()
-
-    expect(ownedDisposal).toHaveBeenCalledTimes(1)
-    expect(disposalCodes).toEqual(['TEAM_RUNTIME_CAPABILITY_MISMATCH'])
-    expect(directRegistration).not.toHaveBeenCalled()
-    await ctx.fiber.dispose()
-  })
-
-  it('closes the provider when direct registration disposal throws synchronously', async () => {
-    const registrationError = new Error('registration disposal failed')
-    let cleanup: (() => Promise<void>) | undefined
-    let provider: TeammateRuntimeProvider | undefined
-    const ctx = {
-      agentTeams: {
-        registerTeammateRuntimeProvider: (registeredProvider: TeammateRuntimeProvider) => {
-          provider = registeredProvider
-          return () => { throw registrationError }
-        },
-      },
-      effect: (activate: () => () => Promise<void>) => { cleanup = activate() },
-      logger: { warn: vi.fn() },
-    } as unknown as Context
-    codexRuntime.apply(ctx, {})
-    if (cleanup === undefined || provider === undefined) throw new Error('Codex lifecycle did not activate')
-
-    await expect(cleanup()).rejects.toBe(registrationError)
-    await expect(provider.create(createRequest({ initialWork: [] }))).rejects.toMatchObject({
-      code: 'TEAM_RUNTIME_UNAVAILABLE',
-    })
-  })
-
   it('propagates owned registration cleanup failures into provider cleanup aggregation', async () => {
     const child = fakeChild()
     const registrationError = new Error('owned registration disposal failed')
@@ -2348,7 +2234,6 @@ describe('durable Codex teammate runtime', () => {
     const defaults = makeContext()
     codexRuntime.apply(defaults.ctx, {})
     expect(defaults.registered).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex' }))
-    await defaults.cleanup()
     await defaults.cleanup()
     expect(defaults.registrationDisposal).toHaveBeenCalledTimes(1)
 

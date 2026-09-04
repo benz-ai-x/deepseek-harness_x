@@ -10,9 +10,13 @@
     - id: agent-team
       name: '@deepseek-ai/dsh-experimental-agent-team'
 
+    - id: claude-code-catalog-owner
+      name: './catalog-owner.ts'
+
     - id: agent-team-claude-code
       name: '@deepseek-ai/dsh-experimental-agent-team-claude-code'
       config:
         providerName: claude-code-loader
+        catalogOwnerService: claudeCodeCatalogOwner
         sandbox: read-only
         maxEvidenceItems: 7
