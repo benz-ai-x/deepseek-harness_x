@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -205,6 +205,39 @@ function createRequest(overrides: Partial<TeammateRuntimeCreateRequest> = {}): T
     },
     signal: new AbortController().signal,
     ...overrides,
+  }
+}
+
+async function mountRuntimeRegistrationDependencies(
+  ctx: Context,
+  directRegistration: ReturnType<typeof vi.fn>,
+  subprocessSpawn: ReturnType<typeof vi.fn> = vi.fn(),
+): Promise<void> {
+  class AgentTeamsFixture extends Service {
+    readonly registerTeammateRuntimeProvider = directRegistration
+
+    constructor(serviceCtx: Context) {
+      super(serviceCtx, 'agentTeams')
+    }
+  }
+  class SubprocessFixture extends Service {
+    readonly spawn = subprocessSpawn
+
+    constructor(serviceCtx: Context) {
+      super(serviceCtx, 'subprocess')
+    }
+  }
+  await ctx.plugin(AgentTeamsFixture)
+  await ctx.plugin(SubprocessFixture)
+}
+
+function runtimeCatalogFixture(catalogRegistration: unknown) {
+  return class RuntimeCatalogFixture extends Service {
+    readonly registerExternalRuntimeProvider = catalogRegistration
+
+    constructor(serviceCtx: Context) {
+      super(serviceCtx, 'runtimeCatalog')
+    }
   }
 }
 
@@ -1288,6 +1321,18 @@ describe('durable Codex teammate runtime', () => {
       { method: 'thread/tokenUsage/updated', params: { threadId } },
       { method: 'thread/tokenUsage/updated', params: { threadId, turnId } },
       {
+        method: 'thread/tokenUsage/updated',
+        params: { threadId, turnId, tokenUsage: { inputTokens: 3, outputTokens: 4 } },
+      },
+      {
+        method: 'thread/tokenUsage/updated',
+        params: { threadId, turnId, tokenUsage: { inputTokens: -1, outputTokens: 4 } },
+      },
+      {
+        method: 'thread/tokenUsage/updated',
+        params: { threadId, turnId, tokenUsage: { inputTokens: 3, outputTokens: -1 } },
+      },
+      {
         method: 'turn/completed',
         params: { threadId, turn: { id: 'another-turn', status: 'completed' } },
       },
@@ -1308,8 +1353,15 @@ describe('durable Codex teammate runtime', () => {
       ['tool', 'dynamic-tool', 'blocked'],
       ['tool', 'web-search', 'unknown'],
       ['usage', undefined, undefined],
+      ['usage', undefined, undefined],
+      ['usage', undefined, undefined],
+      ['usage', undefined, undefined],
       ['turn', undefined, 'completed'],
     ])
+    expect(evidence.items).toContainEqual(expect.objectContaining({
+      kind: 'usage',
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+    }))
 
     await expect(nativeRequest('item/tool/requestUserInput', {
       threadId,
@@ -2102,22 +2154,203 @@ describe('durable Codex teammate runtime', () => {
     await ctx.fiber.dispose()
   })
 
+  it('routes an explicitly owned catalog registration through that service', async () => {
+    const directRegistration = vi.fn()
+    const ownedDisposal = vi.fn(async () => {})
+    const catalogRegistration = vi.fn(() => ownedDisposal)
+    const ctx = new Context()
+    await mountRuntimeRegistrationDependencies(ctx, directRegistration)
+    const RuntimeCatalogFixture = runtimeCatalogFixture(catalogRegistration)
+    await ctx.plugin(RuntimeCatalogFixture)
+
+    const providerFiber = await ctx.plugin(codexRuntime, {
+      catalogOwnerService: 'runtimeCatalog',
+    })
+
+    expect(catalogRegistration).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex' }))
+    expect(directRegistration).not.toHaveBeenCalled()
+    await providerFiber.dispose()
+    await providerFiber.dispose()
+    expect(ownedDisposal).toHaveBeenCalledTimes(1)
+    await ctx.fiber.dispose()
+  })
+
+  it('tracks the configured catalog owner service lifecycle without a direct fallback', async () => {
+    const directRegistration = vi.fn()
+    const firstDisposal = vi.fn(async () => {})
+    const secondDisposal = vi.fn(async () => {})
+    const catalogRegistration = vi.fn()
+      .mockReturnValueOnce(firstDisposal)
+      .mockReturnValueOnce(secondDisposal)
+    const ctx = new Context()
+    await mountRuntimeRegistrationDependencies(ctx, directRegistration)
+    const RuntimeCatalogFixture = runtimeCatalogFixture(catalogRegistration)
+    const providerFiber = await ctx.plugin(codexRuntime, {
+      catalogOwnerService: 'runtimeCatalog',
+    })
+
+    expect(catalogRegistration).not.toHaveBeenCalled()
+    expect(directRegistration).not.toHaveBeenCalled()
+    const firstOwner = await ctx.plugin(RuntimeCatalogFixture)
+    await vi.waitFor(() => { expect(catalogRegistration).toHaveBeenCalledTimes(1) })
+    await firstOwner.dispose()
+    expect(firstDisposal).toHaveBeenCalledTimes(1)
+
+    const secondOwner = await ctx.plugin(RuntimeCatalogFixture)
+    await vi.waitFor(() => { expect(catalogRegistration).toHaveBeenCalledTimes(2) })
+    await providerFiber.dispose()
+    await providerFiber.dispose()
+    expect(firstDisposal).toHaveBeenCalledTimes(1)
+    expect(secondDisposal).toHaveBeenCalledTimes(1)
+    await secondOwner.dispose()
+    expect(secondDisposal).toHaveBeenCalledTimes(1)
+    expect(directRegistration).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
+  it('fails loudly when the configured catalog owner violates its registration contract', async () => {
+    for (const invalid of [
+      { registration: undefined, diagnostic: 'must expose registerExternalRuntimeProvider(provider)' },
+      { registration: vi.fn(() => undefined), diagnostic: 'must return a disposer' },
+    ]) {
+      const directRegistration = vi.fn()
+      const ctx = new Context()
+      const logged = vi.spyOn(ctx.logger, 'error').mockImplementation(() => undefined)
+      await mountRuntimeRegistrationDependencies(ctx, directRegistration)
+      const providerFiber = await ctx.plugin(codexRuntime, {
+        catalogOwnerService: 'runtimeCatalog',
+      })
+
+      await ctx.plugin(runtimeCatalogFixture(invalid.registration))
+
+      await vi.waitFor(() => {
+        expect(logged).toHaveBeenCalled()
+        const error: unknown = logged.mock.calls.at(-1)?.[0]
+        expect(error).toBeInstanceOf(TypeError)
+        expect((error as Error).message).toContain(invalid.diagnostic)
+      })
+      expect(directRegistration).not.toHaveBeenCalled()
+      await providerFiber.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('removes the owned registration before closing the provider generation', async () => {
+    const directRegistration = vi.fn()
+    let provider: TeammateRuntimeProvider | undefined
+    const disposalCodes: string[] = []
+    const ownedDisposal = vi.fn(async () => {
+      if (provider === undefined) throw new Error('catalog owner did not receive the provider')
+      try {
+        await provider.create(createRequest({ initialWork: [] }))
+      } catch (error: unknown) {
+        disposalCodes.push((error as TeammateRuntimeError).code)
+      }
+    })
+    const catalogRegistration = vi.fn((registeredProvider: TeammateRuntimeProvider) => {
+      provider = registeredProvider
+      return ownedDisposal
+    })
+    const ctx = new Context()
+    await mountRuntimeRegistrationDependencies(ctx, directRegistration)
+    await ctx.plugin(runtimeCatalogFixture(catalogRegistration))
+    const providerFiber = await ctx.plugin(codexRuntime, {
+      catalogOwnerService: 'runtimeCatalog',
+    })
+
+    await providerFiber.dispose()
+
+    expect(ownedDisposal).toHaveBeenCalledTimes(1)
+    expect(disposalCodes).toEqual(['TEAM_RUNTIME_CAPABILITY_MISMATCH'])
+    expect(directRegistration).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
+  it('closes the provider when direct registration disposal throws synchronously', async () => {
+    const registrationError = new Error('registration disposal failed')
+    let cleanup: (() => Promise<void>) | undefined
+    let provider: TeammateRuntimeProvider | undefined
+    const ctx = {
+      agentTeams: {
+        registerTeammateRuntimeProvider: (registeredProvider: TeammateRuntimeProvider) => {
+          provider = registeredProvider
+          return () => { throw registrationError }
+        },
+      },
+      effect: (activate: () => () => Promise<void>) => { cleanup = activate() },
+      logger: { warn: vi.fn() },
+    } as unknown as Context
+    codexRuntime.apply(ctx, {})
+    if (cleanup === undefined || provider === undefined) throw new Error('Codex lifecycle did not activate')
+
+    await expect(cleanup()).rejects.toBe(registrationError)
+    await expect(provider.create(createRequest({ initialWork: [] }))).rejects.toMatchObject({
+      code: 'TEAM_RUNTIME_UNAVAILABLE',
+    })
+  })
+
+  it('propagates owned registration cleanup failures into provider cleanup aggregation', async () => {
+    const child = fakeChild()
+    const registrationError = new Error('owned registration disposal failed')
+    const directRegistration = vi.fn()
+    let provider: TeammateRuntimeProvider | undefined
+    const catalogRegistration = vi.fn((registeredProvider: TeammateRuntimeProvider) => {
+      provider = registeredProvider
+      return async () => { throw registrationError }
+    })
+    const ctx = new Context()
+    const logged = vi.spyOn(ctx.logger, 'error').mockImplementation(() => undefined)
+    await mountRuntimeRegistrationDependencies(ctx, directRegistration, vi.fn(() => child.handle))
+    await ctx.plugin(runtimeCatalogFixture(catalogRegistration))
+    const providerFiber = await ctx.plugin(codexRuntime, {
+      catalogOwnerService: 'runtimeCatalog',
+    })
+    if (provider === undefined) throw new Error('catalog owner did not receive the provider')
+    const { creating, threadStart } = await beginFreshCreation(provider, child)
+    child.peer.respond(threadStart, {
+      approvalPolicy: 'never',
+      sandbox: { type: 'readOnly', networkAccess: false },
+      thread: { id: 'owned-aggregate-cleanup-thread', ephemeral: false, turns: [] },
+    })
+    const turnStart = await child.peer.nextMethod('turn/start')
+    child.peer.respond(turnStart, { turn: { id: 'owned-aggregate-cleanup-turn' } })
+    await creating
+    vi.spyOn(child.handle.stdin!, 'end').mockImplementationOnce(() => {
+      throw new Error('stdin close failed')
+    })
+    vi.spyOn(child.handle, 'waitForExit').mockRejectedValueOnce(new Error('wait failed'))
+
+    await providerFiber.dispose()
+
+    const failure = logged.mock.calls
+      .map(call => call[0] as unknown)
+      .find((error): error is AggregateError => error instanceof AggregateError
+        && error.errors[0] instanceof AggregateError
+        && error.errors[0].errors[0] === registrationError
+        && error.errors[1] instanceof AggregateError)
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(directRegistration).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
   it('applies safe defaults, accepts bounded overrides, and rejects invalid bounds', async () => {
     const makeContext = () => {
       let cleanup: (() => Promise<void>) | undefined
-      const registered = vi.fn()
+      const registrationDisposal = vi.fn(async () => {})
+      const registered = vi.fn(() => registrationDisposal)
       const ctx = {
         agentTeams: { registerTeammateRuntimeProvider: registered },
         effect: (activate: () => () => Promise<void>) => { cleanup = activate() },
         logger: { warn: vi.fn() },
       } as unknown as Context
-      return { ctx, registered, cleanup: () => cleanup?.() }
+      return { ctx, registered, registrationDisposal, cleanup: () => cleanup?.() }
     }
     const defaults = makeContext()
     codexRuntime.apply(defaults.ctx, {})
     expect(defaults.registered).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex' }))
     await defaults.cleanup()
     await defaults.cleanup()
+    expect(defaults.registrationDisposal).toHaveBeenCalledTimes(1)
 
     const configured = makeContext()
     codexRuntime.apply(configured.ctx, {

@@ -42,6 +42,8 @@ Choose this backend when one Codex employee must retain its native conversation 
     sandbox: read-only
 ```
 
+Set `catalogOwnerService` to a service name when one catalog owner must publish the Runtime Backend and forward its Agent Teams registration atomically. That service must expose `registerExternalRuntimeProvider(provider)` and return a callable synchronous or asynchronous disposer for the resulting generation. The adapter validates this contract when the service appears, waits while it is absent, and removes the generation when either the service or adapter Fiber unloads. Omitting the field keeps direct Agent Teams registration.
+
 ### Eligibility
 
 Registration occurs only when the package-pinned `@openai/codex` wrapper is exactly version `0.149.1` and its matching platform payload contains an executable native product. An unsupported platform, mismatched wrapper, or missing payload leaves the backend unavailable and emits only a bounded reason. The probe never publishes installation paths. Installing the one-shot Codex subagent provider does not make this Runtime Backend eligible.
@@ -51,6 +53,7 @@ Registration occurs only when the package-pinned `@openai/codex` wrapper is exac
 | Field | Default | Meaning |
 |---|---|---|
 | `providerName` | `codex` | Stable Agent Teams Runtime Backend id; mounted instances need distinct ids |
+| `catalogOwnerService` | direct registration | Optional service whose `registerExternalRuntimeProvider(provider)` call owns catalog publication plus Agent Teams registration and returns the generation disposer |
 | `cwd` | Host process cwd | Workspace path resolved to absolute and shared by every native thread owned by this instance |
 | `model` | native Codex setting | Optional fixed model override sent on thread start and resume |
 | `env` | `{}` | Explicit child environment passed through the subprocess seam |
@@ -103,7 +106,7 @@ The connection admits one native turn at a time. Early terminal notifications ar
 
 ### Lifecycle
 
-Provider registration and every attached process belong to the package Fiber. Disposal closes admission, interrupts an active exact turn, closes transport streams, terminates the process tree through `ctx.subprocess`, waits for exit, clears evidence and delivery indexes, and removes the registration. Concurrent disposal shares one settlement. Cleanup failures are aggregated and remain visible instead of being discarded.
+Direct registration follows the adapter Fiber lifetime. A catalog-owned registration follows both that Fiber and the current owner-service generation, so an absent owner leaves no partial Agent Teams registration and a replacement owner receives a fresh generation. Adapter disposal waits for the registration disposer before closing provider admission, interrupting an active exact turn, closing transport streams, terminating the process tree through `ctx.subprocess`, waiting for exit, and clearing evidence and delivery indexes. Concurrent disposal shares one settlement. Cleanup failures are aggregated and remain visible instead of being discarded.
 
 </details>
 

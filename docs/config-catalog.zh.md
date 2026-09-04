@@ -584,6 +584,8 @@ export interface Config {
 export interface Config {
   /** Stable provider id registered with Agent Teams. */
   readonly providerName?: string
+  /** Optional service whose registerExternalRuntimeProvider(provider) call returns this generation's disposer. */
+  readonly catalogOwnerService?: string
   /** Workspace path resolved to absolute for every native thread owned by this instance. */
   readonly cwd?: string
   /** Optional native Codex model pinned for this provider generation. */

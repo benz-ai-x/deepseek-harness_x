@@ -10,9 +10,13 @@
     - id: agent-team
       name: '@deepseek-ai/dsh-experimental-agent-team'
 
+    - id: codex-catalog-owner
+      name: './catalog-owner.ts'
+
     - id: agent-team-codex
       name: '@deepseek-ai/dsh-experimental-agent-team-codex'
       config:
         providerName: codex-loader
+        catalogOwnerService: codexCatalogOwner
         sandbox: read-only
         maxEvidenceItems: 7

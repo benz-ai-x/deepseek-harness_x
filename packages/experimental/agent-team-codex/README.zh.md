@@ -42,6 +42,8 @@ kind: "package-reference"
     sandbox: read-only
 ```
 
+当一个目录属主必须原子地发布 Runtime Backend 并转发其 Agent Teams 注册时，把 `catalogOwnerService` 设为该服务名。该服务必须暴露 `registerExternalRuntimeProvider(provider)`，并为生成的世代返回一个可调用的同步或异步 disposer。适配器会在服务出现时校验此契约，在服务缺席时等待，并在服务或适配器 Fiber 卸载时移除该世代。省略本字段会保留直接 Agent Teams 注册。
+
 ### 资格判定
 
 只有包内锁定的 `@openai/codex` wrapper 版本恰好为 `0.149.1`，且匹配的平台载荷包含可执行原生产品时，才会发生注册。不支持的平台、不匹配的 wrapper 或缺失的载荷会让后端保持不可用，并只产生有界原因。探针绝不会公开安装路径。安装一次性 Codex subagent 提供方不会让本 Runtime Backend 获得资格。
@@ -51,6 +53,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `providerName` | `codex` | 稳定的 Agent Teams Runtime Backend id；多个挂载实例必须使用不同 id |
+| `catalogOwnerService` | 直接注册 | 可选服务；其 `registerExternalRuntimeProvider(provider)` 调用同时拥有目录发布与 Agent Teams 注册，并返回该世代的 disposer |
 | `cwd` | Host 进程 cwd | 解析为绝对路径并由本实例所有原生线程共享的工作区路径 |
 | `model` | Codex 原生设置 | 在线程启动与恢复时发送的可选固定模型覆盖 |
 | `env` | `{}` | 经 subprocess seam 传给子进程的显式环境 |
@@ -103,7 +106,7 @@ connection 一次只接纳一个原生轮次。早到的终态通知会保留到
 
 ### 生命周期
 
-provider 注册与每个已附着进程都归本包 Fiber 所有。释放会关闭接纳、打断精确活跃轮次、关闭传输流、通过 `ctx.subprocess` 终止进程树、等待退出、清空 evidence 与 delivery 索引并移除注册。并发释放共享同一个结算；清理失败会聚合并保持可见，而不会被丢弃。
+直接注册遵循适配器 Fiber 的生命周期。目录属主注册同时遵循该 Fiber 和当前属主服务世代，因此属主缺席时不会留下部分 Agent Teams 注册，替换属主则会收到新世代。适配器释放会先等待注册 disposer，再关闭提供方接纳、打断精确活跃轮次、关闭传输流、通过 `ctx.subprocess` 终止进程树、等待退出并清空 evidence 与 delivery 索引。并发释放共享同一个结算；清理失败会聚合并保持可见，而不会被丢弃。
 
 </details>
 
