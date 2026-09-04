@@ -173,7 +173,7 @@ async function setup(
   const leadHandle = resumeLead
     ? await ctx.agents.resume({ resumeSessionId: SessionId('codex-team-lead'), agentOptions: {} })
     : undefined
-  const lead = leadHandle?.agent ?? ctx.agentLoop.create(SessionId('codex-team-lead'), {})
+  const lead = leadHandle?.agent ?? await ctx.agentLoop.create(SessionId('codex-team-lead'), {})
   const provider: TeammateRuntimeProvider | undefined = registerProvider.mock.calls[0]?.[0]
   if (provider === undefined) throw new Error('Codex provider did not register')
   return { ctx, lead, leadHandle, provider, providerFiber, spawn, storageRoot }
@@ -732,7 +732,6 @@ describe('durable Codex teammate runtime', () => {
     const delivery = ctx.agentTeams.sendMessage(lead, {
       target: 'codex-repairer',
       content: [{ type: 'text', text: 'Continue after the crash.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })
 
@@ -1129,7 +1128,6 @@ describe('durable Codex teammate runtime', () => {
       senderId: SessionId('direct-lead'),
       senderName: 'lead',
       content: [{ type: 'text' as const, text: 'Continue configured work.' }],
-      delivery: 'wakeup' as const,
       signal: new AbortController().signal,
     }
     const delivery = provider.deliver(deliveryRequest)
@@ -1401,7 +1399,6 @@ describe('durable Codex teammate runtime', () => {
       senderId: SessionId('direct-lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Must not be submitted twice.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })).resolves.toEqual({
       turnId: '0c999999-2222-7777-8222-222222222222',
@@ -1571,7 +1568,6 @@ describe('durable Codex teammate runtime', () => {
       senderId: SessionId('direct-lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: `Deliver ${deliveryId}.` }],
-      delivery: 'wakeup',
       signal,
     })
 
@@ -1687,7 +1683,6 @@ describe('durable Codex teammate runtime', () => {
           senderId: SessionId('direct-lead'),
           senderName: 'lead',
           content: [{ type: 'text', text: 'Wait for the failed turn.' }],
-          delivery: 'wakeup',
           signal: new AbortController().signal,
         })
         : undefined
@@ -1715,7 +1710,6 @@ describe('durable Codex teammate runtime', () => {
         senderId: SessionId('direct-lead'),
         senderName: 'lead',
         content: [{ type: 'text', text: 'Cannot route this.' }],
-        delivery: 'wakeup',
         signal: new AbortController().signal,
       })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
 
@@ -2033,7 +2027,6 @@ describe('durable Codex teammate runtime', () => {
       senderId: SessionId('direct-lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: `Concurrent direct delivery ${id}.` }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })
     const first = delivery('overlap-first')
@@ -2080,7 +2073,6 @@ describe('durable Codex teammate runtime', () => {
       senderId: SessionId('direct-lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Attempt exact repair.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code })
     await providerFiber.dispose()

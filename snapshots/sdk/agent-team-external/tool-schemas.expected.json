@@ -325,8 +325,7 @@
       "description": "Record one deterministic external Team member event for SDK projection testing.",
       "parameters": {
         "type": "object",
-        "properties": {},
-        "additionalProperties": false
+        "properties": {}
       }
     },
     {

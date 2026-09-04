@@ -253,7 +253,7 @@ async function setup(config: ConstructorParameters<typeof TeamService>[1] = {}) 
   const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-runtime-'))
   roots.push(storageRoot)
   const { ctx, teamFiber } = await runtimeContext(storageRoot, config)
-  const lead = ctx.agentLoop.create(SessionId('external-lead'), {})
+  const lead = await ctx.agentLoop.create(SessionId('external-lead'), {})
   return { ctx, teamFiber, lead }
 }
 
@@ -400,7 +400,6 @@ function runtimeDelivery(fixture: Pick<AttachedRuntimeCase, 'created'>, delivery
     senderId: SessionId('external-lead'),
     senderName: 'lead',
     content: [] as const,
-    delivery: 'quiet' as const,
     signal: SIGNAL,
   }
 }
@@ -1027,7 +1026,6 @@ describe('durable teammate runtime registry', () => {
       senderId: SessionId('external-lead'),
       senderName: 'lead',
       content: [{ type: 'text' as const, text: 'Validate provider output.' }],
-      delivery: 'wakeup' as const,
       signal: SIGNAL,
     }
     await registry.deliver('fake-native', delivery)
@@ -1750,7 +1748,6 @@ describe('durable teammate runtime registry', () => {
       senderId: SessionId('external-lead'),
       senderName: 'lead',
       content: [{ type: 'text' as const, text: 'Review this.' }],
-      delivery: 'wakeup' as const,
       signal: SIGNAL,
     }
     const firstTurn = await runtimeRegistry(ctx).deliver('fake-native', delivery)
@@ -1826,7 +1823,7 @@ describe('durable teammate runtime registry', () => {
     roots.push(storageRoot)
     const first = await runtimeContext(storageRoot)
     const leadId = SessionId('external-restart-lead')
-    const lead = first.ctx.agentLoop.create(leadId, {})
+    const lead = await first.ctx.agentLoop.create(leadId, {})
     const store = fakeStore()
     const provider = new FakeDurableRuntime(store)
     const providerFiber = await register(first.ctx, provider)
@@ -1878,7 +1875,6 @@ describe('durable teammate runtime registry', () => {
     await expect(first.ctx.agentTeams.sendMessage(lead, {
       target: 'native-worker',
       content: [{ type: 'text', text: 'First native turn.' }],
-      delivery: 'wakeup',
       signal: SIGNAL,
     })).resolves.toMatchObject({ status: 'accepted' })
     const delivered = lead.session.ownEvents().findLast(event => event.type === 'team/message/delivered')
@@ -1937,7 +1933,6 @@ describe('durable teammate runtime registry', () => {
     await expect(second.ctx.agentTeams.sendMessage(leadHandle.agent, {
       target: 'native-worker',
       content: [{ type: 'text', text: 'Second native turn.' }],
-      delivery: 'wakeup',
       signal: SIGNAL,
     })).resolves.toMatchObject({ status: 'accepted' })
     expect([...store.sessions.values()][0]?.turns).toHaveLength(2)
@@ -2040,7 +2035,6 @@ describe('durable teammate runtime registry', () => {
     await ctx.agentTeams.sendMessage(lead, {
       target: 'async-native',
       content: [{ type: 'text', text: 'Run asynchronously.' }],
-      delivery: 'wakeup',
       signal: SIGNAL,
     })
     expect(ctx.agentTeams.listMembers(lead)).toContainEqual(expect.objectContaining({
@@ -2143,7 +2137,7 @@ describe('durable teammate runtime registry', () => {
       throw new Error('missing failed external provisioning row')
     }
     lead.session.append('team/member', {
-      version: 1,
+      version: 2,
       teamId: TeamId(lead.id),
       member: {
         id: row.id,
@@ -2175,7 +2169,7 @@ describe('durable teammate runtime registry', () => {
           throw new Error('missing external provisioning row during settlement race')
         }
         lead.session.append('team/member', {
-          version: 1,
+          version: 2,
           teamId: TeamId(lead.id),
           member: {
             id: row.id,
@@ -2221,7 +2215,7 @@ describe('durable teammate runtime registry', () => {
     const internals = runtimeInternals(ctx)
     const launchRequestId = TeammateLaunchRequestId('recovery-native-launch')
     const member = externalMember('recovery-native-member', 'recovery-native', launchRequestId)
-    lead.session.append('team/member', { version: 1, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member })
 
     await internals.roster.reconcileProvisioning(lead, SIGNAL)
     expect(ctx.agentTeams.listMembers(lead)).toContainEqual(expect.objectContaining({
@@ -2274,10 +2268,10 @@ describe('durable teammate runtime registry', () => {
       'raced-recovery',
       TeammateLaunchRequestId('raced-recovery-launch'),
     )
-    lead.session.append('team/member', { version: 1, teamId: TeamId(lead.id), member: raced })
+    lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member: raced })
     provider.resume.mockImplementationOnce(async () => {
       lead.session.append('team/member', {
-        version: 1,
+        version: 2,
         teamId: TeamId(lead.id),
         member: { ...raced, phase: 'failed', error: 'concurrent recovery failed' },
       })
@@ -2329,7 +2323,6 @@ describe('durable teammate runtime registry', () => {
       senderId: SessionId('external-lead'),
       senderName: 'lead',
       content: [],
-      delivery: 'quiet',
       signal: SIGNAL,
     })
     void retiringDelivery.catch(() => undefined)
@@ -2380,7 +2373,6 @@ describe('durable teammate runtime registry', () => {
       senderId: SessionId('external-lead'),
       senderName: 'lead',
       content: [],
-      delivery: 'quiet',
       signal: SIGNAL,
     })
     void closingDelivery.catch(() => undefined)
@@ -2446,7 +2438,6 @@ describe('durable teammate runtime registry', () => {
       senderId: SessionId('external-lead'),
       senderName: 'lead',
       content: [] as const,
-      delivery: 'quiet' as const,
       signal: SIGNAL,
     }
     await registry.deliver('fake-native', delivery)
@@ -2602,7 +2593,6 @@ describe('durable teammate runtime registry', () => {
       senderId: SessionId('external-lead'),
       senderName: 'lead',
       content: [],
-      delivery: 'quiet',
       signal: SIGNAL,
     })
     void pending.catch(() => undefined)

@@ -124,27 +124,6 @@
       }
     },
     {
-      "name": "followup_task",
-      "description": "Send a durable follow-up task to another Team member and start a turn when needed.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "Team member name, or lead."
-          },
-          "message": {
-            "type": "string",
-            "description": "Self-contained message for the target."
-          }
-        },
-        "required": [
-          "target",
-          "message"
-        ]
-      }
-    },
-    {
       "name": "get_goal",
       "description": "Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal.",
       "parameters": {
@@ -342,7 +321,7 @@
     },
     {
       "name": "send_message",
-      "description": "Send durable information to another Team member without starting an idle member.",
+      "description": "Send one durable message to another Team member. A running target receives it at the nearest step boundary; an idle target starts a turn; an inactive teammate cold-resumes.",
       "parameters": {
         "type": "object",
         "properties": {

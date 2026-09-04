@@ -30,7 +30,7 @@ async function mount(
   workspace: string,
   env: Record<string, string>,
   resume: boolean,
-): Promise<{ ctx: Context; lead: ReturnType<Context['agentLoop']['create']> }> {
+): Promise<{ ctx: Context; lead: Awaited<ReturnType<Context['agentLoop']['create']>> }> {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -55,7 +55,7 @@ async function mount(
     : undefined
   return {
     ctx,
-    lead: resumed?.agent ?? ctx.agentLoop.create(SessionId('codex-real-canary-lead'), {}),
+    lead: resumed?.agent ?? await ctx.agentLoop.create(SessionId('codex-real-canary-lead'), {}),
   }
 }
 
@@ -151,7 +151,6 @@ describe('real Codex durable-runtime canary', () => {
         await expect(second.ctx.agentTeams.sendMessage(second.lead, {
           target: 'real-codex',
           content: [{ type: 'text', text: 'Run the second native turn.' }],
-          delivery: 'wakeup',
           signal: new AbortController().signal,
         })).resolves.toMatchObject({ status: 'accepted' })
         await vi.waitFor(() => {

@@ -27,7 +27,7 @@ async function mount(
   storageRoot: string,
   workspace: string,
   resume: boolean,
-): Promise<{ ctx: Context; lead: ReturnType<Context['agentLoop']['create']> }> {
+): Promise<{ ctx: Context; lead: Awaited<ReturnType<Context['agentLoop']['create']>> }> {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -51,7 +51,7 @@ async function mount(
     : undefined
   return {
     ctx,
-    lead: resumed?.agent ?? ctx.agentLoop.create(SessionId('claude-real-canary-lead'), {}),
+    lead: resumed?.agent ?? await ctx.agentLoop.create(SessionId('claude-real-canary-lead'), {}),
   }
 }
 
@@ -111,7 +111,6 @@ describe('real Claude Code durable-runtime canary', () => {
         await expect(second.ctx.agentTeams.sendMessage(second.lead, {
           target: 'real-claude',
           content: [{ type: 'text', text: 'Reply with exactly second-real-turn. Do not use tools.' }],
-          delivery: 'wakeup',
           signal: new AbortController().signal,
         })).resolves.toMatchObject({ status: 'accepted' })
         await vi.waitFor(() => {

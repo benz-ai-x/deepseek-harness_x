@@ -258,7 +258,6 @@ function deliveryPrompt(
     '',
     '# Team Delivery',
     `Sender: ${request.senderName}`,
-    `Mode: ${request.delivery}`,
     '',
     content,
   ].join('\n')

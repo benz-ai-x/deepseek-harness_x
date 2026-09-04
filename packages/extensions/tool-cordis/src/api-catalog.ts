@@ -5648,7 +5648,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeDeliverRequest',
-    declaration: 'export interface TeammateRuntimeDeliverRequest {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly deliveryId: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly content: readonly ContentBlock[];\n    readonly delivery: \'quiet\' | \'wakeup\';\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface TeammateRuntimeDeliverRequest {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly deliveryId: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly content: readonly ContentBlock[];\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'TeammateRuntimeDeliverResult',

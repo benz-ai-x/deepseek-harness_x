@@ -100,7 +100,6 @@ export function defineTeammateRuntimeProviderConformance(
         senderId: createRequest.memberId,
         senderName: 'lead',
         content: [{ type: 'text' as const, text: 'Conformance turn.' }],
-        delivery: 'wakeup' as const,
         signal: createRequest.signal,
       }
       const deliveryCancellation = new AbortController()

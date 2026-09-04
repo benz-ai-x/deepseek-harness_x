@@ -287,7 +287,6 @@ describe('Team identity and provisioning', () => {
     await ctx.agentTeams.sendMessage(lead, {
       target: 'routed-worker',
       content: content('resume on the same route'),
-      delivery: 'wakeup',
       signal: SIGNAL,
     })
     const resumed = await waitRunning(ctx, started.member.id)
@@ -421,7 +420,11 @@ describe('Team identity and provisioning', () => {
       provider: 'spawn',
       label: 'route fixture',
     })
-    await ctx.sessions.flush(persistedSession)
+    // A bare Session fixture has no agent-loop writer, so seed its committed
+    // descriptor explicitly before exercising the detached read path.
+    const persisted = await ctx.sessionPersistence.create(persistedSession.header)
+    await persisted.append(persistedSession.snapshotEvents())
+    await persisted.close()
     await persistedFiber.dispose()
 
     const roster = teamInternals(ctx).roster

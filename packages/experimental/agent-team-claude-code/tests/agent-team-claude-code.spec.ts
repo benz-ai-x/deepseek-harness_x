@@ -459,7 +459,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Continue with the second turn.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })
     await vi.waitFor(() => { expect(firstTurnChild.terminate).toHaveBeenCalled() })
@@ -477,7 +476,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'duplicate must not run' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })).resolves.toEqual({ turnId: firstDelivery.turnId, presence: 'idle' })
 
@@ -496,7 +494,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Continue with the second turn.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })).resolves.toEqual({ turnId: firstDelivery.turnId, presence: 'idle' })
     expect(sdkMocks.query).toHaveBeenCalledTimes(2)
@@ -536,7 +533,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'First concurrent delivery.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })
     const duplicateController = new AbortController()
@@ -546,7 +542,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Duplicate concurrent delivery.' }],
-      delivery: 'quiet',
       signal: duplicateController.signal,
     })
     const second = host.provider.deliver({
@@ -555,7 +550,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Second concurrent delivery.' }],
-      delivery: 'wakeup',
       signal: new AbortController().signal,
     })
     duplicateController.abort('duplicate waiter cancelled')
@@ -601,7 +595,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text' as const, text: 'Retry exact delivery.' }],
-      delivery: 'wakeup' as const,
       signal: new AbortController().signal,
     }
 
@@ -912,7 +905,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'work' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
 
@@ -924,7 +916,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'work' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
 
@@ -935,7 +926,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'work' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
       code: 'TEAM_RUNTIME_UNAVAILABLE',
@@ -949,7 +939,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'work' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
 
@@ -961,7 +950,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
   })
@@ -983,7 +971,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'must not start' }],
-      delivery: 'quiet',
       signal: controller.signal,
     })
     controller.abort('bounded cancellation')
@@ -1009,7 +996,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Must remain unstarted.' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })
     const disposal = provider.dispose({
@@ -1039,7 +1025,6 @@ describe('durable Claude Code teammate runtime', () => {
       senderId: SessionId('lead'),
       senderName: 'lead',
       content: [{ type: 'text', text: 'Must not reach a second query.' }],
-      delivery: 'quiet',
       signal: new AbortController().signal,
     })
     await nextTask()
