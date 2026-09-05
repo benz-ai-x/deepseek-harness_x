@@ -334,6 +334,21 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "NativeMemberOperationResult",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "NativeMemberGrant",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeammateRuntimeMemberOperationsRequest",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeammateRuntimeEvidenceRequest",
       "source": "packages/experimental/agent-team/src/service-types.ts"
     },

@@ -17,7 +17,36 @@ import type {
   TeammateRuntimeRequirements,
   TeammateRuntimeToolCallId,
   TeammateRuntimeTurnId,
+  TeamId,
+  TeamMemberView,
+  TeamTaskView,
 } from './types.ts'
+
+/** Canonical result of an authorized native Team query. */
+export type NativeMemberOperationResult =
+  | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
+  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: string } }
+  | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+
+/** Nonserializable authority delivered only to the current native provider. */
+export interface NativeMemberGrant {
+  readonly identity: Readonly<{ teamId: TeamId; memberId: SessionId; provider: string; nativeHandle: TeammateRuntimeHandle }>
+  readonly signal: AbortSignal
+  /**
+   * Query as the granted member; model arguments never select caller authority.
+   * @param input - untrusted JSON request validated by the Team owner.
+   * @param signal - cancellation for this invocation.
+   * @returns a bounded query result or stable refusal without business mutations.
+   */
+  execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>
+}
+
+/** Provider binding after durable identity acceptance and current-generation verification. */
+export interface TeammateRuntimeMemberOperationsRequest {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly grant: NativeMemberGrant
+}
 
 /** Fields shared by DSH-continuable and durable external teammate creation. */
 interface SpawnTeammateRequestBase {
@@ -266,6 +295,12 @@ export interface TeammateRuntimeRegistry {
 export interface TeammateRuntimeProvider extends TeammateRuntimeMetadata {
   create(request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult>
   resume(request: TeammateRuntimeResumeRequest): Promise<TeammateRuntimeCreateResult | undefined>
+  /**
+   * Install Team-owned authority after durable identity acceptance or verified resume.
+   * A throwing binder revokes the grant and quarantines this provider generation.
+   * @param request - exact accepted native handle and its current nonserializable grant.
+   */
+  bindMemberOperations?(request: TeammateRuntimeMemberOperationsRequest): void
   deliver(request: TeammateRuntimeDeliverRequest): Promise<TeammateRuntimeDeliverResult>
   interrupt(request: TeammateRuntimeInterruptRequest): TeammateRuntimeInterruptResult
   /** Required when an accepted operation can remain running after its result settles. */

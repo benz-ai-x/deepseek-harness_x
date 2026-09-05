@@ -4483,6 +4483,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ModelReasoningEffort {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n}',
   },
   {
+    name: 'NativeMemberGrant',
+    declaration: 'export interface NativeMemberGrant {\n    readonly identity: Readonly<{\n        teamId: TeamId;\n        memberId: SessionId;\n        provider: string;\n        nativeHandle: TeammateRuntimeHandle;\n    }>;\n    readonly signal: AbortSignal;\n    execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>;\n}',
+  },
+  {
+    name: 'NativeMemberOperationName',
+    declaration: 'export type NativeMemberOperationName = \'members.list\' | \'tasks.list\' | \'tasks.get\';',
+  },
+  {
+    name: 'NativeMemberOperationResult',
+    declaration: 'export type NativeMemberOperationResult = {\n    readonly ok: true;\n    readonly operation: \'members.list\';\n    readonly value: {\n        readonly members: readonly TeamMemberView[];\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.list\';\n    readonly value: {\n        readonly tasks: readonly TeamTaskView[];\n        readonly nextCursor?: string;\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.get\';\n    readonly value: {\n        readonly task: TeamTaskView;\n    };\n} | {\n    readonly ok: false;\n    readonly error: {\n        readonly code: string;\n        readonly message: string;\n    };\n};',
+  },
+  {
     name: 'ObjectJsonSchema',
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
   },
@@ -5695,8 +5707,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeammateRuntimeInterruptResult {\n    readonly previousStatus: \'running\' | \'idle\' | \'inactive\';\n}',
   },
   {
+    name: 'TeammateRuntimeMemberOperationsRequest',
+    declaration: 'export interface TeammateRuntimeMemberOperationsRequest {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly grant: NativeMemberGrant;\n}',
+  },
+  {
     name: 'TeammateRuntimeMetadata',
-    declaration: 'export interface TeammateRuntimeMetadata {\n    readonly id: string;\n    readonly displayName: string;\n    readonly contextModes: readonly (\'fresh\' | \'fork\')[];\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n    readonly evaluationTools?: readonly string[];\n}',
+    declaration: 'export interface TeammateRuntimeMetadata {\n    readonly id: string;\n    readonly displayName: string;\n    readonly contextModes: readonly (\'fresh\' | \'fork\')[];\n    readonly profileCapabilities: readonly TeammateProfileCapability[];\n    readonly runtimeCapabilities: readonly TeammateRuntimeCapability[];\n    readonly memberOperations?: readonly NativeMemberOperationName[];\n    readonly evaluationTools?: readonly string[];\n}',
   },
   {
     name: 'TeammateRuntimePendingApproval',
@@ -5720,7 +5736,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeProvider',
-    declaration: 'export interface TeammateRuntimeProvider extends TeammateRuntimeMetadata {\n    create(request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult>;\n    resume(request: TeammateRuntimeResumeRequest): Promise<TeammateRuntimeCreateResult | undefined>;\n    deliver(request: TeammateRuntimeDeliverRequest): Promise<TeammateRuntimeDeliverResult>;\n    interrupt(request: TeammateRuntimeInterruptRequest): TeammateRuntimeInterruptResult;\n    onPresenceChanged?(listener: (event: TeammateRuntimePresenceEvent) => void): () => void;\n    evidence?(request: TeammateRuntimeEvidenceRequest): Promise<TeammateRuntimeEvidenceResult>;\n    createEvaluationHandle?(request: TeammateEvaluationCreateRequest): Promise<TeammateEvaluationCreateResult>;\n    dispose(request: TeammateRuntimeDisposeRequest): Promise<void>;\n}',
+    declaration: 'export interface TeammateRuntimeProvider extends TeammateRuntimeMetadata {\n    create(request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult>;\n    resume(request: TeammateRuntimeResumeRequest): Promise<TeammateRuntimeCreateResult | undefined>;\n    bindMemberOperations?(request: TeammateRuntimeMemberOperationsRequest): void;\n    deliver(request: TeammateRuntimeDeliverRequest): Promise<TeammateRuntimeDeliverResult>;\n    interrupt(request: TeammateRuntimeInterruptRequest): TeammateRuntimeInterruptResult;\n    onPresenceChanged?(listener: (event: TeammateRuntimePresenceEvent) => void): () => void;\n    evidence?(request: TeammateRuntimeEvidenceRequest): Promise<TeammateRuntimeEvidenceResult>;\n    createEvaluationHandle?(request: TeammateEvaluationCreateRequest): Promise<TeammateEvaluationCreateResult>;\n    dispose(request: TeammateRuntimeDisposeRequest): Promise<void>;\n}',
   },
   {
     name: 'TeammateRuntimeRegistration',

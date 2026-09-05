@@ -97,6 +97,44 @@ interface TeammateRuntimeEvidenceResult {
 
 Provider registration belongs to the calling Fiber. Removal closes admission, cancels and settles that provider's work, removes its process-local handles, and leaves other providers untouched. A persisted external member becomes unavailable and inactive without changing its durable identity; the same provider id can later resume its exact native handle without creating a replacement.
 
+<a id="native-member-authorization"></a>
+
+## Native member authorization
+
+The Team owner delivers `NativeMemberGrant` only to the current provider after durable member acceptance or verified resume. Its captured identity never comes from model arguments. Registration, handle, or exact Lead disposal revokes access; evaluations receive no production grant. The [authorization decision](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.md) owns rationale, and the [package contract](../../packages/experimental/agent-team/README.md#teammates) owns query limits and cursor semantics.
+
+```ts type-equiv
+/** Canonical result of an authorized native Team query. */
+type NativeMemberOperationResult =
+  | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
+  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: string } }
+  | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+```
+
+```ts type-equiv
+/** Nonserializable authority delivered only to the current native provider. */
+interface NativeMemberGrant {
+  readonly identity: Readonly<{ teamId: TeamId; memberId: SessionId; provider: string; nativeHandle: TeammateRuntimeHandle }>
+  readonly signal: AbortSignal
+  /**
+   * Query as the granted member; model arguments never select caller authority.
+   * @param input - untrusted JSON request validated by the Team owner.
+   * @param signal - cancellation for this invocation.
+   * @returns a bounded query result or stable refusal without business mutations.
+   */
+  execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>
+}
+```
+
+```ts type-equiv
+/** Provider binding after durable identity acceptance and current-generation verification. */
+interface TeammateRuntimeMemberOperationsRequest {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly grant: NativeMemberGrant
+}
+```
+
 ## Durable mailbox
 
 The Lead Session first stores the complete queued message. A DSH target receipt is acknowledged only after its pending inbox item or recorded user message is durable; an external receipt is acknowledged after its provider returns the stable native turn identity. Either way, queued-minus-delivered is the recovery mailbox.

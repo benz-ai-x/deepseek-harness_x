@@ -97,6 +97,44 @@ interface TeammateRuntimeEvidenceResult {
 
 provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消并等待该 provider 的工作、移除其进程内 handle，且不影响其他 provider。持久 external member 会在不改变持久身份的情况下变为不可用且不驻留；同一 provider id 之后可以恢复完全相同的原生 handle，而不会创建替代项。
 
+<a id="native-member-authorization"></a>
+
+## 原生成员授权
+
+Team 所有者只在持久成员接受或验证恢复后，向当前 provider 交付 `NativeMemberGrant`。捕获的身份绝不来自模型参数。注册、handle 或精确 Lead 释放时撤销访问；评测不会获得生产 grant。[授权决策](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.zh.md)记录理由，[包契约](../../packages/experimental/agent-team/README.zh.md#teammates)定义查询上限和 cursor 语义。
+
+```ts type-equiv
+/** Canonical result of an authorized native Team query. */
+type NativeMemberOperationResult =
+  | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
+  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: string } }
+  | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+```
+
+```ts type-equiv
+/** Nonserializable authority delivered only to the current native provider. */
+interface NativeMemberGrant {
+  readonly identity: Readonly<{ teamId: TeamId; memberId: SessionId; provider: string; nativeHandle: TeammateRuntimeHandle }>
+  readonly signal: AbortSignal
+  /**
+   * Query as the granted member; model arguments never select caller authority.
+   * @param input - untrusted JSON request validated by the Team owner.
+   * @param signal - cancellation for this invocation.
+   * @returns a bounded query result or stable refusal without business mutations.
+   */
+  execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>
+}
+```
+
+```ts type-equiv
+/** Provider binding after durable identity acceptance and current-generation verification. */
+interface TeammateRuntimeMemberOperationsRequest {
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly grant: NativeMemberGrant
+}
+```
+
 ## 持久 mailbox
 
 Lead Session 首先存储完整 queued message。DSH target 只有在 pending inbox 条目或已记录用户消息完成持久化后才写入 acknowledgement；external target 则在 provider 返回稳定 native turn identity 后确认。两种情况下，queued-minus-delivered 都构成恢复 mailbox。

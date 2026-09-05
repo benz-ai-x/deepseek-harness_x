@@ -164,6 +164,7 @@ export class TeamRoster {
    * @param journal - authoritative Lead-log transaction owner.
    * @param lifecycle - shared Team runtime admission cutoff.
    * @param maxMembers - maximum immutable roster entries per Team.
+   * @param bindNativeMember - publishes member access after durable identity acceptance.
    */
   constructor(
     private readonly ctx: Context,
@@ -171,6 +172,7 @@ export class TeamRoster {
     private readonly lifecycle: TeamRuntimeLifecycle,
     private readonly teammateRuntimes: TeammateRuntimeRegistry,
     private readonly maxMembers: number,
+    private readonly bindNativeMember: (root: Agent, member: TeamMemberSnapshot) => void,
   ) {}
 
   /**
@@ -527,6 +529,7 @@ export class TeamRoster {
       }
       throw conflict
     }
+    this.bindNativeMember(root, active)
     return { member: this.memberView(active) }
   }
 
@@ -757,6 +760,8 @@ export class TeamRoster {
           phase: 'active',
         },
       })
+      const accepted = this.journal.state(root).members.find(candidate => candidate.id === member.id)
+      if (accepted !== undefined) this.bindNativeMember(root, accepted)
     })
   }
 
@@ -778,6 +783,7 @@ export class TeamRoster {
           requirements: external.requirements,
           signal,
         })
+        this.bindNativeMember(root, member)
       } catch (error: unknown) {
         if (!(error instanceof TeammateRuntimeError) || error.code !== 'TEAM_RUNTIME_UNAVAILABLE') throw error
       }

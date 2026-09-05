@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Buffer } from 'node:buffer'
 import type {
+  NativeMemberGrant,
   TeammateEvaluationCreateRequest,
   TeammateEvaluationCreateResult,
   TeammateRuntimeCreateRequest,
@@ -195,6 +196,7 @@ interface ProviderRecord {
   readonly inFlight: Set<Promise<unknown>>
   readonly runtimes: Set<TeammateRuntimeHandle>
   readonly evaluations: Set<TeammateEvaluationHandle>
+  readonly memberGrants: Map<TeammateRuntimeHandle, { owner: object; controller: AbortController; grant: NativeMemberGrant }>
   readonly availabilityChanged: () => void
   stopPresenceObserver: (() => void) | undefined
   cleanupTail: Promise<void>
@@ -299,12 +301,19 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
       'TEAM_RUNTIME_INVALID_PROVIDER',
     )
   }
+  if ((provider.memberOperations !== undefined) !== (provider.bindMemberOperations !== undefined)) {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" must bind every advertised member operation`,
+      'TEAM_RUNTIME_INVALID_PROVIDER',
+    )
+  }
   return Object.freeze({
     id: providerId,
     displayName,
     contextModes,
     profileCapabilities,
     runtimeCapabilities,
+    ...(provider.memberOperations === undefined ? {} : { memberOperations: Object.freeze([...provider.memberOperations]) }),
     ...(evaluationTools === undefined ? {} : { evaluationTools }),
   })
 }
@@ -682,6 +691,56 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       await operation
     }
     return registration
+  }
+
+  /**
+   * Deliver authority only to the generation owning an accepted native handle.
+   * @param providerId - registered native provider.
+   * @param nativeHandle - accepted handle attached to that registration.
+   * @param owner - exact live Team owner used to distinguish recovery lifetimes.
+   * @param create - Team-owned grant factory with current-registration checks.
+   */
+  bindMemberOperations(
+    providerId: string,
+    nativeHandle: TeammateRuntimeHandle,
+    owner: object,
+    create: (signal: AbortSignal, current: () => boolean) => NativeMemberGrant,
+  ): void {
+    const record = this.requireAttachedRuntime(providerId, nativeHandle)
+    const provider = this.providerFor(record)
+    if (provider.bindMemberOperations === undefined) return
+    let binding = record.memberGrants.get(nativeHandle)
+    if (binding?.owner !== owner || binding.grant.signal.aborted) {
+      binding?.controller.abort()
+      const controller = new AbortController()
+      const signal = AbortSignal.any([controller.signal, record.lifecycle.signal, this.lifecycle.signal])
+      const current = (): boolean => this.accepts(record)
+        && record.runtimes.has(nativeHandle)
+        && this.presence.get(stableKey([providerId, nativeHandle]))?.owner === record
+        && record.memberGrants.get(nativeHandle)?.controller === controller
+      binding = { owner, controller, grant: create(signal, current) }
+      record.memberGrants.set(nativeHandle, binding)
+    }
+    try {
+      provider.bindMemberOperations({ nativeHandle, grant: binding.grant })
+    } catch (error: unknown) {
+      binding.controller.abort()
+      void this.quarantine(record, error).catch((failure: unknown) => { this.reportAsyncFailure(failure) })
+    }
+  }
+
+  /**
+   * Cancel grants as soon as their exact Team owner leaves the live registry.
+   * @param owner - disposed Lead object, never a caller-supplied identity string.
+   */
+  revokeMemberOwner(owner: object): void {
+    for (const record of this.records) {
+      for (const [handle, binding] of record.memberGrants) {
+        if (binding.owner !== owner) continue
+        binding.controller.abort()
+        record.memberGrants.delete(handle)
+      }
+    }
   }
 
   /**
@@ -1140,7 +1199,11 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
   async dispose(providerId: string, request: TeammateRuntimeDisposeRequest): Promise<void> {
     const record = this.requireProvider(providerId)
     const provider = this.providerFor(record)
-    if (request.kind === 'runtime') this.requireAttachedRuntime(providerId, request.nativeHandle)
+    if (request.kind === 'runtime') {
+      this.requireAttachedRuntime(providerId, request.nativeHandle)
+      record.memberGrants.get(request.nativeHandle)?.controller.abort()
+      record.memberGrants.delete(request.nativeHandle)
+    }
     else if (!record.evaluations.has(request.evaluationHandle)) {
       throw new TeammateRuntimeError(
         `evaluation handle does not belong to provider "${providerId}"`,
@@ -1180,6 +1243,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       inFlight: new Set(),
       runtimes: new Set(),
       evaluations: new Set(),
+      memberGrants: new Map(),
       availabilityChanged,
       stopPresenceObserver: undefined,
       cleanupTail: Promise.resolve(),
@@ -1457,6 +1521,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
         'TEAM_RUNTIME_UNAVAILABLE',
       ))
     }
+    record.memberGrants.clear()
     const stopPresenceObserver = record.stopPresenceObserver
     if (stopPresenceObserver !== undefined) {
       try {

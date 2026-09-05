@@ -1,0 +1,11 @@
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+    - id: native-query-fixture
+      name: './native-product.ts'

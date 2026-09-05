@@ -87,6 +87,9 @@ export interface TeammateRuntimeRequirements {
   readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
 }
 
+/** Read-only Team operations available through a native member's authorized channel. */
+export type NativeMemberOperationName = 'members.list' | 'tasks.list' | 'tasks.get'
+
 /** Detached provider metadata safe for local catalogs and diagnostics. */
 export interface TeammateRuntimeMetadata {
   readonly id: string
@@ -94,6 +97,8 @@ export interface TeammateRuntimeMetadata {
   readonly contextModes: readonly ('fresh' | 'fork')[]
   readonly profileCapabilities: readonly TeammateProfileCapability[]
   readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
+  /** Team operations implemented by the provider's bounded native tool channel. */
+  readonly memberOperations?: readonly NativeMemberOperationName[]
   /** Sorted provider-native evaluation inventory: at most 256 unique identifiers of at most 128 UTF-8 bytes. */
   readonly evaluationTools?: readonly string[]
 }

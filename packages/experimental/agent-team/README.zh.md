@@ -59,6 +59,8 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
+<a id="teammates"></a>
+
 ### Teammate
 
 请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
@@ -68,6 +70,10 @@ kind: "package-reference"
 宿主也可以通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 注册耐久外部 teammate provider。provider 只公开分离的上下文、Profile 策略与运行能力元数据；凭据、进程对象和原生载荷始终留在 Host。外部启动携带调用方生成的 launch id 与 Team 已预留的 member id。持久 launch id 与 native handle 是非空、最多 200 UTF-8 字节的 opaque 字符串，不施加词法 identifier 语法。provider 必须先持久接受初始工作并返回一个稳定、不透明的 native handle，roster 才能进入 active；若可观察，其稳定 initial turn id 会与 active member 一起保留。同一启动或 mailbox 重试保持相同原生 runtime 与 turn identity；Agent Teams 绝不替换成一次性 subagent。provider 只有同时提供 Hook 强制执行能力，以及使用稳定 Profile 策略 id、相同不可变原生 call id 与 approval id 的 evidence，才能声明精确调用审批。provider 移除后成员变为 inactive；后续 provider generation 会恢复精确 handle，而不是创建替代品。
 
 支持可选目录属主的 provider 适配器使用 `mountTeammateRuntimeProvider()`，让这个 Host-only 包统一拥有共享属主契约、动态服务世代、注册的恰好一次清理以及 provider 析构顺序。
+
+原生 provider 可以通过自己的工具通道提供只读成员和任务查询。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份读取现有 roster 或 task board；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
+
+查询的完整 JSON 请求最多为 4,096 UTF-8 字节，结果最多为 65,536 字节，包含操作与分页元数据。任务列表默认返回 20 条，允许 1 至 100 条；cursor 标识最后返回的任务，该任务不在当前列表时 cursor 失效。过大的结果返回固定错误而不是不完整 JSON；请请求更小的分页。调用方取消会拒绝本次调用。Lead 释放、handle 释放或 provider 退役会撤销 grant。这些 grant 不提供任务写入、消息、等待、任意 RPC 或 DSH Agent 凭据。[原生成员授权参考](../../../docs/subsystems/agent-team.zh.md#native-member-authorization)定义 Host 类型。
 
 精确的 live Lead 可以对一个 active external teammate 调用 `ctx.agentTeams.readTeammateRuntimeEvidence()`。Agent Teams 会提供 roster 所有的 native handle，并且只返回有界的规范 turn、tool、approval、结果、时间戳与 provider 报告的 usage 事实。approval 事实保留稳定 turn、tool、call、approval 与 Profile 策略身份，但不包含拟议参数；只有精确 runtime 报告 `running` 时，非空 pending 集合才会被接受。prompt、reply、tool argument/result、文件、环境值、credential 与原始 provider payload 绝不会跨越服务边界。
 

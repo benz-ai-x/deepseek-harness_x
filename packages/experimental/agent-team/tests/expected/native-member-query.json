@@ -1,0 +1,35 @@
+{
+  "query": {
+    "ok": true,
+    "operation": "tasks.list",
+    "value": {
+      "tasks": [
+        {
+          "id": "task-1",
+          "revision": 1,
+          "subject": "Inspect",
+          "description": "Inspect the shared source.",
+          "status": "pending",
+          "blockedBy": [],
+          "writeScopes": [],
+          "ready": true,
+          "writeScopeWarnings": []
+        }
+      ]
+    }
+  },
+  "forged": {
+    "ok": false,
+    "error": {
+      "code": "TEAM_NATIVE_INVALID_REQUEST",
+      "message": "The Team query arguments are invalid."
+    }
+  },
+  "revoked": {
+    "ok": false,
+    "error": {
+      "code": "TEAM_NATIVE_GRANT_REVOKED",
+      "message": "This Team authorization is no longer active."
+    }
+  }
+}

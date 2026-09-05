@@ -15,6 +15,7 @@ import { teamProjectionDefinition } from './projection.ts'
 import { resolveActiveMember, TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
+import { createNativeMemberGrant } from './native-member-operations.ts'
 import { TeammateRuntimeRegistryHost } from './teammate-runtime.ts'
 import type {
   Config,
@@ -23,6 +24,7 @@ import type {
   SendTeamMessageResult,
   SpawnTeammateResult,
   TeamMemberView,
+  TeamMemberSnapshot,
   TeamTaskId,
   TeamTaskMutationResult,
   TeamTaskView,
@@ -42,6 +44,9 @@ import type {
 
 export type * from './types.ts'
 export type {
+  NativeMemberGrant,
+  NativeMemberOperationResult,
+  TeammateRuntimeMemberOperationsRequest,
   ExternalTeammateRuntimeLaunch,
   SpawnContinuableTeammateRequest,
   SpawnExternalTeammateRequest,
@@ -183,6 +188,7 @@ export class TeamService extends TypertRemoteService {
       this.lifecycle,
       this.teammateRuntimeRegistry,
       this.config.maxMembers,
+      (root, member) => { this.bindNativeMember(root, member) },
     )
     this.mailbox = new TeamMailbox(
       ctx,
@@ -197,6 +203,7 @@ export class TeamService extends TypertRemoteService {
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
     ctx.on('agent/session-start', ({ agent }) => { this.scheduleRecovery(agent) })
+    ctx.on('agent/disposed', ({ agent }) => { this.teammateRuntimeRegistry.revokeMemberOwner(agent) })
     ctx.on('agent/status', ({ agent }) => {
       const membership = this.roster.tryMembership(agent)
       if (membership !== undefined) this.activity.notify(membership.id)
@@ -221,6 +228,23 @@ export class TeamService extends TypertRemoteService {
    */
   membership(agent: Agent): TeamMembership {
     return this.roster.membership(agent)
+  }
+
+  private bindNativeMember(root: Agent, member: TeamMemberSnapshot): void {
+    const nativeHandle = member.externalRuntime?.nativeHandle
+    if (nativeHandle === undefined || member.phase !== 'active') return
+    this.teammateRuntimeRegistry.bindMemberOperations(member.provider, nativeHandle, root, (signal, current) => {
+      const identity = { teamId: TeamId(root.id), memberId: member.id, provider: member.provider, nativeHandle }
+      return createNativeMemberGrant(identity, signal, () => {
+        const membership = this.roster.membership(root)
+        const actual = this.journal.state(root).members.find(candidate => candidate.id === member.id)
+        if (!current() || membership.role !== 'lead' || actual?.phase !== 'active'
+          || actual.provider !== member.provider || actual.externalRuntime?.nativeHandle !== nativeHandle) {
+          throw new TeamError('native member authorization expired', 'TEAM_NATIVE_GRANT_REVOKED')
+        }
+        return { root, id: identity.teamId, role: 'teammate', name: actual.name }
+      }, membership => this.roster.list(membership), this.tasks)
+    })
   }
 
   /**
