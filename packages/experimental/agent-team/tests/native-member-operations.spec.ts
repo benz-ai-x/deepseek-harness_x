@@ -568,6 +568,57 @@ describe('native Team member queries', () => {
       .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_INVALID_REQUEST' } })
   })
 
+  it.each([['ASCII', 'x', 1], ['multibyte', '界', 3]] as const)(
+    'checks the complete %s request at and one byte beyond 4096 UTF-8 bytes',
+    async (_label, character, width) => {
+      const { provider, handle } = await setup()
+      const grant = provider.grants.get(handle)!
+      const signal = new AbortController().signal
+      const request = { operation: 'tasks.get', taskId: '' }
+      const remaining = 4_096 - Buffer.byteLength(JSON.stringify(request), 'utf8')
+      request.taskId = character.repeat(Math.floor(remaining / width)) + 'x'.repeat(remaining % width)
+      expect(Buffer.byteLength(JSON.stringify(request), 'utf8')).toBe(4_096)
+      // At the byte limit, the oversized identifier reaches the separate task-id schema.
+      expect(await grant.execute(request, signal))
+        .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_INVALID_REQUEST' } })
+      request.taskId += 'x'
+      expect(Buffer.byteLength(JSON.stringify(request), 'utf8')).toBe(4_097)
+      expect(await grant.execute(request, signal))
+        .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_REQUEST_LIMIT' } })
+    },
+  )
+
+  it.each([['ASCII', 'x'.repeat(16_300)], ['multibyte', '界'.repeat(5_400)]] as const)(
+    'returns a complete %s task page at 65536 bytes and rejects the next byte',
+    async (_label, description) => {
+      const { ctx, provider, handle, lead } = await setup()
+      const grant = provider.grants.get(handle)!
+      const signal = new AbortController().signal
+      for (let index = 0; index < 3; index += 1) {
+        await ctx.agentTeams.createTask(lead.agent, { subject: `Task ${index}`, description })
+      }
+      const last = await ctx.agentTeams.createTask(lead.agent, { subject: 'Last task', description: 'x' })
+      const expected = { ok: true, operation: 'tasks.list', value: { tasks: ctx.agentTeams.listTasks(lead.agent) } }
+      const padding = 65_536 - Buffer.byteLength(JSON.stringify(expected), 'utf8')
+      const edited = await ctx.agentTeams.updateTask(lead.agent, {
+        taskId: last.id, expectedRevision: last.revision, action: 'edit', description: 'x'.repeat(padding + 1),
+      })
+      expected.value.tasks = ctx.agentTeams.listTasks(lead.agent)
+      expect(Buffer.byteLength(JSON.stringify(expected), 'utf8')).toBe(65_536)
+      const accepted = await grant.execute({ operation: 'tasks.list' }, signal)
+      expect(accepted).toEqual(expected)
+      expect(Buffer.byteLength(JSON.stringify(accepted), 'utf8')).toBe(65_536)
+      await ctx.agentTeams.updateTask(lead.agent, {
+        taskId: last.id, expectedRevision: edited.revision, action: 'edit', description: 'x'.repeat(padding + 2),
+      })
+      expected.value.tasks = ctx.agentTeams.listTasks(lead.agent)
+      expect(Buffer.byteLength(JSON.stringify(expected), 'utf8')).toBe(65_537)
+      expect(await grant.execute({ operation: 'tasks.list' }, signal)).toEqual({ ok: false, error: {
+        code: 'TEAM_NATIVE_RESULT_LIMIT', message: 'The Team query result exceeds 65536 UTF-8 bytes; request a smaller task page.',
+      } })
+    },
+  )
+
   it('revokes old authority before cleanup and regrants only the verified recovered identity', async () => {
     const { ctx, provider, registration, handle, lead } = await setup()
     const old = provider.grants.get(handle)!
