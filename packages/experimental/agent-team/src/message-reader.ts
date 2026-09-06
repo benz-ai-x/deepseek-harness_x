@@ -67,7 +67,10 @@ export class TeamMessageReader {
     private readonly lifecycle: TeamRuntimeLifecycle,
   ) {}
 
-  /** Snapshot every accepted read that has not settled yet. */
+  /**
+   * Snapshot every accepted read that has not settled yet.
+   * @returns detached promises that Team disposal can settle before releasing projections.
+   */
   pendingReads(): readonly Promise<unknown>[] {
     return [...this.inFlight]
   }
