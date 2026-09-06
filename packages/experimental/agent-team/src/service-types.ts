@@ -22,6 +22,8 @@ import type {
   TeamTaskId,
   TeamTaskView,
   NativeMemberMessageResult,
+  NativeMemberTaskResult,
+  TeamWaitResult,
   NativeMemberOperationSource,
   NativeMemberTurnOutcome,
 } from './types.ts'
@@ -34,10 +36,12 @@ export type NativeMemberMailboxRequest =
 /** Bounded query result or durable acceptance from an authorized native Team operation. */
 export type NativeMemberOperationResult =
   | NativeMemberMessageResult
+  | NativeMemberTaskResult
+  | { readonly ok: true; readonly operation: 'wait'; readonly value: TeamWaitResult }
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
-  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string; readonly currentRevision?: number } }
 
 /** Nonserializable authority delivered only to the current native provider. */
 export interface NativeMemberGrant {

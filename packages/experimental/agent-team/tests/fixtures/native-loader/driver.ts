@@ -10,7 +10,7 @@ if (configPath === undefined) throw new Error('native query Loader driver requir
 const ctx = await bootProductionProfile({ binName: 'native-team-query', profile: 'headless', overlayPaths: [configPath] })
 try {
   const lead = await ctx.agents.create({ sessionId: SessionId('native-loader-lead') })
-  await ctx.agentTeams.createTask(lead.agent, { subject: 'Inspect', description: 'Inspect the shared source.' })
+  const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Inspect', description: 'Inspect the shared source.' })
   const spawned = await ctx.agentTeams.spawnTeammate(lead.agent, {
     name: 'reviewer', description: 'Review shared tasks.', context: 'fresh',
     prompt: [{ type: 'text', text: 'Read the shared task board.' }], signal: new AbortController().signal,
@@ -36,6 +36,17 @@ try {
   assert.equal(sent.ok, true)
   assert.deepEqual(await grant.execute(input, signal, source), sent)
   const conflict = await grant.execute({ ...input, text: 'A different request.' }, signal, source)
+  const taskSource = { ...source, callId: TeammateRuntimeToolCallId('native-loader-task') }
+  const claim = { operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' }
+  const claimed = await grant.execute(claim, signal, taskSource)
+  assert.equal(claimed.ok, true)
+  assert.deepEqual(await grant.execute(claim, signal, taskSource), claimed)
+  const waiting = grant.execute({ operation: 'wait', timeoutMs: 10_000 }, signal)
+  await Promise.resolve()
+  const completed = await grant.execute({ ...claim, expectedRevision: 2, action: 'complete' }, signal,
+    { ...source, callId: TeammateRuntimeToolCallId('native-loader-complete') })
+  assert.equal(completed.ok, true)
+  assert.deepEqual(await waiting, { ok: true, operation: 'wait', value: { timedOut: false } })
   const settled = await grant.execute({ operation: 'turns.settle', outcome: 'completed', text: 'The review found no issues.' }, signal, {
     kind: 'settlement', turnId: source.turnId,
   })
@@ -45,8 +56,14 @@ try {
   try {
     const events = await handle.read(0)
     const committed = events.filter(event => event.type === 'team/native-operation/committed')
-    assert.equal(committed.length, 2)
+    assert.equal(committed.length, 4)
     operations = committed.map(({ data }) => {
+      if ('task' in data) {
+        assert.equal(data.task.ownerId, spawned.member.id)
+        assert.equal(data.receipt.result.value.task.id, task.id)
+        assert.equal(data.receipt.result.value.task.revision, data.task.revision)
+        return { version: data.version, operation: data.receipt.result.operation, task: data.receipt.result.value.task }
+      }
       assert.equal(data.message.senderId, spawned.member.id)
       assert.equal(data.message.targetId, lead.agent.id)
       assert.equal(data.receipt.result.value.messageId, data.message.id)

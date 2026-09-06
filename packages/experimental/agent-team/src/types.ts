@@ -91,7 +91,7 @@ export interface TeammateRuntimeRequirements {
 }
 
 /** Team operations available through a native member's authorized channel. */
-export type NativeMemberOperationName = 'members.list' | 'tasks.list' | 'tasks.get' | 'messages.send'
+export type NativeMemberOperationName = 'members.list' | 'tasks.list' | 'tasks.get' | 'messages.send' | 'tasks.update' | 'wait'
 
 /** Detached provider metadata safe for local catalogs and diagnostics. */
 export interface TeammateRuntimeMetadata {
@@ -222,15 +222,40 @@ export type NativeMemberMessageResult =
   }
 
 /** Provider-correlated acceptance retained in the authoritative Team projection. */
-export interface TeamNativeOperationReceipt {
+export interface TeamNativeOperationReceiptBase {
   readonly id: TeamNativeOperationId
   readonly memberId: SessionId
   readonly provider: string
   readonly nativeHandle: TeammateRuntimeHandle
   readonly source: NativeMemberOperationSource
   readonly inputFingerprint: string
+}
+
+/** Original acceptance of a native mailbox operation. */
+export interface TeamNativeMessageReceipt extends TeamNativeOperationReceiptBase {
   readonly result: NativeMemberMessageResult
 }
+
+/** Validated task transition selected by one native member call. */
+export interface NativeMemberTaskRequest extends UpdateTeamTaskRequest {
+  readonly operation: 'tasks.update'
+}
+
+/** Compact original acceptance; full task details remain available through task reads. */
+export interface NativeMemberTaskResult {
+  readonly ok: true
+  readonly operation: 'tasks.update'
+  readonly value: { readonly task: Pick<TeamTaskView, 'id' | 'revision' | 'status' | 'ownerName' | 'ready'> }
+}
+
+/** Task input and result retained together for replay validation. */
+export interface TeamNativeTaskReceipt extends TeamNativeOperationReceiptBase {
+  readonly request: NativeMemberTaskRequest
+  readonly result: NativeMemberTaskResult
+}
+
+/** Native acceptance retained in the authoritative Team projection. */
+export type TeamNativeOperationReceipt = TeamNativeMessageReceipt | TeamNativeTaskReceipt
 
 /** Source retained by the target Session for durable mailbox de-duplication. */
 export interface TeamMessageSource {
@@ -340,13 +365,11 @@ declare module '@deepseek-ai/dsh-session/types' {
     'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }
-    /** One atomic mailbox enqueue and native operation receipt, required for recovery. */
-    'team/native-operation/committed': {
-      version: 3
-      teamId: TeamId
-      receipt: TeamNativeOperationReceipt
-      message: TeamMessageSnapshot
-    }
+    /** Atomic native mutation and original receipt, required for recovery. */
+    'team/native-operation/committed':
+      | { version: 3; teamId: TeamId; receipt: TeamNativeMessageReceipt; message: TeamMessageSnapshot }
+      | { version: 4; kind: 'message'; teamId: TeamId; receipt: TeamNativeMessageReceipt; message: TeamMessageSnapshot }
+      | { version: 4; kind: 'task'; teamId: TeamId; receipt: TeamNativeTaskReceipt; task: TeamTaskSnapshot }
     /** Durable acknowledgement that the target Session recorded the message. */
     'team/message/delivered': {
       version: 2

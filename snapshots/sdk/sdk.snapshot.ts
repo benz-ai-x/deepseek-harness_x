@@ -804,13 +804,21 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         const receipts = notifications.filter(notification => notification.method === 'session.event')
           .map(notification => notification.params.event as JsonObject)
           .filter(event => event.type === 'team/native-operation/committed')
-        expect(receipts).toHaveLength(1)
+        expect(receipts).toHaveLength(2)
         expect(receipts[0]).toMatchObject({ data: {
-          version: 3,
+          version: 4, kind: 'message',
           message: { id: 'snapshot-native-message-1', senderId: 'snapshot-external-member-1',
             content: [{ type: 'text', text: 'The native review is ready.' }] },
           receipt: { source: { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' },
             result: { ok: true, operation: 'messages.send', value: { messageId: 'snapshot-native-message-1', status: 'queued' } } },
+        } })
+        expect(receipts[1]).toMatchObject({ data: {
+          version: 4, kind: 'task',
+          task: { id: 'snapshot-native-task-1', revision: 2, ownerId: 'snapshot-external-member-1' },
+          receipt: { source: { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-task-call' },
+            result: { ok: true, operation: 'tasks.update', value: { task: {
+              id: 'snapshot-native-task-1', revision: 2, status: 'in_progress', ownerName: 'external-worker', ready: false,
+            } } } },
         } })
       }
 

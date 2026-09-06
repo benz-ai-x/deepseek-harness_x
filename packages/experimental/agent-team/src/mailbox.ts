@@ -28,7 +28,7 @@ import type {
   TeamMessageSnapshot,
   NativeMemberMessageResult,
   NativeMemberOperationSource,
-  TeamNativeOperationReceipt,
+  TeamNativeMessageReceipt,
 } from './types.ts'
 
 /** Owns every process-local state transition for the durable Team mailbox. */
@@ -94,7 +94,7 @@ export class TeamMailbox {
       const current = authorize()
       const prior = this.journal.state(current.root).nativeOperations.find(receipt => receipt.id === operationId)
       if (prior !== undefined) {
-        if (prior.inputFingerprint !== inputFingerprint) {
+        if (prior.inputFingerprint !== inputFingerprint || 'request' in prior) {
           throw new TeamError('The native call already accepted different input.', 'TEAM_NATIVE_OPERATION_CONFLICT')
         }
         await this.journal.flush(current.root)
@@ -110,13 +110,13 @@ export class TeamMailbox {
       const result: NativeMemberMessageResult = request.operation === 'messages.send'
         ? { ok: true, operation: request.operation, value: { messageId: message.id, status: 'queued' } }
         : { ok: true, operation: request.operation, value: { messageId: message.id, status: 'queued', outcome: request.outcome } }
-      const receipt: TeamNativeOperationReceipt = {
+      const receipt: TeamNativeMessageReceipt = {
         id: operationId, memberId: identity.memberId, provider: identity.provider,
         nativeHandle: identity.nativeHandle, source: structuredClone(source), inputFingerprint,
         result,
       }
       await this.journal.appendAndFlush(current.root, 'team/native-operation/committed', {
-        version: 3, teamId: identity.teamId, message, receipt,
+        version: 4, kind: 'message', teamId: identity.teamId, message, receipt,
       })
       void this.tryDispatch(current.root, message, this.lifecycle.signal)
       return structuredClone(receipt.result)
@@ -199,7 +199,7 @@ export class TeamMailbox {
     request: SendTeamMessageRequest,
   ): TeamMessageSnapshot {
     const state = this.journal.state(membership.root)
-    const target = resolveActiveMember(membership.root, state, request.target)
+    const target = resolveActiveMember(membership.root.id, state, request.target)
     if (target.id === senderId) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
     const pending = state.messages.filter(candidate =>
       candidate.targetId === target.id && !state.delivered.includes(candidate.id)).length

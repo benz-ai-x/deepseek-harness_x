@@ -3,12 +3,14 @@
 import { Buffer } from 'node:buffer'
 import { z } from 'zod'
 import { TeamTaskId } from './brand.ts'
+import { nativeTaskRequestSchema } from './native-operation.ts'
 import { TeamError } from './error.ts'
 import type { NativeMemberGrant, NativeMemberOperationResult } from './service-types.ts'
 import type { TeamMembership } from './roster.ts'
 import type { TeamTaskBoard } from './task-board.ts'
 import type { NativeMemberOperationSource, TeamMemberView } from './types.ts'
 import type { TeamMailbox } from './mailbox.ts'
+import type { TeamActivity } from './activity.ts'
 
 const taskId = z.string().min(1).max(128)
 const requestSchema = z.discriminatedUnion('operation', [
@@ -19,6 +21,8 @@ const requestSchema = z.discriminatedUnion('operation', [
     cursor: taskId.optional(),
   }).strict(),
   z.object({ operation: z.literal('tasks.get'), taskId }).strict(),
+  nativeTaskRequestSchema,
+  z.object({ operation: z.literal('wait'), timeoutMs: z.number() }).strict(),
   z.object({ operation: z.literal('messages.send'), target: z.string().trim().min(1), text: z.string().min(1) }).strict(),
   z.object({ operation: z.literal('turns.settle'), outcome: z.enum(['completed', 'failed', 'interrupted']),
     text: z.string().min(1) }).strict(),
@@ -38,8 +42,9 @@ function boundedResult(result: NativeMemberOperationResult): NativeMemberOperati
  * @param signal - registration and handle lifetime.
  * @param authorize - rechecks exact registration, durable member and live Lead.
  * @param members - existing roster reader under the granted membership.
- * @param tasks - existing task board readers under the granted membership.
+ * @param tasks - existing task readers and native mutation admission.
  * @param mailbox - authoritative Team mailbox and durable operation receipts.
+ * @param activity - existing Team activity observation without work scheduling.
  * @returns the nonserializable member grant.
  */
 export function createNativeMemberGrant(
@@ -47,8 +52,9 @@ export function createNativeMemberGrant(
   signal: AbortSignal,
   authorize: () => TeamMembership,
   members: (membership: TeamMembership) => TeamMemberView[],
-  tasks: Pick<TeamTaskBoard, 'list' | 'get'>,
+  tasks: Pick<TeamTaskBoard, 'list' | 'get' | 'updateNative'>,
   mailbox: Pick<TeamMailbox, 'sendNative'>,
+  activity: Pick<TeamActivity, 'wait'>,
 ): NativeMemberGrant {
   return Object.freeze({
     identity: Object.freeze({ ...identity }),
@@ -83,13 +89,30 @@ export function createNativeMemberGrant(
         const request = parsed.data
         try {
           switch (request.operation) {
+            case 'wait': {
+              const value = await activity.wait(membership.id, request.timeoutMs, AbortSignal.any([signal, callerSignal]))
+              signal.throwIfAborted()
+              authorize()
+              return { ok: true, operation: 'wait', value }
+            }
+            case 'tasks.update':
             case 'messages.send':
             case 'turns.settle': {
-              if (source?.kind !== (request.operation === 'messages.send' ? 'tool' : 'settlement')) return { ok: false, error: {
+              if (source?.kind !== (request.operation === 'turns.settle' ? 'settlement' : 'tool')) return { ok: false, error: {
                 code: 'TEAM_NATIVE_CORRELATION_REQUIRED', message: 'The native call has no trusted operation identity.',
               } }
-              const result = await mailbox.sendNative(identity, source, request, authorize,
-                AbortSignal.any([signal, callerSignal]))
+              const operationSignal = AbortSignal.any([signal, callerSignal])
+              const result = request.operation === 'tasks.update'
+                ? await tasks.updateNative(identity, source, {
+                  operation: request.operation, taskId: request.taskId, expectedRevision: request.expectedRevision,
+                  action: request.action,
+                  ...request.subject === undefined ? {} : { subject: request.subject },
+                  ...request.description === undefined ? {} : { description: request.description },
+                  ...request.blockedBy === undefined ? {} : { blockedBy: request.blockedBy },
+                  ...request.writeScopes === undefined ? {} : { writeScopes: request.writeScopes },
+                  ...request.owner === undefined ? {} : { owner: request.owner },
+                }, authorize, operationSignal)
+                : await mailbox.sendNative(identity, source, request, authorize, operationSignal)
               if (signal.aborted) return { ok: false, error: {
                 code: 'TEAM_NATIVE_GRANT_REVOKED', message: 'This Team authorization is no longer active.',
               } }
@@ -117,14 +140,18 @@ export function createNativeMemberGrant(
             }
           }
         } catch (error: unknown) {
-          if (request.operation === 'messages.send' || request.operation === 'turns.settle') {
+          if (request.operation === 'wait' || request.operation === 'tasks.update'
+            || request.operation === 'messages.send' || request.operation === 'turns.settle') {
             if (signal.aborted) return { ok: false, error: {
               code: 'TEAM_NATIVE_GRANT_REVOKED', message: 'This Team authorization is no longer active.',
             } }
             if (callerSignal.aborted) return { ok: false, error: {
               code: 'TEAM_NATIVE_CANCELLED', message: 'The Team operation was cancelled before acceptance.',
             } }
-            if (error instanceof TeamError) return { ok: false, error: { code: error.code, message: error.message } }
+            if (error instanceof TeamError) return { ok: false, error: {
+              code: error.code, message: error.message,
+              ...error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision },
+            } }
             return { ok: false, error: {
               code: 'TEAM_NATIVE_OPERATION_FAILED', message: 'The Team operation could not be committed; retry the same call.',
             } }

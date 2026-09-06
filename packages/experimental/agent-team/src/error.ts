@@ -5,9 +5,13 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 
 /** Stable failure raised by the Team domain. */
 export class TeamError extends HarnessError {
-  constructor(message: string, code: string, options?: ErrorOptions) {
+  /** Current task revision returned when an expectedRevision check fails. */
+  readonly currentRevision?: number
+
+  constructor(message: string, code: string, options?: ErrorOptions & { readonly currentRevision?: number }) {
     super(message, code, options)
     this.name = 'TeamError'
+    if (options?.currentRevision !== undefined) this.currentRevision = options.currentRevision
   }
 }
 

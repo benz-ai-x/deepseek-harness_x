@@ -14,7 +14,7 @@ Team 接受消息后，原生工具响应仍可能丢失。没有持久操作身
 
 规范操作摘要选中原回执，规范输入指纹检测输入变化。目标名称沿用 mailbox 的空白规范化。[投影](../../../../packages/experimental/agent-team/src/projection.ts) 先校验持久成员、消息署名、关联种类、操作摘要和输入指纹，再重建 mailbox 与回执。终止结算的目标固定为 Lead，并独立记录 completed、failed 或 interrupted，不与 queued 接受状态混淆。
 
-新事件使用 payload 版本 3，Team checkpoint 使用 stateVersion 4。生成的 Session 事件目录包含该必需事件；显式 payload-2 解码器保留可读历史。Session 格式 0 和 Ultra storage generation 不变。这些选择落实本地维护扩展的格式方案；旧读取器不能忽略该必需事件，也不能复用新 checkpoint。
+事件使用 payload version 4 的显式消息／任务变体，Team checkpoint 使用 stateVersion 5。reader 同时接受 payload-3 消息。生成的 Session 事件目录包含该必需事件；显式 payload-2 解码器保留可读历史。Session 格式 0 和 Ultra storage generation 不变。这些选择落实本地维护扩展的格式方案；旧读取器不能忽略该必需事件，也不能复用新 checkpoint。
 
 当前 grant 在准入时和写队列中再次校验。flush 失败不返回成功，也不开始投递。重试先将原事件落盘，再发布回执并继续投递。持久接受把结算所有权交给 Team；provider 退役仍阻止旧 grant 返回成功响应。经过验证的新 grant 可以重放已接受回执。
 

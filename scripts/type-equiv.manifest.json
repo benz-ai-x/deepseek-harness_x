@@ -2075,6 +2075,31 @@
       "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamNativeOperationReceipt",
       "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamNativeOperationReceiptBase",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamNativeMessageReceipt",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "NativeMemberTaskRequest",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "NativeMemberTaskResult",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamNativeTaskReceipt",
+      "source": "packages/experimental/agent-team/src/types.ts"
     }
   ]
 }

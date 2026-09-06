@@ -71,9 +71,11 @@ kind: "package-reference"
 
 支持可选目录属主的 provider 适配器使用 `mountTeammateRuntimeProvider()`，让这个 Host-only 包统一拥有共享属主契约、动态服务世代、注册的恰好一次清理以及 provider 析构顺序。
 
-原生 provider 可以通过自己的工具通道查询成员和任务，并以成员身份发送消息。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份使用现有 roster、task board 或 mailbox；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
+原生 provider 可以通过自己的工具通道查询成员和任务、变更获授权任务、等待活动，并以成员身份发送消息。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份使用现有 roster、task board 或 mailbox；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
 
-原生操作的完整 JSON 请求最多为 4,096 UTF-8 字节，结果最多为 65,536 字节，包含操作与分页元数据。任务列表默认返回 20 条，允许 1 至 100 条；cursor 标识最后返回的任务，该任务不在当前列表时 cursor 失效。过大的结果返回固定错误而不是不完整 JSON；请请求更小的分页。调用方取消会拒绝本次调用。Lead 释放、handle 释放、原生进程离线或 provider 退役会永久撤销 grant；后续在线状态本身不授予访问权。这些 grant 不提供任务写入、等待、任意 RPC 或 DSH Agent 凭据。[原生成员授权参考](../../../docs/subsystems/agent-team.zh.md#native-member-authorization)定义 Host 类型。
+原生操作的完整 JSON 请求最多为 4,096 UTF-8 字节，结果最多为 65,536 字节，包含操作与分页元数据。任务列表默认返回 20 条，允许 1 至 100 条；cursor 标识最后返回的任务，该任务不在当前列表时 cursor 失效。过大的结果返回固定错误而不是不完整 JSON；请请求更小的分页。调用方取消会拒绝本次调用。Lead 释放、handle 释放、原生进程离线或 provider 退役会永久撤销 grant；后续在线状态本身不授予访问权。这些 grant 不暴露任意 RPC 或 DSH Agent 凭据。[原生成员授权参考](../../../docs/subsystems/agent-team.zh.md#native-member-authorization)定义 Host 类型。
+
+任务写入复用 DSH 成员的所有权、expectedRevision、DAG 和墓碑规则；Lead-only 重新分配仍被拒绝。过期写入报告 currentRevision。变更回执仅包含任务 id、revision、状态、所有者名称和就绪状态；完整详情通过任务读取获得。等待只观察随后十秒至一小时内的 Team 活动，不启动工作。
 
 精确的 live Lead 可以对一个 active external teammate 调用 `ctx.agentTeams.readTeammateRuntimeEvidence()`。Agent Teams 会提供 roster 所有的 native handle，并且只返回有界的规范 turn、tool、approval、结果、时间戳与 provider 报告的 usage 事实。approval 事实保留稳定 turn、tool、call、approval 与 Profile 策略身份，但不包含拟议参数；只有精确 runtime 报告 `running` 时，非空 pending 集合才会被接受。prompt、reply、tool argument/result、文件、环境值、credential 与原始 provider payload 绝不会跨越服务边界。
 
@@ -137,7 +139,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、服务注册、恢复调度 |
 | [`src/roster.ts`](src/roster.ts) | Team 身份、路由对账、provisioning、恢复与 roster 拆除 |
 | [`src/mailbox.ts`](src/mailbox.ts) | 持久队列、目标本地投递、确认与恢复 |
-| [`src/task-board.ts`](src/task-board.ts) | 任务 CAS 命令、DAG 校验与派生视图 |
+| [`src/task-board.ts`](src/task-board.ts) | 任务命令与原生原子回执；共用转换和视图位于 [`task-state.ts`](src/task-state.ts) |
 | [`src/journal.ts`](src/journal.ts) | 串行化的 Lead 日志事务与提交通知 |
 | [`src/projection.ts`](src/projection.ts) | 解码并校验 Team 事件的严格回放投影 |
 | [`src/activity.ts`](src/activity.ts) | 一次性变更等待者与 dispose 释放 |

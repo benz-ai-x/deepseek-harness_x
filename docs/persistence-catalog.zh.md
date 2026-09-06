@@ -783,7 +783,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMemberSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:338`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:363`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -803,7 +803,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageId](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:351`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:374`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -816,25 +816,23 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:342`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:367`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamnative-operationcommitted--log-only"></a>
 
 #### `team/native-operation/committed` — log-only
 
 ```ts persistence-catalog
-/** One atomic mailbox enqueue and native operation receipt, required for recovery. */
-'team/native-operation/committed': {
-  version: 3
-  teamId: TeamId
-  receipt: TeamNativeOperationReceipt
-  message: TeamMessageSnapshot
-}
+/** Atomic native mutation and original receipt, required for recovery. */
+'team/native-operation/committed':
+  | { version: 3; teamId: TeamId; receipt: TeamNativeMessageReceipt; message: TeamMessageSnapshot }
+  | { version: 4; kind: 'message'; teamId: TeamId; receipt: TeamNativeMessageReceipt; message: TeamMessageSnapshot }
+  | { version: 4; kind: 'task'; teamId: TeamId; receipt: TeamNativeTaskReceipt; task: TeamTaskSnapshot }
 ```
 
-类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageSnapshot](subsystems/agent-team.zh.md)
+类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageSnapshot](subsystems/agent-team.zh.md) · [TeamTaskSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:344`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:369`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -847,7 +845,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamTaskSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:340`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:365`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 

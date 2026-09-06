@@ -108,6 +108,180 @@ async function setup(provider = new NativeProduct()) {
 }
 
 describe('native Team member queries', () => {
+  it('lets a native member claim a ready task under its own durable identity', async () => {
+    const { ctx, lead, provider, handle, launched } = await setup()
+    const task = await ctx.agentTeams.createTask(lead.agent, {
+      subject: 'Review the task bridge', description: '\\'.repeat(16_384),
+    })
+    const grant = provider.grants.get(handle)!
+    const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('task-turn'),
+      callId: TeammateRuntimeToolCallId('claim-call') }
+    const result = await grant.execute({ operation: 'tasks.update', taskId: task.id,
+      expectedRevision: task.revision, action: 'claim' }, new AbortController().signal, source)
+    expect(result).toEqual({ ok: true, operation: 'tasks.update', value: {
+      task: { id: task.id, revision: 2, status: 'in_progress', ownerName: 'reviewer', ready: false },
+    } })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id)).toMatchObject({
+      revision: 2, status: 'in_progress', ownerName: 'reviewer',
+    })
+    const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
+    try {
+      const accepted = (await stored.read(0)).filter(event => event.type === 'team/native-operation/committed')
+      expect(accepted).toHaveLength(1)
+      expect(accepted[0]?.data).toMatchObject({ task: { id: task.id, revision: 2, ownerId: launched.member.id },
+        receipt: { memberId: launched.member.id, source, result } })
+    } finally { await stored.close() }
+  })
+
+  it('reports the current revision after a competing DSH claim without accepting a native receipt', async () => {
+    const { ctx, lead, provider, handle } = await setup()
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Race', description: 'One owner.' })
+    await ctx.agentTeams.updateTask(lead.agent, { taskId: task.id, expectedRevision: 1, action: 'claim' })
+    expect(await provider.grants.get(handle)!.execute({ operation: 'tasks.update', taskId: task.id,
+      expectedRevision: 1, action: 'claim' }, new AbortController().signal,
+    { kind: 'tool', turnId: TeammateRuntimeTurnId('race-turn'), callId: TeammateRuntimeToolCallId('race-call') }))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_TASK_STALE_REVISION', currentRevision: 2 } })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id)).toMatchObject({ revision: 2, ownerName: 'lead' })
+    expect(lead.agent.session.ownEvents().filter(event => event.type === 'team/native-operation/committed')).toHaveLength(0)
+  })
+
+  it('waits for later Team activity without starting work or mutating tasks', async () => {
+    class WaitingProduct extends NativeProduct {
+      deliveries = 0
+      override async deliver(request: TeammateRuntimeDeliverRequest) {
+        this.deliveries++
+        return await super.deliver(request)
+      }
+    }
+    const product = new WaitingProduct()
+    const { ctx, lead, provider, handle } = await setup(product)
+    const before = ctx.agentTeams.listTasks(lead.agent)
+    const waiting = provider.grants.get(handle)!.execute({ operation: 'wait', timeoutMs: 10_000 },
+      new AbortController().signal)
+    await Promise.resolve()
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Wake', description: 'Observe new work.' })
+    expect(await waiting).toEqual({ ok: true, operation: 'wait', value: { timedOut: false } })
+    expect(before).toEqual([])
+    expect(ctx.agentTeams.listTasks(lead.agent)).toEqual([task])
+    expect(product.deliveries).toBe(0)
+    expect(lead.agent.session.ownEvents().filter(event => event.type === 'team/native-operation/committed')).toHaveLength(0)
+  })
+
+  it('replays a task call before CAS, rejects changed input and preserves ownership after interruption', async () => {
+    const { ctx, lead, provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Retry', description: 'Accept once.' })
+    const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('retry-turn'),
+      callId: TeammateRuntimeToolCallId('claim-call') }
+    const request = { operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' }
+    const accepted = await grant.execute(request, signal, source)
+    expect(accepted).toMatchObject({ ok: true, value: { task: { revision: 2, ownerName: 'reviewer' } } })
+    expect(await grant.execute({ action: 'claim', expectedRevision: 1, taskId: task.id, operation: 'tasks.update' }, signal, source))
+      .toEqual(accepted)
+    expect(await grant.execute({ ...request, action: 'complete' }, signal, source))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_OPERATION_CONFLICT' } })
+    expect(await grant.execute({ operation: 'turns.settle', outcome: 'interrupted', text: 'Review interrupted.' }, signal,
+      { kind: 'settlement', turnId: source.turnId })).toMatchObject({ ok: true })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id)).toMatchObject({ revision: 2, status: 'in_progress', ownerName: 'reviewer' })
+    expect(await grant.execute({ ...request, expectedRevision: 2, action: 'release' }, signal,
+      { ...source, callId: TeammateRuntimeToolCallId('release-call') }))
+      .toMatchObject({ ok: true, value: { task: { revision: 3, status: 'pending' } } })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id).ownerName).toBeUndefined()
+    expect(await grant.execute(request, signal, source)).toEqual(accepted)
+    expect(ctx.agentTeams.getTask(lead.agent, task.id).revision).toBe(3)
+  })
+
+  it('replays an edit with equivalent normalized text and advisory write scopes', async () => {
+    const { ctx, lead, provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Review', description: 'Inspect source.' })
+    const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('normalized-turn'),
+      callId: TeammateRuntimeToolCallId('normalized-claim') }
+    expect(await grant.execute({ operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' }, signal, source))
+      .toMatchObject({ ok: true })
+    const editSource = { ...source, callId: TeammateRuntimeToolCallId('normalized-edit') }
+    const request = { operation: 'tasks.update', taskId: task.id, expectedRevision: 2, action: 'edit',
+      subject: '  Reviewed  ', description: '  Findings ready.  ', writeScopes: ['./src/', 'src'] }
+    const accepted = await grant.execute(request, signal, editSource)
+    expect(accepted).toMatchObject({ ok: true, value: { task: { revision: 3 } } })
+    expect(await grant.execute({ ...request, subject: 'Reviewed', description: 'Findings ready.', writeScopes: ['src'] },
+      signal, editSource)).toEqual(accepted)
+    expect(ctx.agentTeams.getTask(lead.agent, task.id)).toMatchObject({
+      revision: 3, subject: 'Reviewed', description: 'Findings ready.', writeScopes: ['src'],
+    })
+  })
+
+  it('enforces native ownership, Lead-only reassignment, DAG constraints, completion and tombstones', async () => {
+    const { ctx, lead, provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    let call = 0
+    const update = (taskId: string, expectedRevision: number, action: string, fields = {}) => grant.execute({
+      operation: 'tasks.update', taskId, expectedRevision, action, ...fields,
+    }, new AbortController().signal, { kind: 'tool', turnId: TeammateRuntimeTurnId('dag-turn'),
+      callId: TeammateRuntimeToolCallId(`dag-${++call}`) })
+    const first = await ctx.agentTeams.createTask(lead.agent, { subject: 'First', description: 'Review first.', writeScopes: ['src/'] })
+    const next = await ctx.agentTeams.createTask(lead.agent, { subject: 'Next', description: 'Review next.', blockedBy: [first.id] })
+    expect(await update(first.id, 1, 'edit', { subject: 'Cannot edit an unowned task' }))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_TASK_UNAUTHORIZED' } })
+    expect(await update(first.id, 1, 'reassign', { owner: 'reviewer' }))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_LEAD_REQUIRED' } })
+    expect(await update(next.id, 1, 'claim')).toMatchObject({ ok: false, error: { code: 'TEAM_TASK_BLOCKED' } })
+    expect(await update(first.id, 1, 'claim')).toMatchObject({ ok: true, value: { task: { revision: 2 } } })
+    expect(await update(first.id, 2, 'set_dependencies', { blockedBy: [next.id] }))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_TASK_DEPENDENCY_CYCLE' } })
+    expect(await update(first.id, 2, 'delete')).toMatchObject({ ok: false, error: { code: 'TEAM_TASK_HAS_DEPENDENTS' } })
+    expect(await update(first.id, 2, 'edit', { subject: 'Reviewed first', description: 'Review complete.', writeScopes: ['src/', 'src'] }))
+      .toMatchObject({ ok: true, value: { task: { revision: 3 } } })
+    expect(ctx.agentTeams.getTask(lead.agent, first.id)).toMatchObject({ subject: 'Reviewed first', description: 'Review complete.', writeScopes: ['src'] })
+    expect(await update(first.id, 3, 'complete')).toMatchObject({ ok: true, value: { task: { revision: 4, status: 'completed' } } })
+    expect(ctx.agentTeams.getTask(lead.agent, next.id)).toMatchObject({ revision: 1, status: 'pending', ready: true })
+    expect(await update(next.id, 1, 'claim')).toMatchObject({ ok: true })
+    expect(await update(next.id, 2, 'delete')).toMatchObject({ ok: true, value: { task: { revision: 3, status: 'deleted' } } })
+    expect(await update(next.id, 3, 'claim')).toMatchObject({ ok: false, error: { code: 'TEAM_TASK_DELETED' } })
+    expect(await grant.execute({ operation: 'tasks.get', taskId: next.id }, new AbortController().signal))
+      .toMatchObject({ ok: true, value: { task: { status: 'deleted' } } })
+    expect(ctx.agentTeams.listTasks(lead.agent).map(task => task.id)).toEqual([first.id])
+    expect(await update(first.id, 4, 'reopen')).toMatchObject({ ok: true, value: { task: { revision: 5, status: 'pending' } } })
+  })
+
+  it.each(['caller', 'provider'] as const)('cancels native task writes and waits when their %s retires', async (owner) => {
+    const { ctx, lead, provider, handle, registration } = await setup()
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Cancel', description: 'Keep unowned.' })
+    const controller = new AbortController()
+    const grant = provider.grants.get(handle)!
+    const waiting = grant.execute({ operation: 'wait', timeoutMs: 10_000 }, controller.signal)
+    const changing = grant.execute({ operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' },
+      controller.signal, { kind: 'tool', turnId: TeammateRuntimeTurnId('cancel-turn'), callId: TeammateRuntimeToolCallId('cancel-call') })
+    await Promise.resolve()
+    let retiring: Promise<void> | undefined
+    if (owner === 'caller') controller.abort()
+    else retiring = registration()
+    const code = owner === 'caller' ? 'TEAM_NATIVE_CANCELLED' : 'TEAM_NATIVE_GRANT_REVOKED'
+    expect(await changing).toMatchObject({ ok: false, error: { code } })
+    expect(await waiting).toMatchObject({ ok: false, error: { code } })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id)).toEqual(task)
+    await retiring
+  })
+
+  it('bounds native waits and reports timeout without recording a receipt', async () => {
+    const { lead, provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    for (const timeoutMs of [9_999, 3_600_001, 10_000.5]) {
+      expect(await grant.execute({ operation: 'wait', timeoutMs }, signal))
+        .toMatchObject({ ok: false, error: { code: 'TEAM_INVALID_TIMEOUT' } })
+    }
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const waiting = grant.execute({ operation: 'wait', timeoutMs: 10_000 }, signal)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(await waiting).toEqual({ ok: true, operation: 'wait', value: { timedOut: true } })
+    } finally { vi.useRealTimers() }
+    expect(lead.agent.session.ownEvents().filter(event => event.type === 'team/native-operation/committed')).toHaveLength(0)
+  })
+
   it('requires trusted tool or settlement correlation outside model arguments', async () => {
     const { provider, handle } = await setup()
     const grant = provider.grants.get(handle)!
@@ -116,7 +290,8 @@ describe('native Team member queries', () => {
     const settle = { operation: 'turns.settle', outcome: 'completed', text: 'Review complete.' }
     const tool = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1') }
     const settlement = { kind: 'settlement' as const, turnId: TeammateRuntimeTurnId('turn-1') }
-    for (const [input, source] of [[send, undefined], [send, settlement], [settle, tool]] as const) {
+    const task = { operation: 'tasks.update', taskId: 'task-absent', expectedRevision: 1, action: 'claim' }
+    for (const [input, source] of [[send, undefined], [send, settlement], [settle, tool], [task, undefined], [task, settlement]] as const) {
       expect(await grant.execute(input, signal, source))
         .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_CORRELATION_REQUIRED' } })
     }
@@ -192,15 +367,23 @@ describe('native Team member queries', () => {
     },
   )
 
-  it('recovers the original native receipt after a full Host restart and refuses conflicts and retired grants', async () => {
+  it.each(['message', 'task'] as const)('recovers the original native %s receipt after a full Host restart and refuses conflicts and retired grants', async (kind) => {
     const { ctx, lead, provider, handle, root } = await setup()
     const old = provider.grants.get(handle)!
     const signal = new AbortController().signal
     const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('work-turn-1'),
       callId: TeammateRuntimeToolCallId('send-call-1') }
-    const input = { operation: 'messages.send', target: 'lead', text: 'The review is ready.' }
+    const task = kind === 'task'
+      ? await ctx.agentTeams.createTask(lead.agent, { subject: 'Replay', description: 'Recover once.' }) : undefined
+    const input = task === undefined
+      ? { operation: 'messages.send', target: 'lead', text: 'The review is ready.' }
+      : { operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' }
+    const conflicting = task === undefined ? { ...input, text: 'Different review.' } : { ...input, action: 'complete' }
     const original = await old.execute(input, signal, source)
-    expect(original).toMatchObject({ ok: true, operation: 'messages.send' })
+    expect(original).toMatchObject({ ok: true, operation: input.operation })
+    if (task !== undefined) {
+      await ctx.agentTeams.updateTask(lead.agent, { taskId: task.id, expectedRevision: 2, action: 'complete' })
+    }
     const leadId = lead.agent.id
     await ctx.fiber.dispose()
 
@@ -220,10 +403,15 @@ describe('native Team member queries', () => {
     const current = replacement.grants.get(handle)!
     expect(current.identity).toEqual(old.identity)
     expect(await current.execute(input, signal, source)).toEqual(original)
-    expect(await current.execute({ ...input, text: 'Different review.' }, signal, source))
+    expect(await current.execute(conflicting, signal, source))
       .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_OPERATION_CONFLICT' } })
     expect(await old.execute(input, signal, source))
       .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+    if (task !== undefined) {
+      expect(original).toMatchObject({ value: { task: { revision: 2, status: 'in_progress', ownerName: 'reviewer' } } })
+      expect(restored.agentTeams.getTask(resumed.agent, task.id))
+        .toMatchObject({ revision: 3, status: 'completed', ownerName: 'reviewer' })
+    }
     await restored.sessions.flush(resumed.agent.session)
     const stored = await restored.sessionPersistence.open(leadId, 'read')
     try {
@@ -235,7 +423,7 @@ describe('native Team member queries', () => {
     }
   })
 
-  it('retries a failed real mailbox flush before returning a receipt and delivering to the native peer', async () => {
+  it.each(['message', 'task'] as const)('retries a failed real %s flush before returning its receipt', async (kind) => {
     class ReceivingProduct extends NativeProduct {
       readonly deliveries: TeammateRuntimeDeliverRequest[] = []
       override async deliver(request: TeammateRuntimeDeliverRequest) {
@@ -255,6 +443,7 @@ describe('native Team member queries', () => {
         requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission'], runtimeCapabilities: [] },
       },
     })
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Flush', description: 'Commit once.' })
     await ctx.sessions.flush(lead.agent.session)
     const relative = readdirSync(root, { recursive: true }).find(path =>
       typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.jsonl.zstd'))
@@ -265,7 +454,9 @@ describe('native Team member queries', () => {
     const grant = provider.grants.get(handle)!
     const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('work-turn-1'),
       callId: TeammateRuntimeToolCallId('send-call-1') }
-    const input = { operation: 'messages.send', target: 'peer', text: 'The review is ready.' }
+    const input = kind === 'message'
+      ? { operation: 'messages.send', target: 'peer', text: 'The review is ready.' }
+      : { operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' }
     renameSync(path, backup)
     try {
       mkdirSync(path)
@@ -277,8 +468,10 @@ describe('native Team member queries', () => {
       renameSync(backup, path)
     }
     const accepted = await grant.execute(input, signal, source)
-    expect(accepted).toMatchObject({ ok: true, operation: 'messages.send', value: { status: 'queued' } })
-    await vi.waitFor(() => { expect(native.deliveries).toHaveLength(1) })
+    expect(accepted).toMatchObject({ ok: true, operation: input.operation })
+    await vi.waitFor(() => { expect(native.deliveries).toHaveLength(kind === 'message' ? 1 : 0) })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id).revision).toBe(kind === 'message' ? 1 : 2)
+    expect(await grant.execute(input, signal, source)).toEqual(accepted)
     const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
     try {
       expect((await stored.read(0)).filter(event => event.type === 'team/native-operation/committed'))
@@ -316,7 +509,7 @@ describe('native Team member queries', () => {
       const events = await stored.read(0)
       const committed = events.filter(event => event.type === 'team/native-operation/committed')
       expect(committed).toHaveLength(1)
-      expect(committed[0]?.data).toMatchObject({ version: 3, message: {
+      expect(committed[0]?.data).toMatchObject({ version: 4, kind: 'message', message: {
         senderId: launched.member.id, senderName: 'reviewer', targetId: lead.agent.id,
         content: [{ type: 'text', text: 'The review is ready.' }],
       }, receipt: { result } })

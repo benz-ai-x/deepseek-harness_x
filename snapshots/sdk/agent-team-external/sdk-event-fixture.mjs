@@ -69,7 +69,7 @@ export function apply(ctx) {
       const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }
       const text = 'The native review is ready.'
       exec.agent.session.append('team/native-operation/committed', {
-        version: 3,
+        version: 4, kind: 'message',
         teamId: exec.agent.id,
         message: {
           id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',
@@ -85,6 +85,24 @@ export function apply(ctx) {
             operation: 'messages.send', target: 'lead', text
           })).digest('hex'),
           result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }
+        }
+      })
+      const task = { id: 'snapshot-native-task-1', revision: 1, subject: 'Review', description: 'Review shared tasks.',
+        status: 'pending', blockedBy: [], writeScopes: [] }
+      exec.agent.session.append('team/task', { version: 2, teamId: exec.agent.id, task })
+      const taskSource = { kind: 'tool', turnId: source.turnId, callId: 'snapshot-native-task-call' }
+      exec.agent.session.append('team/native-operation/committed', {
+        version: 4, kind: 'task', teamId: exec.agent.id,
+        task: { ...task, revision: 2, status: 'in_progress', ownerId: 'snapshot-external-member-1' },
+        receipt: {
+          id: createHash('sha256').update(JSON.stringify([exec.agent.id, 'snapshot-external-member-1',
+            'snapshot-native', nativeHandle, taskSource.kind, taskSource.turnId, taskSource.callId])).digest('hex'),
+          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source: taskSource,
+          inputFingerprint: '37f10bbd831910445a3d66a5905feaf37775f74e0497fc8496bf3f0c47778e61',
+          request: { operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' },
+          result: { ok: true, operation: 'tasks.update', value: { task: {
+            id: task.id, revision: 2, status: 'in_progress', ownerName: 'external-worker', ready: false
+          } } }
         }
       })
       return { name: 'external-worker', nativeHandle }

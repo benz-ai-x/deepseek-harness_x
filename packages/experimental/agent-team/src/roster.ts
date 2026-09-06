@@ -136,18 +136,18 @@ export interface TeamMembership {
 
 /**
  * Resolve one active Team member by model-facing name, including the Lead pseudo-row.
- * @param root - exact live Team Lead.
+ * @param rootId - durable Team Lead identity.
  * @param state - current Team state.
  * @param rawName - candidate member name.
  * @returns resolved durable id and normalized name.
  */
 export function resolveActiveMember(
-  root: Agent,
+  rootId: SessionId,
   state: TeamState,
   rawName: string,
 ): { id: SessionId; name: string } {
   const name = rawName.trim()
-  if (name === 'lead') return { id: root.id, name }
+  if (name === 'lead') return { id: rootId, name }
   const member = state.members.find(candidate => candidate.name === name)
   if (member === undefined || member.phase !== 'active') {
     throw new TeamError(`active teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
@@ -321,7 +321,7 @@ export class TeamRoster {
     const membership = this.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can interrupt teammates', 'TEAM_LEAD_REQUIRED')
     const state = this.journal.state(membership.root)
-    const target = resolveActiveMember(membership.root, state, targetName)
+    const target = resolveActiveMember(membership.root.id, state, targetName)
     if (target.id === membership.root.id) throw new TeamError('the Team Lead cannot interrupt itself', 'TEAM_INVALID_TARGET')
     const member = state.members.find(candidate => candidate.id === target.id)
     if (member?.externalRuntime?.nativeHandle !== undefined) {

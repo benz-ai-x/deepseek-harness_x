@@ -246,7 +246,7 @@ export class TeamService extends TypertRemoteService {
           throw new TeamError('native member authorization expired', 'TEAM_NATIVE_GRANT_REVOKED')
         }
         return { root, id: identity.teamId, role: 'teammate', name: actual.name }
-      }, membership => this.roster.list(membership), this.tasks, this.mailbox)
+      }, membership => this.roster.list(membership), this.tasks, this.mailbox, this.activity)
     })
   }
 
@@ -304,7 +304,7 @@ export class TeamService extends TypertRemoteService {
     if (membership.role !== 'lead') {
       throw new TeamError('only the Team Lead can read teammate runtime evidence', 'TEAM_LEAD_REQUIRED')
     }
-    const target = resolveActiveMember(membership.root, this.journal.state(membership.root), targetName)
+    const target = resolveActiveMember(membership.root.id, this.journal.state(membership.root), targetName)
     const member = this.journal.state(membership.root).members.find(candidate => candidate.id === target.id)
     const nativeHandle = member?.externalRuntime?.nativeHandle
     if (member === undefined || nativeHandle === undefined) {

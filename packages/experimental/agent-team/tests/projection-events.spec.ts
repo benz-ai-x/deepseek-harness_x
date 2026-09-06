@@ -19,8 +19,8 @@ const ROOT = SessionId('team-root')
 const TEAM = TeamId(ROOT)
 const CHILD = SessionId('child-a')
 
-function event<T extends SessionEventType>(type: T, data: SessionEventMap[T], seq: SessionSeq): SessionEvent<T> {
-  return { type, data, seq, time: seq } as SessionEvent<T>
+function event<T extends SessionEventType, D extends SessionEventMap[T]>(type: T, data: D, seq: SessionSeq): SessionEvent<T> & { data: D } {
+  return { type, data, seq, time: seq } as SessionEvent<T> & { data: D }
 }
 
 function project(rootId: SessionId, events: readonly SessionEvent[]): TeamProjectionState {
@@ -126,6 +126,8 @@ describe('Agent Teams projection events', () => {
       },
     }, SessionSeq(2))
     expect(projectTeam(ROOT, [...prefix, committed]).nativeOperations).toHaveLength(1)
+    expect(projectTeam(ROOT, [...prefix, { ...committed, data: { ...committed.data, version: 4, kind: 'message' } }])
+      .nativeOperations).toHaveLength(1)
     const changed: unknown = {
       ...committed,
       data: { ...committed.data,
@@ -154,6 +156,67 @@ describe('Agent Teams projection events', () => {
     }
     const events = corruption.startsWith('duplicate-') ? [...prefix, committed] : prefix
     expect(project(ROOT, [...events, changed as SessionEvent]).failure).toContain('native operation')
+  })
+
+  it.each([
+    'operation-id', 'fingerprint', 'member', 'provider', 'handle', 'source-kind', 'input',
+    'task-revision', 'task-owner', 'task-status', 'result-revision', 'result-owner', 'result-ready',
+    'lead-action', 'duplicate',
+  ] as const)('rejects a native task receipt with changed %s before applying its task', (corruption) => {
+    const provisioning = member({ provider: 'native', externalRuntime: externalRuntime() })
+    const prefix = [
+      event('team/member', { version: 2, teamId: TEAM, member: provisioning }, SessionSeq(0)),
+      event('team/member', { version: 2, teamId: TEAM, member: { ...provisioning, phase: 'active',
+        externalRuntime: { ...provisioning.externalRuntime!, nativeHandle: TeammateRuntimeHandle('handle-1') },
+      } }, SessionSeq(1)),
+      event('team/task', { version: 2, teamId: TEAM, task: task() }, SessionSeq(2)),
+    ]
+    const claimed = task({ revision: 2, ownerId: CHILD, status: 'in_progress' })
+    const committed = event('team/native-operation/committed', {
+      version: 4, kind: 'task', teamId: TEAM, task: claimed,
+      receipt: {
+        id: TeamNativeOperationId('2e57e0ef07a7b8566bad1d2bfa654b3b8d3054c6474bf4ac361b32c2ab2c0df5'),
+        memberId: CHILD, provider: 'native', nativeHandle: TeammateRuntimeHandle('handle-1'),
+        source: { kind: 'tool', turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1') },
+        inputFingerprint: '5090d5c28388e647056383198afb55bfb9ac84fe74116b1ae87346ee4bdcaed1',
+        request: { operation: 'tasks.update', taskId: claimed.id, expectedRevision: 1, action: 'claim' },
+        result: { ok: true, operation: 'tasks.update', value: {
+          task: { id: claimed.id, revision: 2, status: 'in_progress', ownerName: 'worker-a', ready: false },
+        } },
+      },
+    }, SessionSeq(3))
+    const valid = projectTeam(ROOT, [...prefix, committed])
+    expect(valid.tasks).toEqual([claimed])
+    expect(teamProjectionDefinition.stateSchema.parse(JSON.parse(JSON.stringify(valid)))).toEqual(valid)
+    const changed: unknown = { ...committed, data: { ...committed.data,
+      task: { ...committed.data.task,
+        ...corruption === 'task-revision' ? { revision: 3 } : {},
+        ...corruption === 'task-owner' ? { ownerId: ROOT } : {},
+        ...corruption === 'task-status' ? { status: 'completed' } : {},
+      },
+      receipt: { ...committed.data.receipt,
+        ...corruption === 'operation-id' ? { id: 'f'.repeat(64) } : {},
+        ...corruption === 'fingerprint' ? { inputFingerprint: 'f'.repeat(64) } : {},
+        ...corruption === 'member' ? { memberId: ROOT } : {},
+        ...corruption === 'provider' ? { provider: 'another' } : {},
+        ...corruption === 'handle' ? { nativeHandle: 'another' } : {},
+        ...corruption === 'source-kind' ? { source: { kind: 'settlement', turnId: 'turn-1' } } : {},
+        ...corruption === 'input' ? { request: { ...committed.data.receipt.request, expectedRevision: 2 } } : {},
+        ...corruption === 'lead-action' ? {
+          request: { ...committed.data.receipt.request, action: 'reassign', owner: 'worker-a' },
+          inputFingerprint: 'db64bdd5a740acec0da724dc59ab87b7b3b24665e6448ac3f2d84448b8a9fe83',
+        } : {},
+        result: { ...committed.data.receipt.result, value: { task: { ...committed.data.receipt.result.value.task,
+          ...corruption === 'result-revision' ? { revision: 3 } : {},
+          ...corruption === 'result-owner' ? { ownerName: 'lead' } : {},
+          ...corruption === 'result-ready' ? { ready: true } : {},
+        } } },
+      },
+    } }
+    const projected = project(ROOT, [...prefix, ...corruption === 'duplicate' ? [committed] : [], changed as SessionEvent])
+    expect(projected.failure).toBeDefined()
+    expect(projected.tasks).toEqual(corruption === 'duplicate' ? [claimed] : [task()])
+    expect(projected.nativeOperations).toHaveLength(corruption === 'duplicate' ? 1 : 0)
   })
 
   it('round-trips bounded opaque external launch and native identities', () => {

@@ -134,35 +134,24 @@ return (ctx) => {
     async execute(_args, exec) {
       if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')
       const nativeHandle = 'snapshot-native-runtime-1'
-      exec.agent.session.append('team/member', {
-        version: 1,
-        teamId: exec.agent.id,
-        member: {
-          id: 'snapshot-external-member-1',
-          name: 'external-worker',
-          description: 'Python SDK external event worker',
-          provider: 'snapshot-native',
-          context: 'fresh',
-          externalRuntime: {
-            kind: 'external-agent',
-            launchRequestId: 'snapshot-native-launch-1',
-            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',
-            requirements: {
-              contextMode: 'fresh',
-              profileCapabilities: ['persona', 'mission'],
-              runtimeCapabilities: []
-            },
-            nativeHandle
-          },
-          phase: 'active'
+      const member = {
+        id: 'snapshot-external-member-1', name: 'external-worker', description: 'Python SDK external event worker',
+        provider: 'snapshot-native', context: 'fresh', phase: 'provisioning',
+        externalRuntime: { kind: 'external-agent', launchRequestId: 'snapshot-native-launch-1',
+          requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',
+          requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission'], runtimeCapabilities: [] }
         }
+      }
+      exec.agent.session.append('team/member', { version: 2, teamId: exec.agent.id, member })
+      exec.agent.session.append('team/member', { version: 2, teamId: exec.agent.id,
+        member: { ...member, phase: 'active', externalRuntime: { ...member.externalRuntime, nativeHandle } }
       })
       if (exec.agent.id !== 'advanced-executable') throw new Error('Team receipt fixture requires its recorded session')
       const messageId = 'snapshot-native-message-1'
       const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }
       const text = 'The native review is ready.'
       exec.agent.session.append('team/native-operation/committed', {
-        version: 3,
+        version: 4, kind: 'message',
         teamId: exec.agent.id,
         message: {
           id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',
@@ -173,6 +162,23 @@ return (ctx) => {
           memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,
           inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',
           result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }
+        }
+      })
+      const task = { id: 'snapshot-native-task-1', revision: 1, subject: 'Review', description: 'Review shared tasks.',
+        status: 'pending', blockedBy: [], writeScopes: [] }
+      exec.agent.session.append('team/task', { version: 2, teamId: exec.agent.id, task })
+      const taskSource = { kind: 'tool', turnId: source.turnId, callId: 'snapshot-native-task-call' }
+      exec.agent.session.append('team/native-operation/committed', {
+        version: 4, kind: 'task', teamId: exec.agent.id,
+        task: { ...task, revision: 2, status: 'in_progress', ownerId: 'snapshot-external-member-1' },
+        receipt: {
+          id: '45b515e2f68355d210f177a0c9fd5b2da8d20d6fcf6b4be0d7f7844a721b64cd',
+          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source: taskSource,
+          inputFingerprint: '37f10bbd831910445a3d66a5905feaf37775f74e0497fc8496bf3f0c47778e61',
+          request: { operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' },
+          result: { ok: true, operation: 'tasks.update', value: { task: {
+            id: task.id, revision: 2, status: 'in_progress', ownerName: 'external-worker', ready: false
+          } } }
         }
       })
       return { name: 'external-worker', nativeHandle }
@@ -1362,14 +1368,26 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
             raise AssertionError("advanced snapshot emitted no tool/code-dispatch event")
 
         receipts = [event for event in result.events if event.get("type") == "team/native-operation/committed"]
-        assert len(receipts) == 1, receipts
+        assert len(receipts) == 2, receipts
         accepted = receipts[0]["data"]
-        assert accepted["version"] == 3
+        assert accepted["version"] == 4
+        assert accepted["kind"] == "message"
         assert accepted["message"]["id"] == "snapshot-native-message-1"
         assert accepted["message"]["senderId"] == "snapshot-external-member-1"
         assert accepted["receipt"]["result"]["value"] == {"messageId": "snapshot-native-message-1", "status": "queued"}
         assert accepted["receipt"]["source"] == {
             "kind": "tool", "turnId": "snapshot-native-turn-1", "callId": "snapshot-native-call-1",
+        }
+
+        task_acceptance = receipts[1]["data"]
+        assert task_acceptance["version"] == 4 and task_acceptance["kind"] == "task"
+        assert task_acceptance["task"]["ownerId"] == "snapshot-external-member-1"
+        assert task_acceptance["task"]["revision"] == 2
+        assert task_acceptance["receipt"]["result"] == {
+            "ok": True, "operation": "tasks.update", "value": {"task": {
+                "id": "snapshot-native-task-1", "revision": 2, "status": "in_progress",
+                "ownerName": "external-worker", "ready": False,
+            }},
         }
 
         logs = read_session_logs(sessions)

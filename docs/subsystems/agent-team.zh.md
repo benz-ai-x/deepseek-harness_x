@@ -103,7 +103,7 @@ provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消�
 
 Team 所有者只在持久成员接受或验证恢复后，向当前 provider 交付 `NativeMemberGrant`。捕获的身份绝不来自模型参数。注册、handle 或精确 Lead 释放、原生进程离线时永久撤销该 grant；评测不会获得生产 grant。[授权决策](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.zh.md)记录理由，[包契约](../../packages/experimental/agent-team/README.zh.md#teammates)定义查询上限和 cursor 语义。
 
-原生消息和终止结果遵循同一[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。一个必需的 payload-3 事件共同记录 mailbox 消息及其 `TeamNativeOperationId` 回执；投影版本 4 重建两者。可信工具调用与终止结算使用不同身份，只有规范输入一致时，重放才返回原 queued 结果。
+原生消息、任务变化和终态结果共享[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。必需的 payload-4 消息／任务事件将变更与其 `TeamNativeOperationId` 回执一起记录；projection version 5 重建两者，并明确保留 payload-3 消息和 payload-2 读取分支。任务回执保留已校验输入和精简的原始接受结果。[原生任务规则](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.zh.md)说明先于 CAS 的重放及只观察变化的等待。
 
 ```ts type-equiv
 /** Trusted provider correlation supplied separately from model tool arguments. */
@@ -134,25 +134,62 @@ type NativeMemberMessageResult =
 
 ```ts type-equiv
 /** Provider-correlated acceptance retained in the authoritative Team projection. */
-interface TeamNativeOperationReceipt {
+interface TeamNativeOperationReceiptBase {
   readonly id: TeamNativeOperationId
   readonly memberId: SessionId
   readonly provider: string
   readonly nativeHandle: TeammateRuntimeHandle
   readonly source: NativeMemberOperationSource
   readonly inputFingerprint: string
+}
+```
+
+```ts type-equiv
+/** Original acceptance of a native mailbox operation. */
+interface TeamNativeMessageReceipt extends TeamNativeOperationReceiptBase {
   readonly result: NativeMemberMessageResult
 }
+```
+
+```ts type-equiv
+/** Validated task transition selected by one native member call. */
+interface NativeMemberTaskRequest extends UpdateTeamTaskRequest {
+  readonly operation: 'tasks.update'
+}
+```
+
+```ts type-equiv
+/** Compact original acceptance; full task details remain available through task reads. */
+interface NativeMemberTaskResult {
+  readonly ok: true
+  readonly operation: 'tasks.update'
+  readonly value: { readonly task: Pick<TeamTaskView, 'id' | 'revision' | 'status' | 'ownerName' | 'ready'> }
+}
+```
+
+```ts type-equiv
+/** Task input and result retained together for replay validation. */
+interface TeamNativeTaskReceipt extends TeamNativeOperationReceiptBase {
+  readonly request: NativeMemberTaskRequest
+  readonly result: NativeMemberTaskResult
+}
+```
+
+```ts type-equiv
+/** Native acceptance retained in the authoritative Team projection. */
+type TeamNativeOperationReceipt = TeamNativeMessageReceipt | TeamNativeTaskReceipt
 ```
 
 ```ts type-equiv
 /** Bounded query result or durable acceptance from an authorized native Team operation. */
 type NativeMemberOperationResult =
   | NativeMemberMessageResult
+  | NativeMemberTaskResult
+  | { readonly ok: true; readonly operation: 'wait'; readonly value: TeamWaitResult }
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
-  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string; readonly currentRevision?: number } }
 ```
 
 ```ts type-equiv

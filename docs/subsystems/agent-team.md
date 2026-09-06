@@ -103,7 +103,7 @@ Provider registration belongs to the calling Fiber. Removal closes admission, ca
 
 The Team owner delivers `NativeMemberGrant` only to the current provider after durable member acceptance or verified resume. Its captured identity never comes from model arguments. Registration, handle, or exact Lead disposal and inactive native presence permanently revoke that grant; evaluations receive no production grant. The [authorization decision](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.md) owns rationale, and the [package contract](../../packages/experimental/agent-team/README.md#teammates) owns query limits and cursor semantics.
 
-Native messages and terminal results share the [atomic receipt decision](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md). One required payload-3 event records the mailbox message and its `TeamNativeOperationId` receipt; projection version 4 reconstructs both. Trusted tool calls and terminal settlement have distinct identities, and a replay returns the original queued result only when its canonical input agrees.
+Native messages, task changes and terminal results share the [atomic receipt decision](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md). One required payload-4 message/task event records the mutation with its `TeamNativeOperationId` receipt; projection version 5 reconstructs both, with explicit payload-3 message and payload-2 readers. Task receipts retain validated input and a compact original acceptance. [Native task rules](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.md) explain replay before CAS and observation-only waits.
 
 ```ts type-equiv
 /** Trusted provider correlation supplied separately from model tool arguments. */
@@ -134,25 +134,62 @@ type NativeMemberMessageResult =
 
 ```ts type-equiv
 /** Provider-correlated acceptance retained in the authoritative Team projection. */
-interface TeamNativeOperationReceipt {
+interface TeamNativeOperationReceiptBase {
   readonly id: TeamNativeOperationId
   readonly memberId: SessionId
   readonly provider: string
   readonly nativeHandle: TeammateRuntimeHandle
   readonly source: NativeMemberOperationSource
   readonly inputFingerprint: string
+}
+```
+
+```ts type-equiv
+/** Original acceptance of a native mailbox operation. */
+interface TeamNativeMessageReceipt extends TeamNativeOperationReceiptBase {
   readonly result: NativeMemberMessageResult
 }
+```
+
+```ts type-equiv
+/** Validated task transition selected by one native member call. */
+interface NativeMemberTaskRequest extends UpdateTeamTaskRequest {
+  readonly operation: 'tasks.update'
+}
+```
+
+```ts type-equiv
+/** Compact original acceptance; full task details remain available through task reads. */
+interface NativeMemberTaskResult {
+  readonly ok: true
+  readonly operation: 'tasks.update'
+  readonly value: { readonly task: Pick<TeamTaskView, 'id' | 'revision' | 'status' | 'ownerName' | 'ready'> }
+}
+```
+
+```ts type-equiv
+/** Task input and result retained together for replay validation. */
+interface TeamNativeTaskReceipt extends TeamNativeOperationReceiptBase {
+  readonly request: NativeMemberTaskRequest
+  readonly result: NativeMemberTaskResult
+}
+```
+
+```ts type-equiv
+/** Native acceptance retained in the authoritative Team projection. */
+type TeamNativeOperationReceipt = TeamNativeMessageReceipt | TeamNativeTaskReceipt
 ```
 
 ```ts type-equiv
 /** Bounded query result or durable acceptance from an authorized native Team operation. */
 type NativeMemberOperationResult =
   | NativeMemberMessageResult
+  | NativeMemberTaskResult
+  | { readonly ok: true; readonly operation: 'wait'; readonly value: TeamWaitResult }
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
-  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string; readonly currentRevision?: number } }
 ```
 
 ```ts type-equiv

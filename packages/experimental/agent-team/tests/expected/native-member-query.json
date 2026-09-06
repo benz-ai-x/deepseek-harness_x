@@ -34,7 +34,7 @@
   },
   "operations": [
     {
-      "version": 3,
+      "version": 4,
       "operation": "messages.send",
       "status": "queued",
       "sender": "reviewer",
@@ -51,7 +51,29 @@
       ]
     },
     {
-      "version": 3,
+      "version": 4,
+      "operation": "tasks.update",
+      "task": {
+        "id": "task-1",
+        "revision": 2,
+        "status": "in_progress",
+        "ready": false,
+        "ownerName": "reviewer"
+      }
+    },
+    {
+      "version": 4,
+      "operation": "tasks.update",
+      "task": {
+        "id": "task-1",
+        "revision": 3,
+        "status": "completed",
+        "ready": false,
+        "ownerName": "reviewer"
+      }
+    },
+    {
+      "version": 4,
       "operation": "turns.settle",
       "status": "queued",
       "sender": "reviewer",
