@@ -17,7 +17,7 @@ export default class NativeProduct extends Service {
     ctx.agentTeams.registerTeammateRuntimeProvider({
       id: 'native-query', displayName: 'Native query fixture', contextModes: ['fresh'],
       profileCapabilities: ['persona', 'mission'], runtimeCapabilities: [],
-      memberOperations: ['members.list', 'tasks.list', 'tasks.get', 'messages.send'],
+      memberOperations: ['members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait'],
       async create() {
         return {
           nativeHandle: TeammateRuntimeHandle('native-loader-handle'), presence: 'idle',

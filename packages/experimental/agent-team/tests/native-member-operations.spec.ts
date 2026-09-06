@@ -43,7 +43,7 @@ class NativeProduct implements TeammateRuntimeProvider {
   readonly contextModes = ['fresh'] as const
   readonly profileCapabilities: readonly TeammateProfileCapability[] = ['persona', 'mission']
   readonly runtimeCapabilities: readonly TeammateRuntimeCapability[] = []
-  readonly memberOperations = ['members.list', 'tasks.list', 'tasks.get'] as const
+  readonly memberOperations = ['members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait'] as const
   readonly grants = new Map<TeammateRuntimeHandle, NativeMemberGrant>()
   constructor(readonly handles = new Map<string, TeammateRuntimeHandle>()) {}
 
