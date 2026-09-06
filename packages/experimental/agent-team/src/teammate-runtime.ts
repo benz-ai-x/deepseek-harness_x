@@ -308,7 +308,7 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
     )
   }
   const memberOperations = provider.memberOperations === undefined ? undefined : uniqueCanonical(
-    providerId, 'member operations', provider.memberOperations, ['members.list', 'tasks.list', 'tasks.get'],
+    providerId, 'member operations', provider.memberOperations, ['members.list', 'tasks.list', 'tasks.get', 'messages.send'],
   )
   return Object.freeze({
     id: providerId,

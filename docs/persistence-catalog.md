@@ -781,7 +781,7 @@ Source: [`packages/subagent/tool-subagent/src/model-selection-state.ts:17`](../p
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMemberSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:303`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:338`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -801,7 +801,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:303`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:309`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:351`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -814,7 +814,25 @@ Source: [`packages/experimental/agent-team/src/types.ts:309`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:307`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:342`](../packages/experimental/agent-team/src/types.ts)
+
+<a id="teamnative-operationcommitted--log-only"></a>
+
+#### `team/native-operation/committed` — log-only
+
+```ts persistence-catalog
+/** One atomic mailbox enqueue and native operation receipt, required for recovery. */
+'team/native-operation/committed': {
+  version: 3
+  teamId: TeamId
+  receipt: TeamNativeOperationReceipt
+  message: TeamMessageSnapshot
+}
+```
+
+Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:344`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -827,7 +845,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:307`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamTaskSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:305`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:340`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 

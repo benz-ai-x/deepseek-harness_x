@@ -6,15 +6,18 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamId,
   TeamMessageId,
+  TeamNativeOperationId,
   TeamTaskId,
   TeammateLaunchRequestId,
   TeammateRuntimeHandle,
   TeammateRuntimeTurnId,
+  TeammateRuntimeToolCallId,
 } from './brand.ts'
 
 export type {
   TeamId,
   TeamMessageId,
+  TeamNativeOperationId,
   TeamTaskId,
   TeammateEvaluationHandle,
   TeammateEvaluationId,
@@ -88,7 +91,7 @@ export interface TeammateRuntimeRequirements {
 }
 
 /** Read-only Team operations available through a native member's authorized channel. */
-export type NativeMemberOperationName = 'members.list' | 'tasks.list' | 'tasks.get'
+export type NativeMemberOperationName = 'members.list' | 'tasks.list' | 'tasks.get' | 'messages.send'
 
 /** Detached provider metadata safe for local catalogs and diagnostics. */
 export interface TeammateRuntimeMetadata {
@@ -195,6 +198,38 @@ export interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+}
+
+/** Trusted provider correlation supplied separately from model tool arguments. */
+export type NativeMemberOperationSource =
+  | { readonly kind: 'tool'; readonly turnId: TeammateRuntimeTurnId; readonly callId: TeammateRuntimeToolCallId }
+  | { readonly kind: 'settlement'; readonly turnId: TeammateRuntimeTurnId }
+
+/** Terminal outcome reported by the provider for one accepted native work turn. */
+export type NativeMemberTurnOutcome = 'completed' | 'failed' | 'interrupted'
+
+/** Replayable durable acceptance; queued does not report delivery or work completion. */
+export type NativeMemberMessageResult =
+  | {
+    readonly ok: true
+    readonly operation: 'messages.send'
+    readonly value: { readonly messageId: TeamMessageId; readonly status: 'queued' }
+  }
+  | {
+    readonly ok: true
+    readonly operation: 'turns.settle'
+    readonly value: { readonly messageId: TeamMessageId; readonly status: 'queued'; readonly outcome: NativeMemberTurnOutcome }
+  }
+
+/** Provider-correlated acceptance retained in the authoritative Team projection. */
+export interface TeamNativeOperationReceipt {
+  readonly id: TeamNativeOperationId
+  readonly memberId: SessionId
+  readonly provider: string
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly source: NativeMemberOperationSource
+  readonly inputFingerprint: string
+  readonly result: NativeMemberMessageResult
 }
 
 /** Source retained by the target Session for durable mailbox de-duplication. */
@@ -305,6 +340,13 @@ declare module '@deepseek-ai/dsh-session/types' {
     'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }
+    /** One atomic mailbox enqueue and native operation receipt, required for recovery. */
+    'team/native-operation/committed': {
+      version: 3
+      teamId: TeamId
+      receipt: TeamNativeOperationReceipt
+      message: TeamMessageSnapshot
+    }
     /** Durable acknowledgement that the target Session recorded the message. */
     'team/message/delivered': {
       version: 2

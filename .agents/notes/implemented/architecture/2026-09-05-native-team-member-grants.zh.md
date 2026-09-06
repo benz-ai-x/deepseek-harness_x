@@ -14,7 +14,7 @@ Team 所有者在 roster 接受 native handle 后签发不可序列化的 [Nativ
 
 provider 通过 `bindMemberOperations` 接收 grant。注册表只允许挂载已接受 handle 的代际获得权限。注册退役、handle 释放、原生进程离线以及 Lead 的 `agent/disposed` 事件会中止其 signal，阻止后续查询返回数据。后续在线状态不能复活旧 grant；必须在验证恢复后重新绑定授权。provider binder 抛错时，注册表撤销 grant 并隔离该代际，同时保留已经接受的 Team 事实。
 
-首批操作通过现有 roster 和 task board 读取成员与共享任务。严格 JSON schema 拒绝身份字段与其他操作；完整请求与结果有字节上限，任务列表有分页条数上限。[包契约](../../../../packages/experimental/agent-team/README.zh.md#teammates)定义上限和 cursor 语义。grant、调用对象及查询结果不增加持久 Team 字段或另一份业务状态。
+读取操作使用现有 roster 和 task board。严格 JSON schema 拒绝身份字段与不支持的操作；完整请求与结果有字节上限，任务列表有分页条数上限。[包契约](../../../../packages/experimental/agent-team/README.zh.md#teammates)定义上限和 cursor 语义。查询不追加持久 Team 事实；[原生写操作](2026-09-06-durable-native-team-operations.zh.md)使用权威 mailbox 与持久操作回执。
 
 ## 考虑过的替代方案
 

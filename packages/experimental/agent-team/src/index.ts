@@ -76,6 +76,7 @@ export type { TeamMembership } from './roster.ts'
 export {
   TeamId,
   TeamMessageId,
+  TeamNativeOperationId,
   TeamTaskId,
   TeammateEvaluationId,
   TeammateEvaluationHandle,
@@ -245,7 +246,7 @@ export class TeamService extends TypertRemoteService {
           throw new TeamError('native member authorization expired', 'TEAM_NATIVE_GRANT_REVOKED')
         }
         return { root, id: identity.teamId, role: 'teammate', name: actual.name }
-      }, membership => this.roster.list(membership), this.tasks)
+      }, membership => this.roster.list(membership), this.tasks, this.mailbox)
     })
   }
 

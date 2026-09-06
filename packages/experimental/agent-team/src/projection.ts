@@ -9,10 +9,12 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import {
   TeamId as toTeamId,
   TeamMessageId as toTeamMessageId,
+  TeamNativeOperationId,
   TeamTaskId as toTeamTaskId,
   TeammateLaunchRequestId,
   TeammateRuntimeHandle,
   TeammateRuntimeTurnId,
+  TeammateRuntimeToolCallId,
 } from './brand.ts'
 import type {
   TeamId,
@@ -20,9 +22,11 @@ import type {
   TeamMemberRouteSnapshot,
   TeamMessageId,
   TeamMessageSnapshot,
+  TeamNativeOperationReceipt,
   TeamTaskSnapshot,
 } from './types.ts'
 import { assertTaskGraphCandidate } from './task-graph.ts'
+import { nativeOperationFingerprint, nativeOperationId } from './native-operation.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const positiveSafeInteger = nonNegativeSafeInteger.min(1)
@@ -210,6 +214,39 @@ const teamMessageDeliveredEventSchema = z.object({
   nativeTurnId: teammateRuntimeTurnIdSchema.optional(),
 }).strict() as z.ZodType<SessionEventMap['team/message/delivered']>
 
+const nativeOperationReceiptSchema = z.object({
+  id: z.string().regex(/^[0-9a-f]{64}$/u).transform(value => TeamNativeOperationId(value)),
+  memberId: sessionIdSchema,
+  provider: z.string().min(1),
+  nativeHandle: durableOpaqueIdSchema.transform(value => TeammateRuntimeHandle(value)),
+  source: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('tool'), turnId: teammateRuntimeTurnIdSchema,
+      callId: durableOpaqueIdSchema.transform(value => TeammateRuntimeToolCallId(value)),
+    }).strict(),
+    z.object({ kind: z.literal('settlement'), turnId: teammateRuntimeTurnIdSchema }).strict(),
+  ]),
+  inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/u),
+  result: z.discriminatedUnion('operation', [
+    z.object({
+      ok: z.literal(true), operation: z.literal('messages.send'),
+      value: z.object({ messageId: teamMessageIdSchema, status: z.literal('queued') }).strict(),
+    }).strict(),
+    z.object({
+      ok: z.literal(true), operation: z.literal('turns.settle'),
+      value: z.object({ messageId: teamMessageIdSchema, status: z.literal('queued'),
+        outcome: z.enum(['completed', 'failed', 'interrupted']) }).strict(),
+    }).strict(),
+  ]),
+}).strict() as z.ZodType<TeamNativeOperationReceipt>
+
+const nativeOperationEventSchema = z.object({
+  version: z.literal(3),
+  teamId: teamIdSchema,
+  receipt: nativeOperationReceiptSchema,
+  message: teamMessageSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['team/native-operation/committed']>
+
 /** Current Team state selected by durable Team identity. */
 export interface TeamState {
   readonly id: TeamId
@@ -217,6 +254,7 @@ export interface TeamState {
   readonly tasks: TeamTaskSnapshot[]
   readonly messages: TeamMessageSnapshot[]
   readonly delivered: TeamMessageId[]
+  readonly nativeOperations: TeamNativeOperationReceipt[]
   nextTaskNumber: number
 }
 
@@ -232,6 +270,7 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     tasks: [],
     messages: [],
     delivered: [],
+    nativeOperations: [],
     nextTaskNumber: 1,
   }
 }
@@ -253,6 +292,7 @@ const teamProjectionEntrySchema = z.object({
   tasks: z.array(teamTaskSnapshotSchema),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
+  nativeOperations: z.array(nativeOperationReceiptSchema),
   nextTaskNumber: positiveSafeInteger,
   failure: z.string().optional(),
 }).strict() as z.ZodType<TeamProjectionState>
@@ -263,6 +303,7 @@ export type TeamEventType =
   | 'team/task'
   | 'team/message/queued'
   | 'team/message/delivered'
+  | 'team/native-operation/committed'
 
 /** One event owned by the Team domain. */
 type TeamSessionEvent = SessionEvent<TeamEventType>
@@ -277,6 +318,7 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'team/task'
     || event.type === 'team/message/queued'
     || event.type === 'team/message/delivered'
+    || event.type === 'team/native-operation/committed'
 }
 
 /** Decode one persisted Team value and retain the schema failure as its cause. */
@@ -299,6 +341,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
     case 'team/message/delivered':
       return { ...event, data: parsePersisted(event.type, teamMessageDeliveredEventSchema, event.data) }
+    case 'team/native-operation/committed':
+      return { ...event, data: parsePersisted(event.type, nativeOperationEventSchema, event.data) }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
       return event
@@ -311,7 +355,7 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return
-    if (selector.version !== 2) {
+    if (selector.version !== (event.type === 'team/native-operation/committed' ? 3 : 2)) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
     }
     applyCurrentTeamEvent(state, parseCurrentTeamEvent(event))
@@ -405,6 +449,37 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       state.messages.push(message)
       break
     }
+    case 'team/native-operation/committed': {
+      const { receipt, message } = event.data
+      const member = state.members.find(candidate => candidate.id === receipt.memberId)
+      const target = toTeamId(message.targetId) === state.id
+        ? 'lead' : state.members.find(candidate => candidate.id === message.targetId && candidate.phase === 'active')?.name
+      const text = message.content[0]
+      if (member?.phase !== 'active' || member.provider !== receipt.provider
+        || member.externalRuntime?.nativeHandle !== receipt.nativeHandle
+        || message.senderId !== member.id || message.senderName !== member.name
+        || receipt.result.value.messageId !== message.id
+        || receipt.source.kind !== (receipt.result.operation === 'messages.send' ? 'tool' : 'settlement')
+        || (receipt.result.operation === 'turns.settle' && toTeamId(message.targetId) !== state.id)
+        || target === undefined || message.targetId === message.senderId
+        || message.content.length !== 1 || text?.type !== 'text') {
+        throw new Error('native operation does not match its accepted Team member and message')
+      }
+      const fingerprint = nativeOperationFingerprint(receipt.result.operation === 'messages.send'
+        ? { operation: receipt.result.operation, target, text: text.text }
+        : { operation: receipt.result.operation, outcome: receipt.result.value.outcome, text: text.text })
+      if (receipt.id !== nativeOperationId({ teamId: state.id, ...receipt }, receipt.source)
+        || receipt.inputFingerprint !== fingerprint) {
+        throw new Error('native operation identity or input fingerprint is not canonical')
+      }
+      if (state.nativeOperations.some(candidate => candidate.id === receipt.id)
+        || state.messages.some(candidate => candidate.id === message.id)) {
+        throw new Error('native operation or its message was committed twice')
+      }
+      state.messages.push(message)
+      state.nativeOperations.push(receipt)
+      break
+    }
     case 'team/message/delivered': {
       const queued = state.messages.find(message => message.id === event.data.messageId)
       if (queued === undefined) throw new Error(`team message "${event.data.messageId}" was delivered before queueing`)
@@ -422,7 +497,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
 /** Host-only Team projection selected by the projected Session identity. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 3,
+  stateVersion: 4,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: (state, event) => {

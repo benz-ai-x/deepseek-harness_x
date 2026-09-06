@@ -84,6 +84,9 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
     const identifiedMessage = messageId(value)
     if (identifiedMessage !== undefined) claim(identifiedMessage, 'message')
     for (const [childKey, item] of Object.entries(value)) {
+      if (recordType === 'team/native-operation/committed' && childKey === 'receipt' && isRecord(item)) {
+        claim(item.id, 'id', true)
+      }
       if (recordType === 'approval/asked' || recordType === 'approval/decided') {
         if (childKey === 'id') claim(item, 'approval')
       } else if (childKey === 'commandId') {

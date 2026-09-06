@@ -1,4 +1,4 @@
-/** Native member queries consume the Team owner's current authorization and roster. */
+/** Native member operations use the Team owner's current authority, readers, and durable mailbox. */
 
 import { Buffer } from 'node:buffer'
 import { z } from 'zod'
@@ -7,7 +7,8 @@ import { TeamError } from './error.ts'
 import type { NativeMemberGrant, NativeMemberOperationResult } from './service-types.ts'
 import type { TeamMembership } from './roster.ts'
 import type { TeamTaskBoard } from './task-board.ts'
-import type { TeamMemberView } from './types.ts'
+import type { NativeMemberOperationSource, TeamMemberView } from './types.ts'
+import type { TeamMailbox } from './mailbox.ts'
 
 const taskId = z.string().min(1).max(128)
 const requestSchema = z.discriminatedUnion('operation', [
@@ -18,6 +19,9 @@ const requestSchema = z.discriminatedUnion('operation', [
     cursor: taskId.optional(),
   }).strict(),
   z.object({ operation: z.literal('tasks.get'), taskId }).strict(),
+  z.object({ operation: z.literal('messages.send'), target: z.string().trim().min(1), text: z.string().min(1) }).strict(),
+  z.object({ operation: z.literal('turns.settle'), outcome: z.enum(['completed', 'failed', 'interrupted']),
+    text: z.string().min(1) }).strict(),
 ])
 
 /** Bound the complete JSON value, including the operation and page metadata. */
@@ -35,6 +39,7 @@ function boundedResult(result: NativeMemberOperationResult): NativeMemberOperati
  * @param authorize - rechecks exact registration, durable member and live Lead.
  * @param members - existing roster reader under the granted membership.
  * @param tasks - existing task board readers under the granted membership.
+ * @param mailbox - authoritative Team mailbox and durable operation receipts.
  * @returns the nonserializable member grant.
  */
 export function createNativeMemberGrant(
@@ -43,21 +48,26 @@ export function createNativeMemberGrant(
   authorize: () => TeamMembership,
   members: (membership: TeamMembership) => TeamMemberView[],
   tasks: Pick<TeamTaskBoard, 'list' | 'get'>,
+  mailbox: Pick<TeamMailbox, 'sendNative'>,
 ): NativeMemberGrant {
   return Object.freeze({
     identity: Object.freeze({ ...identity }),
     signal,
-    execute(input: unknown, callerSignal: AbortSignal): Promise<NativeMemberOperationResult> {
-      return Promise.resolve().then((): NativeMemberOperationResult => {
+    execute(input: unknown, callerSignal: AbortSignal, source?: NativeMemberOperationSource): Promise<NativeMemberOperationResult> {
+      return Promise.resolve().then(async (): Promise<NativeMemberOperationResult> => {
         let membership: TeamMembership
         try {
-          if (signal.aborted) throw new Error('revoked')
+          signal.throwIfAborted()
           membership = authorize()
         } catch {
           // Authorization failures expose neither stale objects nor provider diagnostics.
           return { ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED', message: 'This Team authorization is no longer active.' } }
         }
-        if (callerSignal.aborted) return { ok: false, error: { code: 'TEAM_NATIVE_CANCELLED', message: 'The Team query was cancelled.' } }
+        try {
+          callerSignal.throwIfAborted()
+        } catch {
+          return { ok: false, error: { code: 'TEAM_NATIVE_CANCELLED', message: 'The Team query was cancelled.' } }
+        }
         try {
           const encoded = JSON.stringify(input)
           if (Buffer.byteLength(encoded, 'utf8') > 4_096) {
@@ -73,6 +83,19 @@ export function createNativeMemberGrant(
         const request = parsed.data
         try {
           switch (request.operation) {
+            case 'messages.send':
+            case 'turns.settle': {
+              if (source?.kind !== (request.operation === 'messages.send' ? 'tool' : 'settlement')) return { ok: false, error: {
+                code: 'TEAM_NATIVE_CORRELATION_REQUIRED', message: 'The native call has no trusted operation identity.',
+              } }
+              const result = await mailbox.sendNative(identity, source, request, authorize,
+                AbortSignal.any([signal, callerSignal]))
+              if (signal.aborted) return { ok: false, error: {
+                code: 'TEAM_NATIVE_GRANT_REVOKED', message: 'This Team authorization is no longer active.',
+              } }
+              authorize()
+              return result
+            }
             case 'members.list':
               return boundedResult({ ok: true, operation: request.operation, value: { members: members(membership) } })
             case 'tasks.get':
@@ -94,6 +117,18 @@ export function createNativeMemberGrant(
             }
           }
         } catch (error: unknown) {
+          if (request.operation === 'messages.send' || request.operation === 'turns.settle') {
+            if (signal.aborted) return { ok: false, error: {
+              code: 'TEAM_NATIVE_GRANT_REVOKED', message: 'This Team authorization is no longer active.',
+            } }
+            if (callerSignal.aborted) return { ok: false, error: {
+              code: 'TEAM_NATIVE_CANCELLED', message: 'The Team operation was cancelled before acceptance.',
+            } }
+            if (error instanceof TeamError) return { ok: false, error: { code: error.code, message: error.message } }
+            return { ok: false, error: {
+              code: 'TEAM_NATIVE_OPERATION_FAILED', message: 'The Team operation could not be committed; retry the same call.',
+            } }
+          }
           /* v8 ignore else -- validated in-memory roster/task readers only throw task-not-found; contain invariant faults. */
           if (error instanceof TeamError && error.code === 'TEAM_TASK_NOT_FOUND') {
             return { ok: false, error: { code: error.code, message: 'The task does not exist in this Team.' } }

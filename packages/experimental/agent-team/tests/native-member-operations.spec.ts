@@ -25,6 +25,8 @@ import TeamService, {
   type TeammateRuntimeCapability,
   type TeammateRuntimeCreateRequest,
   type TeammateRuntimeCreateResult,
+  type TeammateRuntimeDeliverRequest,
+  type TeammateRuntimeDeliverResult,
   type TeammateRuntimeEvidenceItem,
   type TeammateRuntimeEvidenceRequest,
   type TeammateRuntimeProvider,
@@ -60,7 +62,9 @@ class NativeProduct implements TeammateRuntimeProvider {
     this.grants.set(request.nativeHandle, request.grant)
   }
 
-  async deliver(): Promise<never> { throw new Error('the query fixture does not deliver messages') }
+  async deliver(_request: TeammateRuntimeDeliverRequest): Promise<TeammateRuntimeDeliverResult> {
+    throw new Error('the query fixture does not deliver messages')
+  }
   interrupt() { return { previousStatus: 'idle' as const } }
   async dispose() { /* Native identities remain available for a later qualified resume. */ }
 }
@@ -104,6 +108,223 @@ async function setup(provider = new NativeProduct()) {
 }
 
 describe('native Team member queries', () => {
+  it('requires trusted tool or settlement correlation outside model arguments', async () => {
+    const { provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    const send = { operation: 'messages.send', target: 'lead', text: 'A review update.' }
+    const settle = { operation: 'turns.settle', outcome: 'completed', text: 'Review complete.' }
+    const tool = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1') }
+    const settlement = { kind: 'settlement' as const, turnId: TeammateRuntimeTurnId('turn-1') }
+    for (const [input, source] of [[send, undefined], [send, settlement], [settle, tool]] as const) {
+      expect(await grant.execute(input, signal, source))
+        .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_CORRELATION_REQUIRED' } })
+    }
+    expect(await grant.execute({ ...send, source: tool }, signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_INVALID_REQUEST' } })
+  })
+
+  it.each(['caller', 'provider'] as const)('refuses a native message when its %s cancels at the write queue', async (owner) => {
+    const { provider, handle, registration, lead } = await setup()
+    const grant = provider.grants.get(handle)!
+    const cancellation = new AbortController()
+    const operation = grant.execute({ operation: 'messages.send', target: 'lead', text: 'Do not queue this.' },
+      cancellation.signal, { kind: 'tool', turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1') })
+    await Promise.resolve()
+    let retiring: Promise<void> | undefined
+    if (owner === 'caller') cancellation.abort()
+    else retiring = registration()
+    expect(await operation).toMatchObject({ ok: false, error: {
+      code: owner === 'caller' ? 'TEAM_NATIVE_CANCELLED' : 'TEAM_NATIVE_GRANT_REVOKED',
+    } })
+    expect(lead.agent.session.ownEvents().filter(event => event.type === 'team/native-operation/committed')).toHaveLength(0)
+    await retiring
+  })
+
+  it('keeps a committed message when provider retirement wins before its native response', async () => {
+    const { ctx, provider, handle, registration, lead } = await setup()
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    let retiring: Promise<void> | undefined
+    const unobserve = ctx.on('session/event', (session, event) => {
+      if (session.id !== lead.agent.id || event.type !== 'team/native-operation/committed') return
+      retiring = ctx.agentTeams.waitForChange(lead.agent, 10_000, signal).then(async () => { await registration() })
+    })
+    try {
+      expect(await grant.execute({ operation: 'messages.send', target: 'lead', text: 'Keep the committed review.' }, signal,
+        { kind: 'tool', turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1') }))
+        .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+      await retiring
+      const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
+      try {
+        expect((await stored.read(0)).filter(event => event.type === 'team/native-operation/committed')).toHaveLength(1)
+      } finally {
+        await stored.close()
+      }
+    } finally {
+      unobserve()
+    }
+  })
+
+  it.each(['completed', 'failed', 'interrupted'] as const)(
+    'commits one %s work notification to the Lead as the native member',
+    async (outcome) => {
+      const { ctx, lead, provider, handle, launched } = await setup()
+      const grant = provider.grants.get(handle)!
+      const signal = new AbortController().signal
+      const source = { kind: 'settlement' as const, turnId: TeammateRuntimeTurnId('work-turn-1') }
+      const input = { operation: 'turns.settle', outcome, text: 'The review found two missing assertions.' }
+      const accepted = await grant.execute(input, signal, source)
+      expect(accepted).toMatchObject({ ok: true, operation: 'turns.settle', value: { status: 'queued', outcome } })
+      expect(await grant.execute(input, signal, source)).toEqual(accepted)
+      await ctx.sessions.flush(lead.agent.session)
+      const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
+      try {
+        const committed = (await stored.read(0)).filter(event => event.type === 'team/native-operation/committed')
+        expect(committed).toHaveLength(1)
+        expect(committed[0]?.data).toMatchObject({ message: {
+          senderId: launched.member.id, senderName: 'reviewer', targetId: lead.agent.id,
+          content: [{ type: 'text', text: 'The review found two missing assertions.' }],
+        }, receipt: { source, result: accepted } })
+      } finally {
+        await stored.close()
+      }
+    },
+  )
+
+  it('recovers the original native receipt after a full Host restart and refuses conflicts and retired grants', async () => {
+    const { ctx, lead, provider, handle, root } = await setup()
+    const old = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('work-turn-1'),
+      callId: TeammateRuntimeToolCallId('send-call-1') }
+    const input = { operation: 'messages.send', target: 'lead', text: 'The review is ready.' }
+    const original = await old.execute(input, signal, source)
+    expect(original).toMatchObject({ ok: true, operation: 'messages.send' })
+    const leadId = lead.agent.id
+    await ctx.fiber.dispose()
+
+    const restored = new Context()
+    cleanups.push(async () => { await restored.fiber.dispose() })
+    await mountAgentLoopTestDependencies(restored)
+    await restored.plugin(SessionProjectionRegistry)
+    await restored.plugin(JsonlSessionPersistence, { root })
+    await restored.plugin(TestSessionQuery)
+    await restored.plugin(AgentLoop, { agents: [] })
+    await restored.plugin(Subagents)
+    await restored.plugin(TeamService)
+    const replacement = new NativeProduct(provider.handles)
+    restored.agentTeams.registerTeammateRuntimeProvider(replacement)
+    const resumed = await restored.agents.resume({ resumeSessionId: leadId, agentOptions: {} })
+    await vi.waitFor(() => { expect(replacement.grants.has(handle)).toBe(true) })
+    const current = replacement.grants.get(handle)!
+    expect(current.identity).toEqual(old.identity)
+    expect(await current.execute(input, signal, source)).toEqual(original)
+    expect(await current.execute({ ...input, text: 'Different review.' }, signal, source))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_OPERATION_CONFLICT' } })
+    expect(await old.execute(input, signal, source))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+    await restored.sessions.flush(resumed.agent.session)
+    const stored = await restored.sessionPersistence.open(leadId, 'read')
+    try {
+      const committed = (await stored.read(0)).filter(event => event.type === 'team/native-operation/committed')
+      expect(committed).toHaveLength(1)
+      expect(committed[0]?.data).toMatchObject({ receipt: { result: original } })
+    } finally {
+      await stored.close()
+    }
+  })
+
+  it('retries a failed real mailbox flush before returning a receipt and delivering to the native peer', async () => {
+    class ReceivingProduct extends NativeProduct {
+      readonly deliveries: TeammateRuntimeDeliverRequest[] = []
+      override async deliver(request: TeammateRuntimeDeliverRequest) {
+        this.deliveries.push(request)
+        return { turnId: TeammateRuntimeTurnId(`delivery-${request.deliveryId}`), presence: 'idle' as const }
+      }
+    }
+    const native = new ReceivingProduct()
+    const { ctx, lead, provider, handle, root } = await setup(native)
+    await ctx.agentTeams.spawnTeammate(lead.agent, {
+      name: 'peer', description: 'Receive the review.', context: 'fresh',
+      prompt: [{ type: 'text', text: 'Wait for the review.' }], signal: new AbortController().signal,
+      runtime: {
+        kind: 'external-agent', provider: provider.id, launchRequestId: TeammateLaunchRequestId('peer-launch'),
+        profile: { persona: 'Read carefully.', mission: 'Verify the review.', context: [], memory: [],
+          toolPolicy: { mode: 'inherit', names: [] }, hooks: [] },
+        requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission'], runtimeCapabilities: [] },
+      },
+    })
+    await ctx.sessions.flush(lead.agent.session)
+    const relative = readdirSync(root, { recursive: true }).find(path =>
+      typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.jsonl.zstd'))
+    if (typeof relative !== 'string') throw new Error('Lead has no durable Session log')
+    const path = join(root, relative)
+    const backup = `${path}.before-flush-failure`
+    const signal = new AbortController().signal
+    const grant = provider.grants.get(handle)!
+    const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('work-turn-1'),
+      callId: TeammateRuntimeToolCallId('send-call-1') }
+    const input = { operation: 'messages.send', target: 'peer', text: 'The review is ready.' }
+    renameSync(path, backup)
+    try {
+      mkdirSync(path)
+      expect(await grant.execute(input, signal, source))
+        .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_OPERATION_FAILED' } })
+      expect(native.deliveries).toHaveLength(0)
+    } finally {
+      rmSync(path, { recursive: true, force: true })
+      renameSync(backup, path)
+    }
+    const accepted = await grant.execute(input, signal, source)
+    expect(accepted).toMatchObject({ ok: true, operation: 'messages.send', value: { status: 'queued' } })
+    await vi.waitFor(() => { expect(native.deliveries).toHaveLength(1) })
+    const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
+    try {
+      expect((await stored.read(0)).filter(event => event.type === 'team/native-operation/committed'))
+        .toHaveLength(1)
+    } finally {
+      await stored.close()
+    }
+  })
+
+  it('persists one member message and returns its original receipt when the native call is retried', async () => {
+    class MessagingProduct extends NativeProduct {
+      override async create(request: TeammateRuntimeCreateRequest) {
+        return { ...await super.create(request), turnId: TeammateRuntimeTurnId('work-turn-1') }
+      }
+    }
+    const { ctx, lead, provider, handle, launched } = await setup(new MessagingProduct())
+    const grant = provider.grants.get(handle)!
+    const source = {
+      kind: 'tool' as const,
+      turnId: TeammateRuntimeTurnId('work-turn-1'),
+      callId: TeammateRuntimeToolCallId('send-call-1'),
+    }
+    const signal = new AbortController().signal
+    const input = { operation: 'messages.send', target: 'lead', text: 'The review is ready.' }
+    const result = await grant.execute(input, signal, source)
+    expect(result).toMatchObject({ ok: true, operation: 'messages.send', value: {
+      messageId: expect.any(String) as unknown, status: 'queued',
+    } })
+    expect(await grant.execute({ text: input.text, target: input.target, operation: input.operation }, signal, source))
+      .toEqual(result)
+    expect(await grant.execute({ ...input, target: ' lead ' }, signal, source)).toEqual(result)
+    await ctx.sessions.flush(lead.agent.session)
+    const stored = await ctx.sessionPersistence.open(lead.agent.session.id, 'read')
+    try {
+      const events = await stored.read(0)
+      const committed = events.filter(event => event.type === 'team/native-operation/committed')
+      expect(committed).toHaveLength(1)
+      expect(committed[0]?.data).toMatchObject({ version: 3, message: {
+        senderId: launched.member.id, senderName: 'reviewer', targetId: lead.agent.id,
+        content: [{ type: 'text', text: 'The review is ready.' }],
+      }, receipt: { result } })
+    } finally {
+      await stored.close()
+    }
+  })
+
   it('revokes native grants even when a DSH child cannot persist its final state', async () => {
     const { ctx, provider, handle, root, teamFiber } = await setup()
     const failures: unknown[] = []

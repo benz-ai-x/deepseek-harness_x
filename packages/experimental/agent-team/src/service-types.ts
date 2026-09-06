@@ -21,10 +21,19 @@ import type {
   TeamMemberView,
   TeamTaskId,
   TeamTaskView,
+  NativeMemberMessageResult,
+  NativeMemberOperationSource,
+  NativeMemberTurnOutcome,
 } from './types.ts'
 
-/** Canonical result of an authorized native Team query. */
+/** Validated intentional text sent by a native tool or terminal work settlement. */
+export type NativeMemberMailboxRequest =
+  | { readonly operation: 'messages.send'; readonly target: string; readonly text: string }
+  | { readonly operation: 'turns.settle'; readonly outcome: NativeMemberTurnOutcome; readonly text: string }
+
+/** Bounded query result or durable acceptance from an authorized native Team operation. */
 export type NativeMemberOperationResult =
+  | NativeMemberMessageResult
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
@@ -35,12 +44,13 @@ export interface NativeMemberGrant {
   readonly identity: Readonly<{ teamId: TeamId; memberId: SessionId; provider: string; nativeHandle: TeammateRuntimeHandle }>
   readonly signal: AbortSignal
   /**
-   * Query as the granted member; model arguments never select caller authority.
+   * Operate as the granted member; model arguments never select caller authority.
    * @param input - untrusted JSON request validated by the Team owner.
    * @param signal - cancellation for this invocation.
-   * @returns a bounded query result or stable refusal without business mutations.
+   * @param source - trusted native turn and call identity, required for durable mutations.
+   * @returns a bounded query, durable acceptance receipt, or stable refusal.
    */
-  execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>
+  execute(input: unknown, signal: AbortSignal, source?: NativeMemberOperationSource): Promise<NativeMemberOperationResult>
 }
 
 /** Provider binding after durable identity acceptance and current-generation verification. */

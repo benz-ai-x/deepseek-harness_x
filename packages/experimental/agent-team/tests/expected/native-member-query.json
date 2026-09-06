@@ -25,6 +25,48 @@
       "message": "The Team query arguments are invalid."
     }
   },
+  "conflict": {
+    "ok": false,
+    "error": {
+      "code": "TEAM_NATIVE_OPERATION_CONFLICT",
+      "message": "The native call already accepted different input."
+    }
+  },
+  "operations": [
+    {
+      "version": 3,
+      "operation": "messages.send",
+      "status": "queued",
+      "sender": "reviewer",
+      "source": {
+        "kind": "tool",
+        "turnId": "native-loader-turn",
+        "callId": "native-loader-message"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Review is in progress."
+        }
+      ]
+    },
+    {
+      "version": 3,
+      "operation": "turns.settle",
+      "status": "queued",
+      "sender": "reviewer",
+      "source": {
+        "kind": "settlement",
+        "turnId": "native-loader-turn"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "The review found no issues."
+        }
+      ]
+    }
+  ],
   "revoked": {
     "ok": false,
     "error": {

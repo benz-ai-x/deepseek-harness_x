@@ -124,6 +124,14 @@
       }
     },
     {
+      "name": "finish_external_teammate",
+      "description": "Ask the native fixture to return its completed review to the Team Lead.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
       "name": "get_goal",
       "description": "Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal.",
       "parameters": {
@@ -347,6 +355,14 @@
         "required": [
           "file_path"
         ]
+      }
+    },
+    {
+      "name": "report_external_teammate",
+      "description": "Ask the native fixture to report its progress to the Team Lead.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
       }
     },
     {

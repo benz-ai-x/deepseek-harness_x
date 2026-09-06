@@ -71,9 +71,9 @@ kind: "package-reference"
 
 支持可选目录属主的 provider 适配器使用 `mountTeammateRuntimeProvider()`，让这个 Host-only 包统一拥有共享属主契约、动态服务世代、注册的恰好一次清理以及 provider 析构顺序。
 
-原生 provider 可以通过自己的工具通道提供只读成员和任务查询。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份读取现有 roster 或 task board；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
+原生 provider 可以通过自己的工具通道查询成员和任务，并以成员身份发送消息。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份使用现有 roster、task board 或 mailbox；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
 
-查询的完整 JSON 请求最多为 4,096 UTF-8 字节，结果最多为 65,536 字节，包含操作与分页元数据。任务列表默认返回 20 条，允许 1 至 100 条；cursor 标识最后返回的任务，该任务不在当前列表时 cursor 失效。过大的结果返回固定错误而不是不完整 JSON；请请求更小的分页。调用方取消会拒绝本次调用。Lead 释放、handle 释放、原生进程离线或 provider 退役会永久撤销 grant；后续在线状态本身不授予访问权。这些 grant 不提供任务写入、消息、等待、任意 RPC 或 DSH Agent 凭据。[原生成员授权参考](../../../docs/subsystems/agent-team.zh.md#native-member-authorization)定义 Host 类型。
+原生操作的完整 JSON 请求最多为 4,096 UTF-8 字节，结果最多为 65,536 字节，包含操作与分页元数据。任务列表默认返回 20 条，允许 1 至 100 条；cursor 标识最后返回的任务，该任务不在当前列表时 cursor 失效。过大的结果返回固定错误而不是不完整 JSON；请请求更小的分页。调用方取消会拒绝本次调用。Lead 释放、handle 释放、原生进程离线或 provider 退役会永久撤销 grant；后续在线状态本身不授予访问权。这些 grant 不提供任务写入、等待、任意 RPC 或 DSH Agent 凭据。[原生成员授权参考](../../../docs/subsystems/agent-team.zh.md#native-member-authorization)定义 Host 类型。
 
 精确的 live Lead 可以对一个 active external teammate 调用 `ctx.agentTeams.readTeammateRuntimeEvidence()`。Agent Teams 会提供 roster 所有的 native handle，并且只返回有界的规范 turn、tool、approval、结果、时间戳与 provider 报告的 usage 事实。approval 事实保留稳定 turn、tool、call、approval 与 Profile 策略身份，但不包含拟议参数；只有精确 runtime 报告 `running` 时，非空 pending 集合才会被接受。prompt、reply、tool argument/result、文件、环境值、credential 与原始 provider payload 绝不会跨越服务边界。
 
@@ -85,9 +85,11 @@ roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`
 
 ### teammate 之间的消息
 
-任何成员都可以向任何其他成员或 Lead 发送消息。live 成员会立即收到；离线成员的消息会排队，并在其恢复后到达。消息不会丢失，也绝不会重复投递。
+任何成员都可以向任何其他成员或 Lead 发送消息。live 成员会立即收到；离线成员的消息会排队，并在其恢复后到达。持久队列和目标接受身份在单 Host 的重试与恢复中保留消息并抑制重复投递。
 
-每条消息都使用 Steer：running target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。发送方始终能看到结果——target inbox 已接受，或在投递暂时不可用时保留为 queued。排队的消息已经安全存储，因此绝不能重发。
+每条消息都使用 Steer：running target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。发送方始终能看到结果——target inbox 已接受，或在投递暂时不可用时保留为 queued。排队的消息已经安全存储；发送新消息会产生另一项工作。
+
+原生消息调用在模型参数之外携带可信工作轮次和工具调用身份。Team 在一个必需事件中共同保存消息与可重放的接受回执，然后才确认或投递。相同调用以相同规范化输入重试时返回原 queued 回执；改变输入则冲突。queued 记录表达持久接受，不表示已投递或工作完成。provider 的终止结算为每个工作轮次使用独立身份，并通过同一 mailbox 将有意回传的最终文本或失败／中断通知发给 Lead。恢复在验证当前 grant 后重放回执。
 
 ### 共享任务板
 
@@ -166,7 +168,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### 持久性模型
 
-Team 事件追加到精确的 live Lead Session，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/task`、`team/message/queued` 与 `team/message/delivered` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由 Session event 的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team event 对照已提交前缀回放，并在 append 前拒绝非法转换。
+Team 事件追加到精确的 live Lead Session，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/task`、`team/message/queued`、`team/message/delivered` 与 `team/native-operation/committed` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由 Session event 的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team event 对照已提交前缀回放，并在 append 前拒绝非法转换。
 
 ### Dispose
 

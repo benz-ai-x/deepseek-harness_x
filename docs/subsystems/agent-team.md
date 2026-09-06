@@ -103,9 +103,52 @@ Provider registration belongs to the calling Fiber. Removal closes admission, ca
 
 The Team owner delivers `NativeMemberGrant` only to the current provider after durable member acceptance or verified resume. Its captured identity never comes from model arguments. Registration, handle, or exact Lead disposal and inactive native presence permanently revoke that grant; evaluations receive no production grant. The [authorization decision](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.md) owns rationale, and the [package contract](../../packages/experimental/agent-team/README.md#teammates) owns query limits and cursor semantics.
 
+Native messages and terminal results share the [atomic receipt decision](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md). One required payload-3 event records the mailbox message and its `TeamNativeOperationId` receipt; projection version 4 reconstructs both. Trusted tool calls and terminal settlement have distinct identities, and a replay returns the original queued result only when its canonical input agrees.
+
 ```ts type-equiv
-/** Canonical result of an authorized native Team query. */
+/** Trusted provider correlation supplied separately from model tool arguments. */
+type NativeMemberOperationSource =
+  | { readonly kind: 'tool'; readonly turnId: TeammateRuntimeTurnId; readonly callId: TeammateRuntimeToolCallId }
+  | { readonly kind: 'settlement'; readonly turnId: TeammateRuntimeTurnId }
+```
+
+```ts type-equiv
+/** Terminal outcome reported by the provider for one accepted native work turn. */
+type NativeMemberTurnOutcome = 'completed' | 'failed' | 'interrupted'
+```
+
+```ts type-equiv
+/** Replayable durable acceptance; queued does not report delivery or work completion. */
+type NativeMemberMessageResult =
+  | {
+    readonly ok: true
+    readonly operation: 'messages.send'
+    readonly value: { readonly messageId: TeamMessageId; readonly status: 'queued' }
+  }
+  | {
+    readonly ok: true
+    readonly operation: 'turns.settle'
+    readonly value: { readonly messageId: TeamMessageId; readonly status: 'queued'; readonly outcome: NativeMemberTurnOutcome }
+  }
+```
+
+```ts type-equiv
+/** Provider-correlated acceptance retained in the authoritative Team projection. */
+interface TeamNativeOperationReceipt {
+  readonly id: TeamNativeOperationId
+  readonly memberId: SessionId
+  readonly provider: string
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly source: NativeMemberOperationSource
+  readonly inputFingerprint: string
+  readonly result: NativeMemberMessageResult
+}
+```
+
+```ts type-equiv
+/** Bounded query result or durable acceptance from an authorized native Team operation. */
 type NativeMemberOperationResult =
+  | NativeMemberMessageResult
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
@@ -118,12 +161,13 @@ interface NativeMemberGrant {
   readonly identity: Readonly<{ teamId: TeamId; memberId: SessionId; provider: string; nativeHandle: TeammateRuntimeHandle }>
   readonly signal: AbortSignal
   /**
-   * Query as the granted member; model arguments never select caller authority.
+   * Operate as the granted member; model arguments never select caller authority.
    * @param input - untrusted JSON request validated by the Team owner.
    * @param signal - cancellation for this invocation.
-   * @returns a bounded query result or stable refusal without business mutations.
+   * @param source - trusted native turn and call identity, required for durable mutations.
+   * @returns a bounded query, durable acceptance receipt, or stable refusal.
    */
-  execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>
+  execute(input: unknown, signal: AbortSignal, source?: NativeMemberOperationSource): Promise<NativeMemberOperationResult>
 }
 ```
 

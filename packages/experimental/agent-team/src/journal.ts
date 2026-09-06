@@ -6,7 +6,7 @@ import type { SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import type { TeamEventType, TeamState } from './projection.ts'
 
 type AppendTeamEvent = <T extends TeamEventType>(type: T, data: SessionEventMap[T]) => void
-type MutableTeamEventType = 'team/member' | 'team/task' | 'team/message/queued' | 'team/message/delivered'
+type MutableTeamEventType = TeamEventType
 
 /** Owns per-Lead transaction order and committed Team event publication. */
 export class TeamJournal {
@@ -67,6 +67,14 @@ export class TeamJournal {
     // preserving the event-key/payload correlation.
     const append = root.session.append.bind(root.session) as unknown as AppendTeamEvent
     append(type, data)
+    await this.flush(root)
+  }
+
+  /**
+   * Finish an appended transaction before publishing or replaying its receipt.
+   * @param root - exact live Lead with the original pending or committed event.
+   */
+  async flush(root: Agent): Promise<void> {
     await this.ctx.sessions.flush(root.session)
     this.onCommit(root)
   }

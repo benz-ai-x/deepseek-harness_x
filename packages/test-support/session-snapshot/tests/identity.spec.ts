@@ -10,6 +10,25 @@ const otherId = '66666666-6666-4666-8666-666666666666'
 const proseUuid = '77777777-7777-4777-8777-777777777777'
 
 describe('session snapshot identity redaction', () => {
+  it('normalizes native receipt identities while retaining input fingerprints and unrelated text', () => {
+    const fixture = (id: string) => [
+      JSON.stringify({ type: 'session', id: parentId }),
+      JSON.stringify({ type: 'team/native-operation/committed', data: {
+        receipt: { id, inputFingerprint: 'c'.repeat(64) }, message: { content: [{ type: 'text', text: 'd'.repeat(64) }] },
+      } }),
+      JSON.stringify({ type: 'example', data: { operationId: id } }),
+      '',
+    ].join('\n')
+    const first = redactSessionSnapshotIds([fixture('a'.repeat(64))])
+    const second = redactSessionSnapshotIds([fixture('b'.repeat(64))])
+    expect(first).toEqual(second)
+    expect(first[0]).toContain('"id":"{{id:1}}"')
+    expect(first[0]).toContain('"operationId":"{{id:1}}"')
+    expect(first[0]).toContain('c'.repeat(64))
+    expect(first[0]).toContain('d'.repeat(64))
+    expect(redactSessionSnapshotIds(first)).toEqual(first)
+  })
+
   it('preserves typed relationships across parent and child logs', () => {
     const parent = [
       JSON.stringify({ type: 'session', id: parentId, createdAt: 1, cwd: '/tmp/work' }),

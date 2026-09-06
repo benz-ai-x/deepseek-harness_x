@@ -72,6 +72,8 @@ defineAcpSnapshotSuite({
 
 `normalizeSessionSnapshot` 在规范化路径并清理 request header 后，会保留完整会话 header 与事件 payload，但从已提交 fixture 中省略普通行的 `seq`/`time` 和打包行的 `seq0`/`time0` envelope。回放只在内存中合成这些 envelope，而运行时持久化仍写入完整日志。fixture 使用规范打包行；[临时仓库迁移器](../../../scripts/migrate-packed-session-fixtures.ts)（`pnpm run migrate:packed-session-fixtures`）会改写较旧的布局，由其[移除提案](../../../.agents/notes/proposed/process/2026-07-26-remove-packed-session-fixture-migrator.zh.md)负责删除该迁移器。
 
+身份脱敏识别原生操作已提交事件中的回执 id，并在整个场景中保留相同引用之间的对应关系。规范输入指纹与无关文本（包括看似哈希的字符串）保持原样，使回放仍能比较已接受请求的内容。
+
 ### 录制、回放与刷新
 
 `pnpm run test:snapshot:record` 调用在线 LLM（大语言模型），并重写已录制的模型 fixture；`pnpm run test:snapshot:refresh` 保持无密钥，运行回放 overlay，并从已提交模型脚本重写 stdout、可比较会话日志预期输出，以及各 pin 自有的提示词与工具 schema 伴随文件。每个组合 owner 把 replay patch 放在 live patch 旁；顶层 `snapshots/` 拥有会话驱动场景，其他预期输出留在其包 owner 旁。[`dsh-llm-replay`](../llm-replay/README.zh.md) 提供通过 `DSH_SNAPSHOT_*` 环境值选择的已记录流。

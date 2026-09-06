@@ -3,8 +3,6 @@ scenario: agent-team-profile
 profile: headless
 composition: agent-team-profile
 recording: authored
-input:
-  task: Create Team tasks Inspect and Verify with descriptions Inspect the shared source. and Verify the report. Provision the external teammate and list agents. Ask query_external_teammate for members.list, tasks.list with limit 1, tasks.list with cursor task-1 and limit 1, and tasks.get for task-1. Reply with exactly TEAM QUERIES READY and stop.
 replay:
   override: true
 header:

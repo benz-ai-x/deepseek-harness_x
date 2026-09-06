@@ -14,7 +14,7 @@ The Team owner issues a nonserializable [NativeMemberGrant](../../../../docs/sub
 
 The provider receives the grant through `bindMemberOperations`. The registry admits only the generation attached to the accepted handle. Registration retirement, handle disposal, inactive native presence, and the Lead's `agent/disposed` event abort its signal before further queries can return data. A later presence report cannot revive the old grant; verified recovery must bind a new grant. A throwing provider binder revokes its grant and quarantines that generation while retaining already accepted Team facts.
 
-The initial operations read members and shared tasks through the existing roster and task board. Strict JSON schemas reject authority fields and other operations; complete requests and results have byte bounds, and task lists have bounded pages. The [package contract](../../../../packages/experimental/agent-team/README.md#teammates) owns limits and cursor semantics. Grants, invocation objects, and query results add no durable Team fields or parallel business state.
+Read operations use the existing roster and task board. Strict JSON schemas reject authority fields and unsupported operations; complete requests and results have byte bounds, and task lists have bounded pages. The [package contract](../../../../packages/experimental/agent-team/README.md#teammates) owns limits and cursor semantics. Queries add no durable Team facts; [native mutations](2026-09-06-durable-native-team-operations.md) use the authoritative mailbox and durable operation receipts.
 
 ## Alternatives considered
 

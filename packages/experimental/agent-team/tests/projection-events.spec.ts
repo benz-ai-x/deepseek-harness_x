@@ -6,9 +6,12 @@ import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 import {
   TeamId,
   TeamMessageId,
+  TeamNativeOperationId,
   TeamTaskId,
   TeammateLaunchRequestId,
   TeammateRuntimeHandle,
+  TeammateRuntimeTurnId,
+  TeammateRuntimeToolCallId,
 } from '../src/brand.ts'
 import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
 
@@ -99,6 +102,60 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
 }
 
 describe('Agent Teams projection events', () => {
+  it.each([
+    'operation-id', 'call-id', 'input-fingerprint', 'member', 'provider', 'handle', 'sender',
+    'sender-name', 'result-message', 'source-kind', 'target', 'self-message', 'content',
+    'duplicate-operation', 'duplicate-message',
+  ] as const)('rejects a native receipt with a changed %s', (corruption) => {
+    const provisioning = member({ provider: 'native', externalRuntime: externalRuntime() })
+    const prefix = [
+      event('team/member', { version: 2, teamId: TEAM, member: provisioning }, SessionSeq(0)),
+      event('team/member', { version: 2, teamId: TEAM, member: { ...provisioning, phase: 'active',
+        externalRuntime: { ...provisioning.externalRuntime!, nativeHandle: TeammateRuntimeHandle('handle-1') },
+      } }, SessionSeq(1)),
+    ]
+    const committed = event('team/native-operation/committed', {
+      version: 3, teamId: TEAM,
+      message: message({ senderId: CHILD, senderName: 'worker-a', targetId: ROOT }),
+      receipt: {
+        id: TeamNativeOperationId('2e57e0ef07a7b8566bad1d2bfa654b3b8d3054c6474bf4ac361b32c2ab2c0df5'),
+        memberId: CHILD, provider: 'native', nativeHandle: TeammateRuntimeHandle('handle-1'),
+        source: { kind: 'tool', turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1') },
+        inputFingerprint: '0f36bd40cf1f1795f9a1a7fba7e085abf11a0c4400a6b005ae146770f3274147',
+        result: { ok: true, operation: 'messages.send', value: { messageId: TeamMessageId('message-1'), status: 'queued' } },
+      },
+    }, SessionSeq(2))
+    expect(projectTeam(ROOT, [...prefix, committed]).nativeOperations).toHaveLength(1)
+    const changed: unknown = {
+      ...committed,
+      data: { ...committed.data,
+        message: { ...committed.data.message,
+          ...(corruption === 'sender' ? { senderId: ROOT } : {}),
+          ...(corruption === 'sender-name' ? { senderName: 'lead' } : {}),
+          ...(corruption === 'target' ? { targetId: 'another-team' } : {}),
+          ...(corruption === 'self-message' ? { targetId: CHILD } : {}),
+          ...(corruption === 'content' ? { content: [{ type: 'reasoning', text: 'Do not publish reasoning.' }] } : {}),
+        }, receipt: { ...committed.data.receipt,
+          ...(corruption === 'operation-id' ? { id: 'f'.repeat(64) } : {}),
+          ...(corruption === 'call-id' ? { source: { ...committed.data.receipt.source, callId: 'different-call' } } : {}),
+          ...(corruption === 'input-fingerprint' ? { inputFingerprint: 'f'.repeat(64) } : {}),
+          ...(corruption === 'member' ? { memberId: ROOT } : {}),
+          ...(corruption === 'provider' ? { provider: 'other-native' } : {}),
+          ...(corruption === 'handle' ? { nativeHandle: 'another-handle' } : {}),
+          ...(corruption === 'source-kind' ? { source: { kind: 'settlement', turnId: 'turn-1' } } : {}),
+          ...(corruption === 'result-message' ? { result: { ...committed.data.receipt.result,
+            value: { messageId: 'different-message', status: 'queued' },
+          } } : {}),
+          ...(corruption === 'duplicate-message' ? {
+            id: 'a52b11fd04b2cb845ffa0fad7c0268f43174b8491ecb550ae29180f3259d6f78',
+            source: { kind: 'tool', turnId: 'turn-1', callId: 'call-2' },
+          } : {}),
+        } },
+    }
+    const events = corruption.startsWith('duplicate-') ? [...prefix, committed] : prefix
+    expect(project(ROOT, [...events, changed as SessionEvent]).failure).toContain('native operation')
+  })
+
   it('round-trips bounded opaque external launch and native identities', () => {
     const launchRequestId = TeammateLaunchRequestId('launch/request/请求')
     const nativeHandle = TeammateRuntimeHandle('native/session/运行')
@@ -256,6 +313,15 @@ describe('Agent Teams projection events', () => {
         externalRuntime: externalRuntime({ nativeHandle: TeammateRuntimeHandle('native-2') }),
         phase: 'failed',
       }),
+    }, SessionSeq(2))])).toThrow(/immutable identity/)
+    const withTurn = { ...externalActive, data: { ...externalActive.data, member: {
+      ...externalActive.data.member,
+      externalRuntime: { ...externalActive.data.member.externalRuntime!, initialTurnId: TeammateRuntimeTurnId('original-turn') },
+    } } }
+    expect(() => projectTeam(ROOT, [externalProvisioning, withTurn, event('team/member', {
+      version: 2, teamId: TEAM, member: { ...withTurn.data.member, phase: 'failed',
+        externalRuntime: { ...withTurn.data.member.externalRuntime, initialTurnId: TeammateRuntimeTurnId('substituted-turn') },
+      },
     }, SessionSeq(2))])).toThrow(/immutable identity/)
   })
 

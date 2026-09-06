@@ -72,6 +72,8 @@ Each recorded-session directory carries a closed `snapshot.yml` manifest plus it
 
 `normalizeSessionSnapshot` retains the complete session header and event payloads but omits ordinary `seq`/`time` and packed-row `seq0`/`time0` envelopes from committed fixtures after normalizing paths and scrubbing request headers. Replay synthesizes the envelopes in memory, while runtime persistence continues to write complete logs. Fixtures use canonical packed rows; the [temporary repository migrator](../../../scripts/migrate-packed-session-fixtures.ts) (`pnpm run migrate:packed-session-fixtures`) rewrites older layouts, and its [removal proposal](../../../.agents/notes/proposed/process/2026-07-26-remove-packed-session-fixture-migrator.md) owns its deletion.
 
+Identity redaction recognizes native-operation receipt ids in their typed committed event and preserves matching references throughout the scenario. It retains canonical input fingerprints and unrelated text, including strings that look like hashes, so replay still compares the accepted request content.
+
 ### Record, replay, and refresh
 
 `pnpm run test:snapshot:record` calls the live LLM and rewrites recorded model fixtures; `pnpm run test:snapshot:refresh` stays keyless, runs the replay overlay, and rewrites stdout, comparable session-log expected outputs, and owned prompt and tool-schema sidecars from committed model scripts. Each composition owner keeps its replay patch beside its live patch; top-level `snapshots/` owns session-driven scenarios, while other expected outputs stay beside their owning package. [`dsh-llm-replay`](../llm-replay/README.md) serves the recorded streams selected through `DSH_SNAPSHOT_*` environment values.

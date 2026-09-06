@@ -103,9 +103,52 @@ provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消�
 
 Team 所有者只在持久成员接受或验证恢复后，向当前 provider 交付 `NativeMemberGrant`。捕获的身份绝不来自模型参数。注册、handle 或精确 Lead 释放、原生进程离线时永久撤销该 grant；评测不会获得生产 grant。[授权决策](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.zh.md)记录理由，[包契约](../../packages/experimental/agent-team/README.zh.md#teammates)定义查询上限和 cursor 语义。
 
+原生消息和终止结果遵循同一[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。一个必需的 payload-3 事件共同记录 mailbox 消息及其 `TeamNativeOperationId` 回执；投影版本 4 重建两者。可信工具调用与终止结算使用不同身份，只有规范输入一致时，重放才返回原 queued 结果。
+
 ```ts type-equiv
-/** Canonical result of an authorized native Team query. */
+/** Trusted provider correlation supplied separately from model tool arguments. */
+type NativeMemberOperationSource =
+  | { readonly kind: 'tool'; readonly turnId: TeammateRuntimeTurnId; readonly callId: TeammateRuntimeToolCallId }
+  | { readonly kind: 'settlement'; readonly turnId: TeammateRuntimeTurnId }
+```
+
+```ts type-equiv
+/** Terminal outcome reported by the provider for one accepted native work turn. */
+type NativeMemberTurnOutcome = 'completed' | 'failed' | 'interrupted'
+```
+
+```ts type-equiv
+/** Replayable durable acceptance; queued does not report delivery or work completion. */
+type NativeMemberMessageResult =
+  | {
+    readonly ok: true
+    readonly operation: 'messages.send'
+    readonly value: { readonly messageId: TeamMessageId; readonly status: 'queued' }
+  }
+  | {
+    readonly ok: true
+    readonly operation: 'turns.settle'
+    readonly value: { readonly messageId: TeamMessageId; readonly status: 'queued'; readonly outcome: NativeMemberTurnOutcome }
+  }
+```
+
+```ts type-equiv
+/** Provider-correlated acceptance retained in the authoritative Team projection. */
+interface TeamNativeOperationReceipt {
+  readonly id: TeamNativeOperationId
+  readonly memberId: SessionId
+  readonly provider: string
+  readonly nativeHandle: TeammateRuntimeHandle
+  readonly source: NativeMemberOperationSource
+  readonly inputFingerprint: string
+  readonly result: NativeMemberMessageResult
+}
+```
+
+```ts type-equiv
+/** Bounded query result or durable acceptance from an authorized native Team operation. */
 type NativeMemberOperationResult =
+  | NativeMemberMessageResult
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
@@ -118,12 +161,13 @@ interface NativeMemberGrant {
   readonly identity: Readonly<{ teamId: TeamId; memberId: SessionId; provider: string; nativeHandle: TeammateRuntimeHandle }>
   readonly signal: AbortSignal
   /**
-   * Query as the granted member; model arguments never select caller authority.
+   * Operate as the granted member; model arguments never select caller authority.
    * @param input - untrusted JSON request validated by the Team owner.
    * @param signal - cancellation for this invocation.
-   * @returns a bounded query result or stable refusal without business mutations.
+   * @param source - trusted native turn and call identity, required for durable mutations.
+   * @returns a bounded query, durable acceptance receipt, or stable refusal.
    */
-  execute(input: unknown, signal: AbortSignal): Promise<NativeMemberOperationResult>
+  execute(input: unknown, signal: AbortSignal, source?: NativeMemberOperationSource): Promise<NativeMemberOperationResult>
 }
 ```
 

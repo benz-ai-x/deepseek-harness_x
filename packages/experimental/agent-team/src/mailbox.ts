@@ -1,6 +1,7 @@
 /** Durable Team mailbox admission, target-local dispatch, acknowledgement, and recovery. */
 
 import { randomUUID } from 'node:crypto'
+import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -15,15 +16,19 @@ import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
-import type { TeamRoster } from './roster.ts'
+import type { TeamMembership, TeamRoster } from './roster.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
-import type { TeammateRuntimeRegistry } from './service-types.ts'
+import { nativeOperationFingerprint, nativeOperationId } from './native-operation.ts'
+import type { NativeMemberGrant, NativeMemberMailboxRequest, TeammateRuntimeRegistry } from './service-types.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
   TeamMessageId,
   TeamMessageSnapshot,
+  NativeMemberMessageResult,
+  NativeMemberOperationSource,
+  TeamNativeOperationReceipt,
 } from './types.ts'
 
 /** Owns every process-local state transition for the durable Team mailbox. */
@@ -63,6 +68,59 @@ export class TeamMailbox {
       signal: AbortSignal.any([request.signal, this.lifecycle.signal]),
     })
     return await this.trackDispatch(operation)
+  }
+
+  /**
+   * Commit one native member message and its recoverable receipt before delivery.
+   * @param identity - Team-issued member identity, never model arguments.
+   * @param source - trusted provider turn and call correlation.
+   * @param request - validated target and intentional message text.
+   * @param authorize - current grant and exact live Lead check, repeated at the write queue.
+   * @param signal - cancellation before durable acceptance.
+   * @returns the original queued receipt for an identical native call.
+   */
+  async sendNative(
+    identity: NativeMemberGrant['identity'],
+    source: NativeMemberOperationSource,
+    request: NativeMemberMailboxRequest,
+    authorize: () => TeamMembership,
+    signal: AbortSignal,
+  ): Promise<NativeMemberMessageResult> {
+    const membership = authorize()
+    const operationId = nativeOperationId(identity, source)
+    const inputFingerprint = nativeOperationFingerprint(request)
+    return await this.trackDispatch(this.journal.transact(membership.root.id, async () => {
+      signal.throwIfAborted()
+      const current = authorize()
+      const prior = this.journal.state(current.root).nativeOperations.find(receipt => receipt.id === operationId)
+      if (prior !== undefined) {
+        if (prior.inputFingerprint !== inputFingerprint) {
+          throw new TeamError('The native call already accepted different input.', 'TEAM_NATIVE_OPERATION_CONFLICT')
+        }
+        await this.journal.flush(current.root)
+        const message = this.journal.state(current.root).messages.find(candidate => candidate.id === prior.result.value.messageId)
+        assert(message !== undefined, 'A native operation receipt must retain its queued message')
+        void this.tryDispatch(current.root, message, this.lifecycle.signal)
+        return structuredClone(prior.result)
+      }
+      const message = this.prepareMessage(current, identity.memberId, {
+        target: request.operation === 'messages.send' ? request.target : 'lead',
+        content: [{ type: 'text', text: request.text }], signal,
+      })
+      const result: NativeMemberMessageResult = request.operation === 'messages.send'
+        ? { ok: true, operation: request.operation, value: { messageId: message.id, status: 'queued' } }
+        : { ok: true, operation: request.operation, value: { messageId: message.id, status: 'queued', outcome: request.outcome } }
+      const receipt: TeamNativeOperationReceipt = {
+        id: operationId, memberId: identity.memberId, provider: identity.provider,
+        nativeHandle: identity.nativeHandle, source: structuredClone(source), inputFingerprint,
+        result,
+      }
+      await this.journal.appendAndFlush(current.root, 'team/native-operation/committed', {
+        version: 3, teamId: identity.teamId, message, receipt,
+      })
+      void this.tryDispatch(current.root, message, this.lifecycle.signal)
+      return structuredClone(receipt.result)
+    }))
   }
 
   /**
@@ -120,27 +178,7 @@ export class TeamMailbox {
     const content = structuredClone(request.content)
     const queued = await this.journal.transact(root.id, async () => {
       request.signal.throwIfAborted()
-      const state = this.journal.state(root)
-      const target = resolveActiveMember(root, state, request.target)
-      if (target.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
-      const pendingForTarget = state.messages.filter(candidate =>
-        candidate.targetId === target.id && !state.delivered.includes(candidate.id)).length
-      if (pendingForTarget >= this.maxPendingMessagesPerMember) {
-        throw new TeamError(
-          `teammate "${target.name}" has ${pendingForTarget} pending messages`,
-          'TEAM_MAILBOX_FULL',
-        )
-      }
-      const queued: TeamMessageSnapshot = {
-        id: toTeamMessageId(`team-message-${randomUUID()}`),
-        senderId: caller.id,
-        senderName: membership.name,
-        targetId: target.id,
-        content,
-      }
-      if (Buffer.byteLength(JSON.stringify(this.deliveryContent(queued)), 'utf8') > this.maxMessageBytes) {
-        throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
-      }
+      const queued = this.prepareMessage(membership, caller.id, { ...request, content })
       await this.journal.appendAndFlush(root, 'team/message/queued', {
         version: 2,
         teamId: TeamId(root.id),
@@ -152,6 +190,30 @@ export class TeamMailbox {
     })
     const accepted = await queued.dispatch
     return { messageId: queued.message.id, status: accepted ? 'accepted' : 'queued' }
+  }
+
+  /** Apply the same target, capacity and delivered-content limits for DSH and native senders. */
+  private prepareMessage(
+    membership: TeamMembership,
+    senderId: SessionId,
+    request: SendTeamMessageRequest,
+  ): TeamMessageSnapshot {
+    const state = this.journal.state(membership.root)
+    const target = resolveActiveMember(membership.root, state, request.target)
+    if (target.id === senderId) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
+    const pending = state.messages.filter(candidate =>
+      candidate.targetId === target.id && !state.delivered.includes(candidate.id)).length
+    if (pending >= this.maxPendingMessagesPerMember) {
+      throw new TeamError(`teammate "${target.name}" has ${pending} pending messages`, 'TEAM_MAILBOX_FULL')
+    }
+    const message: TeamMessageSnapshot = {
+      id: toTeamMessageId(`team-message-${randomUUID()}`), senderId, senderName: membership.name,
+      targetId: target.id, content: structuredClone(request.content),
+    }
+    if (Buffer.byteLength(JSON.stringify(this.deliveryContent(message)), 'utf8') > this.maxMessageBytes) {
+      throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
+    }
+    return message
   }
 
   /** Attempt one queued message exactly once in this process at a time. */

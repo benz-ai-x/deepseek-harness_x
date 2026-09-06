@@ -269,19 +269,85 @@
       {
         "type": "block-start",
         "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_native_progress",
+        "name": "report_external_teammate",
+        "argumentsDelta": "{}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_native_progress",
+          "name": "report_external_teammate",
+          "arguments": "{}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_native_finish",
+        "name": "finish_external_teammate",
+        "argumentsDelta": "{}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_native_finish",
+          "name": "finish_external_teammate",
+          "arguments": "{}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
         "blockType": "text"
       },
       {
         "type": "text-delta",
         "index": 0,
-        "text": "TEAM QUERIES READY"
+        "text": "TEAM COLLABORATION READY"
       },
       {
         "type": "block-end",
         "index": 0,
         "block": {
           "type": "text",
-          "text": "TEAM QUERIES READY"
+          "text": "TEAM COLLABORATION READY"
         }
       },
       {
