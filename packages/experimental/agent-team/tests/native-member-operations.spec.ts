@@ -107,7 +107,7 @@ describe('native Team member queries', () => {
   it('revokes native grants even when a DSH child cannot persist its final state', async () => {
     const { ctx, provider, handle, root, teamFiber } = await setup()
     const failures: unknown[] = []
-    ctx.logger.exporter({ export(message) { if (message.type === 'error') failures.push(...message.args) } })
+    ctx.logger.exporter({ export(message) { if (message.type === 'error') failures.push(...message.args as readonly unknown[]) } })
     await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
     ctx.llm.registerAdapter(['mock'], new MockAdapter(['hang']))
     const lead = await ctx.agentLoop.create(SessionId('failed-storage-lead'), { provider: 'mock', model: 'mock' })
@@ -130,9 +130,9 @@ describe('native Team member queries', () => {
       rmSync(path, { recursive: true, force: true })
       renameSync(backup, path)
     }
-    expect(failures).toContainEqual(expect.objectContaining({
-      code: 'ACTIVATION_TEARDOWN_FAILED', message: expect.stringContaining('selected activation(s)'),
-    }))
+    const failure = failures.find((error): error is Error => error instanceof Error
+      && 'code' in error && error.code === 'ACTIVATION_TEARDOWN_FAILED')
+    expect(failure?.message).toContain('selected activation(s)')
     expect(ctx.agents.get(launched.member.id)).toBeUndefined()
     expect(ctx.get('agentTeams')).toBeUndefined()
     expect(await provider.grants.get(handle)!.execute({ operation: 'members.list' }, new AbortController().signal))
