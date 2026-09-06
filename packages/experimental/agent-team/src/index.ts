@@ -11,6 +11,7 @@ import { errorMessage, TeamError } from './error.ts'
 import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
+import { TeamMessageReader } from './message-reader.ts'
 import { teamProjectionDefinition } from './projection.ts'
 import { resolveActiveMember, TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
@@ -20,11 +21,15 @@ import { TeammateRuntimeRegistryHost } from './teammate-runtime.ts'
 import type {
   Config,
   CreateTeamTaskRequest,
+  GetTeamMessageRequest,
+  ListTeamMessagesRequest,
   SendTeamMessageRequest,
   SendTeamMessageResult,
   SpawnTeammateResult,
   TeamMemberView,
   TeamMemberSnapshot,
+  TeamMessageDetail,
+  TeamMessagePage,
   TeamTaskId,
   TeamTaskMutationResult,
   TeamTaskView,
@@ -76,6 +81,7 @@ export type {
 export type { TeamMembership } from './roster.ts'
 export {
   TeamId,
+  TeamMessageCursor,
   TeamMessageId,
   TeamNativeOperationId,
   TeamTaskId,
@@ -143,6 +149,7 @@ export class TeamService extends TypertRemoteService {
   private readonly journal: TeamJournal
   private readonly roster: TeamRoster
   private readonly mailbox: TeamMailbox
+  private readonly messageReader: TeamMessageReader
   private readonly tasks: TeamTaskBoard
   private readonly inFlightRecoveries = new Set<Promise<void>>()
   /** Host-only durable provider registry used by roster and mailbox routing. */
@@ -201,6 +208,7 @@ export class TeamService extends TypertRemoteService {
       this.config.maxPendingMessagesPerMember,
       this.config.maxMessageBytes,
     )
+    this.messageReader = new TeamMessageReader(ctx, this.journal, this.roster)
     this.tasks = new TeamTaskBoard(this.journal, this.config.maxTasks)
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
@@ -287,6 +295,26 @@ export class TeamService extends TypertRemoteService {
    */
   async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult> {
     return await this.mailbox.send(caller, request)
+  }
+
+  /**
+   * Read one bounded metadata page from a fixed committed Team-message window.
+   * @param caller - exact live Team Lead.
+   * @param request - filters, page size, and optional stable continuation.
+   * @returns message metadata without message content.
+   */
+  async listMessages(caller: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage> {
+    return await this.messageReader.list(caller, request)
+  }
+
+  /**
+   * Read sanitized intentional content for one message in a committed window.
+   * @param caller - exact live Team Lead.
+   * @param request - message identity and its committed list cursor.
+   * @returns message metadata and browser-safe content.
+   */
+  async getMessage(caller: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail> {
+    return await this.messageReader.get(caller, request)
   }
 
   /**
@@ -435,6 +463,28 @@ export class TeamService extends TypertRemoteService {
       members: this.listMembers(agent),
       tasks: this.listTasks(agent),
     }
+  }
+
+  /**
+   * Read persisted message metadata through the generated Remote API.
+   * @param agent - exact live Team Lead used as the authority credential.
+   * @param request - bounded committed message query.
+   * @returns metadata page with stable cursors and no message body.
+   */
+  @Remote('listMessages')
+  remoteListMessages(agent: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage> {
+    return this.listMessages(agent, request)
+  }
+
+  /**
+   * Read one sanitized persisted message through the generated Remote API.
+   * @param agent - exact live Team Lead used as the authority credential.
+   * @param request - stable message identity and committed query cursor.
+   * @returns safe intentional content with explicit completeness.
+   */
+  @Remote('getMessage')
+  remoteGetMessage(agent: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail> {
+    return this.getMessage(agent, request)
   }
 
   /**

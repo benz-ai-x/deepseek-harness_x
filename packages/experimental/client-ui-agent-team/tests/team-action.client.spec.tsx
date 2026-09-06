@@ -19,6 +19,7 @@ afterEach(cleanup)
 const SESSION = 'lead' as SessionId
 const TASK_1 = 'task-1' as TeamTaskId
 const TASK_2 = 'task-2' as TeamTaskId
+const EMPTY_PANEL_VIEWS: readonly [] = []
 const task: TeamTask = {
   id: TASK_1,
   revision: 1,
@@ -71,6 +72,7 @@ function remoteFailure(message: string): TeamActionResult<never> {
 function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): TeamActionProps {
   return {
     sessionId,
+    renderSlot: () => null,
     ...actions,
     t: makeTranslate(zh, commonZh),
   } as unknown as TeamActionProps
@@ -78,6 +80,11 @@ function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): Tea
 
 function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjected {
   return {
+    panelViews: {
+      getSnapshot: () => EMPTY_PANEL_VIEWS,
+      subscribe: () => () => {},
+    },
+    resolveTeamSessionId: sessionId => sessionId,
     load: () => Promise.resolve({ ok: true, value: view }),
     createTask: () => Promise.resolve(taskSuccess({ ...task, id: TASK_2, subject: 'New task' })),
     updateTask: () => Promise.resolve({
@@ -90,6 +97,33 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
 }
 
 describe('TeamAction', () => {
+  it('navigates a public child view inside the one Team-owned panel', async () => {
+    const renderSlot = vi.fn(() => <div>Injected message center</div>)
+    const messageViews = [{ id: 'messages', label: '消息' }] as const
+    const injected = actions({
+      panelViews: {
+        getSnapshot: () => messageViews,
+        subscribe: () => () => {},
+      },
+    })
+    render(<TeamAction {...{
+      ...props(injected),
+      renderSlot,
+    }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    expect(screen.getAllByRole('dialog', { name: /Agent Team/u })).toHaveLength(1)
+    expect(screen.getByRole('tab', { name: '概览' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.click(screen.getByRole('tab', { name: '消息' }))
+    expect(await screen.findByText('Injected message center')).toBeTruthy()
+    expect(renderSlot).toHaveBeenLastCalledWith(
+      'agent-team.panel.view',
+      { teamSessionId: SESSION },
+      { only: 'messages' },
+    )
+  })
+
   it('ignores a stale Team load after the conversation switches sessions', async () => {
     const nextSession = 'next-lead' as SessionId
     const firstLoad = Promise.withResolvers<{ ok: true; value: TeamView }>()

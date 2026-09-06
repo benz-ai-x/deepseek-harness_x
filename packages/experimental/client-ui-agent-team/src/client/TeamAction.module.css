@@ -73,6 +73,28 @@
   min-height: 28px;
 }
 
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.tab,
+.activeTab {
+  padding: 6px 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.activeTab {
+  border-bottom-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
 .spacer {
   flex: 1;
 }

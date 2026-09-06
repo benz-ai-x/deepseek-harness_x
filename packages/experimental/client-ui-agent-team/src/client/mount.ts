@@ -13,8 +13,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
+import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  TeamAction, type TeamActionInjected, type TeamActionResult, type TeamTaskActionResult,
+  TeamAction, type TeamActionInjected, type TeamActionResult, type TeamPanelView,
+  type TeamTaskActionResult,
 } from './TeamAction.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
 
@@ -22,6 +24,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Agent Teams roster and task-board copy. */
     'agent-team': TeamKey
+  }
+
+  interface SlotMap {
+    /** Public views composed inside the single Agent Teams owner panel. */
+    'agent-team.panel.view': {
+      kind: 'list'
+      scope: 'session'
+      owner: { readonly teamSessionId: SessionId }
+    }
   }
 }
 
@@ -36,7 +47,34 @@ function registerUi(ctx: ClientContext): void {
     return address?.parentSessionId ?? sessionId
   }
 
+  let panelViewSnapshot: readonly TeamPanelView[] = []
+  const panelViewListeners = new Set<() => void>()
+  const panelViews: TeamActionInjected['panelViews'] = {
+    getSnapshot: () => panelViewSnapshot,
+    subscribe: (listener) => {
+      panelViewListeners.add(listener)
+      return () => { panelViewListeners.delete(listener) }
+    },
+  }
+  const refreshPanelViews = (): void => {
+    const next = ctx.slots.entries('agent-team.panel.view').flatMap((entry) => {
+      const id = entry.options.id
+      if (id === undefined) return []
+      return [{ id, label: resolveSlotLabel(entry.options.label) ?? id }]
+    })
+    const unchanged = panelViewSnapshot.length === next.length
+      && panelViewSnapshot.every((entry, index) => {
+        const candidate = next[index]
+        return candidate !== undefined && candidate.id === entry.id && candidate.label === entry.label
+      })
+    if (unchanged) return
+    panelViewSnapshot = next
+    for (const listener of panelViewListeners) listener()
+  }
+
   const actions: TeamActionInjected = {
+    panelViews,
+    resolveTeamSessionId: leadSessionId,
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
     },
@@ -70,9 +108,24 @@ function registerUi(ctx: ClientContext): void {
       id: 'agent-team',
       order: 20,
       locale: NS,
+      children: {
+        'agent-team.panel.view': { kind: 'list', scope: 'session' },
+      },
       inject: () => actions,
     }, TeamAction),
   )
+  ctx.effect(() => {
+    const disposeSlots = ctx.slots.subscribe('agent-team.panel.view', refreshPanelViews)
+    const disposeLocale = ctx.locale.subscribe(refreshPanelViews)
+    refreshPanelViews()
+    return () => {
+      disposeLocale()
+      disposeSlots()
+      panelViewSnapshot = []
+      for (const listener of panelViewListeners) listener()
+      panelViewListeners.clear()
+    }
+  }, 'client-ui-agent-team: panel views')
 }
 
 /**

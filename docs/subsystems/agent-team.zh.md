@@ -103,7 +103,7 @@ provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消�
 
 Team 所有者只在持久成员接受或验证恢复后，向当前 provider 交付 `NativeMemberGrant`。捕获的身份绝不来自模型参数。注册、handle 或精确 Lead 释放、原生进程离线时永久撤销该 grant；评测不会获得生产 grant。[授权决策](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.zh.md)记录理由，[包契约](../../packages/experimental/agent-team/README.zh.md#teammates)定义查询上限和 cursor 语义。
 
-原生消息、任务变化和终态结果共享[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。必需的 payload-4 消息／任务事件将变更与其 `TeamNativeOperationId` 回执一起记录；projection version 5 重建两者，并明确保留 payload-3 消息和 payload-2 读取分支。任务回执保留已校验输入和精简的原始接受结果。[原生任务规则](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.zh.md)说明先于 CAS 的重放及只观察变化的等待。
+原生消息、任务变化和终态结果共享[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。必需的 payload-4 消息／任务事件将变更与其 `TeamNativeOperationId` 回执一起记录；projection version 6 重建两者和精简消息索引，并明确保留 payload-3 消息和 payload-2 读取分支。任务回执保留已校验输入和精简的原始接受结果。[原生任务规则](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.zh.md)说明先于 CAS 的重放及只观察变化的等待。
 
 `turns.recover` 是 Host-only grant reader，不是发布给模型的操作。当前 grant 校验通过后，它与 Team journal 串行执行、flush Lead Session，并返回分离的当前视图，其中只包含获授权成员的 launch 关联、入站 delivery id，以及已提交结算的结果和有意文本。它排除入站消息文本与所有同级成员或其他 Team 的事实，也不发布 Team 活动。页面使用数字 offset，默认包含 10 项，允许 1 至 100 项，并保留稳定身份，以便并发追加移动后续页面时由适配器对条目去重。
 
@@ -242,6 +242,112 @@ interface TeamMessageSnapshot {
 }
 ```
 
+原始 mailbox snapshot 仅留在 Host 内部。Projection version 6 还保留每条消息的身份、入队序号与时间，以及可选的投递序号与时间。精确的存活 Lead 可以在 Session flush 后，以有界、从新到旧的方式读取该索引的元数据。请求允许 1 到 100 行，默认为 20。可选的成员、方向与投递过滤条件会被规范化并写入不透明 committed cursor。该 cursor 固定 Team、过滤条件与序号上界；即使有新消息到达，continuation 仍停留在同一个已提交窗口内。格式错误、未来、跨 Team、查询不匹配、陈旧调用方、伪造调用方与伪造参与者输入都会被拒绝。
+
+```ts type-equiv
+/** Direction of a persisted message relative to the selected Team member. */
+type TeamMessageDirection = 'sent' | 'received'
+```
+
+```ts type-equiv
+/** Host-proven delivery stage; unknown is reserved for clients that cannot obtain a current fact. */
+type TeamMessageDelivery =
+  | { readonly stage: 'pending' }
+  | { readonly stage: 'delivered'; readonly deliveredAt: number }
+  | { readonly stage: 'unknown' }
+```
+
+```ts type-equiv
+/** Detached Team participant identity shown in a message result. */
+interface TeamMessageParticipant {
+  readonly id: SessionId
+  readonly name: string
+}
+```
+
+```ts type-equiv
+/** Metadata-only row for one persisted Team message. */
+interface TeamMessageSummary {
+  readonly id: TeamMessageId
+  readonly sender: TeamMessageParticipant
+  readonly recipient: TeamMessageParticipant
+  /** Unix epoch milliseconds from the durable queue event. */
+  readonly sentAt: number
+  readonly delivery: TeamMessageDelivery
+}
+```
+
+```ts type-equiv
+/** Filters applied to one committed Team-message window. */
+interface TeamMessageFilters {
+  /** Retained Team participant selected by durable Session identity. */
+  readonly memberId?: SessionId
+  /** Relative to memberId; omitted memberId with a direction is invalid. */
+  readonly direction?: TeamMessageDirection
+  readonly delivery?: TeamMessageDelivery['stage']
+}
+```
+
+```ts type-equiv
+/** Bounded newest-first query for persisted Team-message metadata. */
+interface ListTeamMessagesRequest {
+  readonly filters?: TeamMessageFilters
+  readonly cursor?: TeamMessageCursor
+  /** Page size from 1 through 100; defaults to 20. */
+  readonly limit?: number
+}
+```
+
+```ts type-equiv
+/** One complete committed metadata page and its stable continuation identities. */
+interface TeamMessagePage {
+  readonly items: TeamMessageSummary[]
+  readonly committedCursor: TeamMessageCursor
+  readonly nextCursor?: TeamMessageCursor
+  readonly complete: true
+}
+```
+
+元数据页绝不包含消息内容。按需详情必须指定由其 committed cursor 暴露的消息。intentional text 以字面文本返回；图片变成脱离原对象的媒体类型、字节数和尺寸；reasoning、tool 或 custom block 变成 `omitted`。Completeness 明确指出是否有内容损失，或原始内容是否不可用。Delivery 只表示 Host 证实的 mailbox 阶段：`pending`、`delivered` 和 `unknown` 都不声称有人已读消息或已完成相关工作。这些读取不会追加 event，也不会发出 Team activity。
+
+```ts type-equiv
+/** Browser-safe intentional content retained from one message block. */
+type TeamMessageContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | {
+    readonly type: 'image'
+    readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+    readonly bytes: number
+    readonly width: number
+    readonly height: number
+  }
+  | { readonly type: 'omitted' }
+```
+
+```ts type-equiv
+/** Sanitized content result with explicit loss reporting. */
+interface TeamMessageContent {
+  readonly completeness: 'complete' | 'partial' | 'unavailable'
+  readonly omittedCount: number
+  readonly parts: TeamMessageContentPart[]
+}
+```
+
+```ts type-equiv
+/** On-demand detail request bound to the committed list window that exposed it. */
+interface GetTeamMessageRequest {
+  readonly messageId: TeamMessageId
+  readonly committedCursor: TeamMessageCursor
+}
+```
+
+```ts type-equiv
+/** Metadata plus browser-safe intentional content for one persisted Team message. */
+interface TeamMessageDetail extends TeamMessageSummary {
+  readonly content: TeamMessageContent
+}
+```
+
 每条消息都会尝试 Steer 投递。running DSH target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。其 Session 会在 pending inbox 条目和最终用户消息上保留消息身份与发送者归因。external target 通过 provider-native handle 接收同一持久 mailbox item，并在 Agent Teams 记录 delivery 前返回幂等 native turn correlation。调用方不能选择其他模式，因此持久记录不存储调度方式。
 
 ```ts type-equiv
@@ -277,7 +383,7 @@ interface TeamTaskSnapshot {
 
 ## 回放
 
-`foldTeam()` 把一个 Root Session 回放成每个 Team 操作所读取的 roster、任务板与 queued-minus-delivered mailbox。它按 `TeamId` 选取记录，因此普通 fork 继承的 event 保留 ancestor id，绝不会进入新 Root 的状态。Session event 的 `seq` 与 `time` 继续负责顺序和时间记录，Team snapshot 不再重复保存它们。roster 与 task 读取以 view 形式到达调用方，而 pending 邮件仅供投递与恢复内部使用。包 [README](../../packages/experimental/agent-team/README.zh.md)负责 operation、authorization、recovery 和限制行为。
+`foldTeam()` 把一个 Root Session 回放成 Team 操作所读取的 roster、任务板、queued-minus-delivered mailbox 与精简消息索引。它按 `TeamId` 选取记录，因此普通 fork 继承的 event 保留 ancestor id，绝不会进入新 Root 的状态。Session event 的 `seq` 与 `time` 继续负责顺序和时间记录，Team snapshot 不再重复保存它们。roster 与 task 读取以 view 形式到达调用方。原始 mailbox snapshot 仍只供投递与恢复内部使用，而 Lead reader 返回脱离原对象的元数据及经过明确净化的按需详情。包 [README](../../packages/experimental/agent-team/README.zh.md)负责 operation、authorization、recovery 和限制行为。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -330,6 +436,22 @@ registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRunt
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Read one bounded metadata page from a fixed committed Team-message window.
+ * @param caller - exact live Team Lead.
+ * @param request - filters, page size, and optional stable continuation.
+ * @returns message metadata without message content.
+ */
+async listMessages(caller: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>
+
+/**
+ * Read sanitized intentional content for one message in a committed window.
+ * @param caller - exact live Team Lead.
+ * @param request - message identity and its committed list cursor.
+ * @returns message metadata and browser-safe content.
+ */
+async getMessage(caller: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>
 
 /**
  * Read bounded normalized evidence for one exact external teammate.
@@ -411,6 +533,22 @@ tryMembership(agent: Agent): TeamMembership | undefined
  * @returns detached current roster and task views.
  */
 @Remote('view') remoteView(agent: Agent): TeamView
+
+/**
+ * Read persisted message metadata through the generated Remote API.
+ * @param agent - exact live Team Lead used as the authority credential.
+ * @param request - bounded committed message query.
+ * @returns metadata page with stable cursors and no message body.
+ */
+@Remote('listMessages') remoteListMessages(agent: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>
+
+/**
+ * Read one sanitized persisted message through the generated Remote API.
+ * @param agent - exact live Team Lead used as the authority credential.
+ * @param request - stable message identity and committed query cursor.
+ * @returns safe intentional content with explicit completeness.
+ */
+@Remote('getMessage') remoteGetMessage(agent: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>
 
 /**
  * Create one shared task through the generated Remote API.

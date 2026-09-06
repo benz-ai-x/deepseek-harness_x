@@ -138,6 +138,12 @@ async function bench(options: {
     entry,
     collapseHeader,
     select: (sessionId: SessionId) => { current = sessionId },
+    registerPanelView: (id: string, label: string) => ctx.slots.inject(
+      'agent-team.panel.view',
+      () => ctx.slots.register({
+        name: 'agent-team.panel.view', id, label, order: 10,
+      } as never, () => null),
+    ),
   }
 }
 
@@ -148,7 +154,11 @@ describe('ui-team browser plugin', () => {
     expect(b.entry()).toMatchObject({
       options: { id: 'agent-team', order: 20 },
       locale: 'agent-team',
+      children: {
+        'agent-team.panel.view': { kind: 'list', scope: 'session' },
+      },
     })
+    expect(b.ctx.slots.spec('agent-team.panel.view')).toEqual({ kind: 'list', scope: 'session' })
     expect(b.remote.mount).toHaveBeenCalledOnce()
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
     const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
@@ -179,6 +189,20 @@ describe('ui-team browser plugin', () => {
     await b.fiber.dispose()
     expect(b.entry()).toBeUndefined()
     expect(b.remote.disposeMount).toHaveBeenCalledOnce()
+  })
+
+  it('projects public child-view navigation and removes it with its Fiber', async () => {
+    const b = await bench()
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    expect(actions.panelViews.getSnapshot()).toEqual([])
+
+    const contribution = b.registerPanelView('messages', 'Messages')
+    await Promise.resolve()
+    expect(actions.panelViews.getSnapshot()).toEqual([{ id: 'messages', label: 'Messages' }])
+
+    contribution()
+    await Promise.resolve()
+    expect(actions.panelViews.getSnapshot()).toEqual([])
   })
 
   it('unmounts the Remote contribution when later Client registration fails', async () => {

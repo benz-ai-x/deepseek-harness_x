@@ -5,6 +5,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamId,
+  TeamMessageCursor,
   TeamMessageId,
   TeamNativeOperationId,
   TeamTaskId,
@@ -16,6 +17,7 @@ import type {
 
 export type {
   TeamId,
+  TeamMessageCursor,
   TeamMessageId,
   TeamNativeOperationId,
   TeamTaskId,
@@ -198,6 +200,86 @@ export interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+}
+
+/** Direction of a persisted message relative to the selected Team member. */
+export type TeamMessageDirection = 'sent' | 'received'
+
+/** Host-proven delivery stage; unknown is reserved for clients that cannot obtain a current fact. */
+export type TeamMessageDelivery =
+  | { readonly stage: 'pending' }
+  | { readonly stage: 'delivered'; readonly deliveredAt: number }
+  | { readonly stage: 'unknown' }
+
+/** Detached Team participant identity shown in a message result. */
+export interface TeamMessageParticipant {
+  readonly id: SessionId
+  readonly name: string
+}
+
+/** Metadata-only row for one persisted Team message. */
+export interface TeamMessageSummary {
+  readonly id: TeamMessageId
+  readonly sender: TeamMessageParticipant
+  readonly recipient: TeamMessageParticipant
+  /** Unix epoch milliseconds from the durable queue event. */
+  readonly sentAt: number
+  readonly delivery: TeamMessageDelivery
+}
+
+/** Filters applied to one committed Team-message window. */
+export interface TeamMessageFilters {
+  /** Retained Team participant selected by durable Session identity. */
+  readonly memberId?: SessionId
+  /** Relative to memberId; omitted memberId with a direction is invalid. */
+  readonly direction?: TeamMessageDirection
+  readonly delivery?: TeamMessageDelivery['stage']
+}
+
+/** Bounded newest-first query for persisted Team-message metadata. */
+export interface ListTeamMessagesRequest {
+  readonly filters?: TeamMessageFilters
+  readonly cursor?: TeamMessageCursor
+  /** Page size from 1 through 100; defaults to 20. */
+  readonly limit?: number
+}
+
+/** One complete committed metadata page and its stable continuation identities. */
+export interface TeamMessagePage {
+  readonly items: TeamMessageSummary[]
+  readonly committedCursor: TeamMessageCursor
+  readonly nextCursor?: TeamMessageCursor
+  readonly complete: true
+}
+
+/** Browser-safe intentional content retained from one message block. */
+export type TeamMessageContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | {
+    readonly type: 'image'
+    readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+    readonly bytes: number
+    readonly width: number
+    readonly height: number
+  }
+  | { readonly type: 'omitted' }
+
+/** Sanitized content result with explicit loss reporting. */
+export interface TeamMessageContent {
+  readonly completeness: 'complete' | 'partial' | 'unavailable'
+  readonly omittedCount: number
+  readonly parts: TeamMessageContentPart[]
+}
+
+/** On-demand detail request bound to the committed list window that exposed it. */
+export interface GetTeamMessageRequest {
+  readonly messageId: TeamMessageId
+  readonly committedCursor: TeamMessageCursor
+}
+
+/** Metadata plus browser-safe intentional content for one persisted Team message. */
+export interface TeamMessageDetail extends TeamMessageSummary {
+  readonly content: TeamMessageContent
 }
 
 /** Trusted provider correlation supplied separately from model tool arguments. */

@@ -103,7 +103,7 @@ Provider registration belongs to the calling Fiber. Removal closes admission, ca
 
 The Team owner delivers `NativeMemberGrant` only to the current provider after durable member acceptance or verified resume. Its captured identity never comes from model arguments. Registration, handle, or exact Lead disposal and inactive native presence permanently revoke that grant; evaluations receive no production grant. The [authorization decision](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.md) owns rationale, and the [package contract](../../packages/experimental/agent-team/README.md#teammates) owns query limits and cursor semantics.
 
-Native messages, task changes and terminal results share the [atomic receipt decision](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md). One required payload-4 message/task event records the mutation with its `TeamNativeOperationId` receipt; projection version 5 reconstructs both, with explicit payload-3 message and payload-2 readers. Task receipts retain validated input and a compact original acceptance. [Native task rules](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.md) explain replay before CAS and observation-only waits.
+Native messages, task changes and terminal results share the [atomic receipt decision](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md). One required payload-4 message/task event records the mutation with its `TeamNativeOperationId` receipt; projection version 6 reconstructs both and its compact message index, with explicit payload-3 message and payload-2 readers. Task receipts retain validated input and a compact original acceptance. [Native task rules](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.md) explain replay before CAS and observation-only waits.
 
 `turns.recover` is a Host-only grant reader rather than an advertised model operation. After current-grant checks, it serializes against the Team journal, flushes the Lead Session, and returns a detached current view containing only the granted member's launch correlation, inbound delivery ids, and committed settlement outcome and intentional text. It excludes incoming message text and every sibling or other-Team fact, and it emits no Team activity. Pages use a numeric offset, default to 10 items, accept 1 to 100, and retain stable identities so adapters can de-duplicate items if concurrent appends shift later pages.
 
@@ -242,6 +242,112 @@ interface TeamMessageSnapshot {
 }
 ```
 
+Raw mailbox snapshots remain Host-only. Projection version 6 also retains each message identity, queue sequence and time, and optional delivery sequence and time. The exact live Lead can read that index as bounded newest-first metadata after a Session flush. A request accepts 1 through 100 rows and defaults to 20. Optional member, direction, and delivery filters are normalized into an opaque committed cursor. That cursor fixes the Team, filters, and upper sequence bound; a continuation stays inside the same committed window even when newer messages arrive. Malformed, future, cross-Team, mismatched-query, stale-caller, forged-caller, and forged-participant inputs are rejected.
+
+```ts type-equiv
+/** Direction of a persisted message relative to the selected Team member. */
+type TeamMessageDirection = 'sent' | 'received'
+```
+
+```ts type-equiv
+/** Host-proven delivery stage; unknown is reserved for clients that cannot obtain a current fact. */
+type TeamMessageDelivery =
+  | { readonly stage: 'pending' }
+  | { readonly stage: 'delivered'; readonly deliveredAt: number }
+  | { readonly stage: 'unknown' }
+```
+
+```ts type-equiv
+/** Detached Team participant identity shown in a message result. */
+interface TeamMessageParticipant {
+  readonly id: SessionId
+  readonly name: string
+}
+```
+
+```ts type-equiv
+/** Metadata-only row for one persisted Team message. */
+interface TeamMessageSummary {
+  readonly id: TeamMessageId
+  readonly sender: TeamMessageParticipant
+  readonly recipient: TeamMessageParticipant
+  /** Unix epoch milliseconds from the durable queue event. */
+  readonly sentAt: number
+  readonly delivery: TeamMessageDelivery
+}
+```
+
+```ts type-equiv
+/** Filters applied to one committed Team-message window. */
+interface TeamMessageFilters {
+  /** Retained Team participant selected by durable Session identity. */
+  readonly memberId?: SessionId
+  /** Relative to memberId; omitted memberId with a direction is invalid. */
+  readonly direction?: TeamMessageDirection
+  readonly delivery?: TeamMessageDelivery['stage']
+}
+```
+
+```ts type-equiv
+/** Bounded newest-first query for persisted Team-message metadata. */
+interface ListTeamMessagesRequest {
+  readonly filters?: TeamMessageFilters
+  readonly cursor?: TeamMessageCursor
+  /** Page size from 1 through 100; defaults to 20. */
+  readonly limit?: number
+}
+```
+
+```ts type-equiv
+/** One complete committed metadata page and its stable continuation identities. */
+interface TeamMessagePage {
+  readonly items: TeamMessageSummary[]
+  readonly committedCursor: TeamMessageCursor
+  readonly nextCursor?: TeamMessageCursor
+  readonly complete: true
+}
+```
+
+The metadata page never contains message content. On-demand detail must name a message exposed by its committed cursor. Intentional text is returned as literal text, images become detached media type, byte-size, and dimensions, and reasoning, tool, or custom blocks become `omitted`. Completeness reports whether anything was lost or the original content is unavailable. Delivery remains only the Host-proven mailbox stage: `pending`, `delivered`, and `unknown` do not claim that a person read the message or completed related work. These reads append no event and emit no Team activity.
+
+```ts type-equiv
+/** Browser-safe intentional content retained from one message block. */
+type TeamMessageContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | {
+    readonly type: 'image'
+    readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+    readonly bytes: number
+    readonly width: number
+    readonly height: number
+  }
+  | { readonly type: 'omitted' }
+```
+
+```ts type-equiv
+/** Sanitized content result with explicit loss reporting. */
+interface TeamMessageContent {
+  readonly completeness: 'complete' | 'partial' | 'unavailable'
+  readonly omittedCount: number
+  readonly parts: TeamMessageContentPart[]
+}
+```
+
+```ts type-equiv
+/** On-demand detail request bound to the committed list window that exposed it. */
+interface GetTeamMessageRequest {
+  readonly messageId: TeamMessageId
+  readonly committedCursor: TeamMessageCursor
+}
+```
+
+```ts type-equiv
+/** Metadata plus browser-safe intentional content for one persisted Team message. */
+interface TeamMessageDetail extends TeamMessageSummary {
+  readonly content: TeamMessageContent
+}
+```
+
 Every message attempts Steer delivery. A running DSH target receives it at the nearest step boundary, an idle target starts a turn, and an inactive teammate cold-resumes. Its Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. An external target receives the same durable mailbox item through its provider-native handle and returns an idempotent native turn correlation before Agent Teams records delivery. Scheduling is not stored in the durable record because callers cannot select another mode.
 
 ```ts type-equiv
@@ -277,7 +383,7 @@ interface TeamTaskSnapshot {
 
 ## Replay
 
-`foldTeam()` replays one root Session into the roster, task board, and queued-minus-delivered mailbox that every Team operation reads. It selects records by `TeamId`, so events inherited by an ordinary fork retain the ancestor id and never enter the new root's state. Session event `seq` and `time` remain the ordering and timing record; Team snapshots do not duplicate them. Roster and task reads reach callers as views; pending mail stays internal to delivery and recovery. The package [README](../../packages/experimental/agent-team/README.md) owns operation, authorization, recovery, and limit behavior.
+`foldTeam()` replays one root Session into the roster, task board, queued-minus-delivered mailbox, and compact message index that Team operations read. It selects records by `TeamId`, so events inherited by an ordinary fork retain the ancestor id and never enter the new root's state. Session event `seq` and `time` remain the ordering and timing record; Team snapshots do not duplicate them. Roster and task reads reach callers as views. Raw mailbox snapshots remain internal to delivery and recovery, while the Lead reader returns detached metadata and explicitly sanitized on-demand detail. The package [README](../../packages/experimental/agent-team/README.md) owns operation, authorization, recovery, and limit behavior.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -330,6 +436,22 @@ registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRunt
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Read one bounded metadata page from a fixed committed Team-message window.
+ * @param caller - exact live Team Lead.
+ * @param request - filters, page size, and optional stable continuation.
+ * @returns message metadata without message content.
+ */
+async listMessages(caller: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>
+
+/**
+ * Read sanitized intentional content for one message in a committed window.
+ * @param caller - exact live Team Lead.
+ * @param request - message identity and its committed list cursor.
+ * @returns message metadata and browser-safe content.
+ */
+async getMessage(caller: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>
 
 /**
  * Read bounded normalized evidence for one exact external teammate.
@@ -411,6 +533,22 @@ tryMembership(agent: Agent): TeamMembership | undefined
  * @returns detached current roster and task views.
  */
 @Remote('view') remoteView(agent: Agent): TeamView
+
+/**
+ * Read persisted message metadata through the generated Remote API.
+ * @param agent - exact live Team Lead used as the authority credential.
+ * @param request - bounded committed message query.
+ * @returns metadata page with stable cursors and no message body.
+ */
+@Remote('listMessages') remoteListMessages(agent: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>
+
+/**
+ * Read one sanitized persisted message through the generated Remote API.
+ * @param agent - exact live Team Lead used as the authority credential.
+ * @param request - stable message identity and committed query cursor.
+ * @returns safe intentional content with explicit completeness.
+ */
+@Remote('getMessage') remoteGetMessage(agent: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>
 
 /**
  * Create one shared task through the generated Remote API.

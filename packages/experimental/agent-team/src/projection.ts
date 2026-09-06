@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionEventMap, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import {
   TeamId as toTeamId,
@@ -280,9 +280,19 @@ export interface TeamState {
   readonly members: TeamMemberSnapshot[]
   readonly tasks: TeamTaskSnapshot[]
   readonly messages: TeamMessageSnapshot[]
+  readonly messageIndex: TeamMessageIndexEntry[]
   readonly delivered: TeamMessageId[]
   readonly nativeOperations: TeamNativeOperationReceipt[]
   nextTaskNumber: number
+}
+
+/** Event-owned ordering and delivery facts for one retained Team message. */
+export interface TeamMessageIndexEntry {
+  readonly messageId: TeamMessageId
+  readonly queuedSeq: SessionSeq
+  readonly queuedAt: number
+  deliveredSeq?: SessionSeq
+  deliveredAt?: number
 }
 
 /**
@@ -296,6 +306,7 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     members: [],
     tasks: [],
     messages: [],
+    messageIndex: [],
     delivered: [],
     nativeOperations: [],
     nextTaskNumber: 1,
@@ -318,6 +329,13 @@ const teamProjectionEntrySchema = z.object({
   members: z.array(teamMemberSnapshotSchema),
   tasks: z.array(teamTaskSnapshotSchema),
   messages: z.array(teamMessageSnapshotSchema),
+  messageIndex: z.array(z.object({
+    messageId: teamMessageIdSchema,
+    queuedSeq: nonNegativeSafeInteger.transform(value => value as SessionSeq),
+    queuedAt: z.number(),
+    deliveredSeq: nonNegativeSafeInteger.transform(value => value as SessionSeq).optional(),
+    deliveredAt: z.number().optional(),
+  }).strict()),
   delivered: z.array(teamMessageIdSchema),
   nativeOperations: z.array(nativeOperationReceiptSchema),
   nextTaskNumber: positiveSafeInteger,
@@ -475,6 +493,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
         throw new Error(`team message "${message.id}" was queued twice`)
       }
       state.messages.push(message)
+      state.messageIndex.push({ messageId: message.id, queuedSeq: event.seq, queuedAt: event.time })
       break
     }
     case 'team/native-operation/committed': {
@@ -530,6 +549,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
         throw new Error('native operation or its message was committed twice')
       }
       state.messages.push(message)
+      state.messageIndex.push({ messageId: message.id, queuedSeq: event.seq, queuedAt: event.time })
       state.nativeOperations.push(receipt)
       break
     }
@@ -538,6 +558,10 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       if (queued === undefined) throw new Error(`team message "${event.data.messageId}" was delivered before queueing`)
       if (queued.targetId !== event.data.targetId) throw new Error(`team message "${event.data.messageId}" target changed`)
       if (state.delivered.includes(event.data.messageId)) throw new Error(`team message "${event.data.messageId}" was delivered twice`)
+      const entry = state.messageIndex.find(candidate => candidate.messageId === event.data.messageId)
+      if (entry === undefined) throw new Error(`team message "${event.data.messageId}" has no queue index`)
+      entry.deliveredSeq = event.seq
+      entry.deliveredAt = event.time
       state.delivered.push(event.data.messageId)
       break
     }
@@ -550,7 +574,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
 /** Host-only Team projection selected by the projected Session identity. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 5,
+  stateVersion: 6,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: (state, event) => {

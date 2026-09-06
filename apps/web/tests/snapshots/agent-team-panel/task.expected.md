@@ -7,6 +7,8 @@
     - img
   - button "Close":
     - img
+  - tablist "Agent Team views":
+    - tab "Overview" [selected]
   - heading "Members" [level=3]
   - 'button "lead Idle · Model: deepseek-v4-flash" [disabled]'
   - heading "Shared tasks" [level=3]

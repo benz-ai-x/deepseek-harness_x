@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamMemberView as TeamRosterMember,
@@ -13,7 +13,7 @@ import {
   IconCheckOutline14, IconCloseOutline16, IconEditOutline16, IconPlusOutline16,
   IconRefreshOutline14, IconTrashOutline16, IconUserOutline16, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS, type TeamKey } from './locales.ts'
 import css from './TeamAction.module.css'
@@ -26,6 +26,11 @@ export type TeamTaskActionResult = RemoteResult<TeamTaskMutationResult>
 
 /** Business actions injected by the browser plugin. */
 export interface TeamActionInjected {
+  readonly panelViews: {
+    getSnapshot: () => readonly TeamPanelView[]
+    subscribe: (listener: () => void) => () => void
+  }
+  resolveTeamSessionId: (sessionId: SessionId) => SessionId
   load: (sessionId: SessionId) => Promise<TeamActionResult<TeamView>>
   createTask: (sessionId: SessionId, input: {
     subject: string
@@ -46,9 +51,16 @@ export interface TeamActionInjected {
   openTeammate: (sessionId: SessionId, member: TeamRosterMember) => Promise<void>
 }
 
+/** Navigation metadata for one public Team panel child view. */
+export interface TeamPanelView {
+  readonly id: string
+  readonly label: string
+}
+
 /** Full props of the Team conversation-header action. */
 export type TeamActionProps =
-  PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
+  PropsRuntime<'conversation.session.header.actions'> & PropsRenderSlots<'agent-team.panel.view'>
+  & TeamActionInjected & PropsLocale<typeof NS>
 
 interface Draft {
   subject: string
@@ -97,7 +109,7 @@ function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
 
 /** Render the live Team roster and compare-and-set task board. */
 export function TeamAction({
-  sessionId, load, createTask, updateTask, openTeammate, t,
+  sessionId, load, createTask, updateTask, openTeammate, panelViews, resolveTeamSessionId, renderSlot, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -108,6 +120,8 @@ export function TeamAction({
   const [editing, setEditing] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT)
   const [pendingTasks, setPendingTasks] = useState<ReadonlySet<string>>(() => new Set())
+  const [activeView, setActiveView] = useState('overview')
+  const childViews = useSyncExternalStore(panelViews.subscribe, panelViews.getSnapshot)
   const sessionRef = useRef(sessionId)
   const refreshGeneration = useRef(0)
   sessionRef.current = sessionId
@@ -123,7 +137,14 @@ export function TeamAction({
     setEditing(null)
     setEditDraft(EMPTY_DRAFT)
     setPendingTasks(new Set())
+    setActiveView('overview')
   }, [sessionId])
+
+  useEffect(() => {
+    if (activeView !== 'overview' && !childViews.some(view => view.id === activeView)) {
+      setActiveView('overview')
+    }
+  }, [activeView, childViews])
 
   const refresh = useCallback(async (): Promise<boolean> => {
     const requestedSession = sessionId
@@ -271,9 +292,32 @@ export function TeamAction({
               <IconCloseOutline16 size={14} />
             </button>
           </div>
-          {error !== null && <div className={css.error} role="alert">{error}</div>}
-          {loading && view === null && <div className={css.notice}>{t('loading')}</div>}
-          {view !== null && (
+          <div className={css.tabs} role="tablist" aria-label={t('navigation')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'overview'}
+              className={activeView === 'overview' ? css.activeTab : css.tab}
+              onClick={() => { setActiveView('overview') }}
+            >
+              {t('overview')}
+            </button>
+            {childViews.map(child => (
+              <button
+                key={child.id}
+                type="button"
+                role="tab"
+                aria-selected={activeView === child.id}
+                className={activeView === child.id ? css.activeTab : css.tab}
+                onClick={() => { setActiveView(child.id) }}
+              >
+                {child.label}
+              </button>
+            ))}
+          </div>
+          {activeView === 'overview' && error !== null && <div className={css.error} role="alert">{error}</div>}
+          {activeView === 'overview' && loading && view === null && <div className={css.notice}>{t('loading')}</div>}
+          {activeView === 'overview' && view !== null && (
             <>
               <section>
                 <h3>{t('roster')}</h3>
@@ -393,6 +437,9 @@ export function TeamAction({
               </section>
             </>
           )}
+          {activeView !== 'overview' && renderSlot('agent-team.panel.view', {
+            teamSessionId: resolveTeamSessionId(sessionId),
+          }, { only: activeView })}
         </div>
       )}
     </div>

@@ -13,6 +13,9 @@ export type TeamTaskId = Branded<'TeamTaskId'>
 /** Stable identifier for one durable peer message. */
 export type TeamMessageId = Branded<'TeamMessageId'>
 
+/** Opaque continuation for one committed Team-message query window. */
+export type TeamMessageCursor = Branded<'TeamMessageCursor'>
+
 /** Stable identity of one member's provider-correlated durable operation. */
 export type TeamNativeOperationId = Branded<'TeamNativeOperationId'>
 
@@ -77,6 +80,15 @@ export function TeamTaskId(id: string): TeamTaskId {
  */
 export function TeamMessageId(id: string): TeamMessageId {
   return id as TeamMessageId
+}
+
+/**
+ * Brand one Host-issued committed message cursor.
+ * @param value - Opaque cursor returned by a prior Team-message read.
+ * @returns the same string branded as a Team-message cursor.
+ */
+export function TeamMessageCursor(value: string): TeamMessageCursor {
+  return brandString<TeamMessageCursor>(value)
 }
 
 /**

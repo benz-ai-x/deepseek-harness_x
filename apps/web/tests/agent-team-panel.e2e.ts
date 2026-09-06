@@ -83,10 +83,12 @@ describe('web e2e: Agent Teams panel', () => {
     await scaffold?.close()
   })
 
-  it('loads the roster and creates one shared task through generated Remote', async () => {
+  it('loads the roster and creates one shared task through the single navigable Team panel', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-agent-team-panel'))
     const action = page.locator('[data-team-action]')
     await action.getByRole('button', { name: /Agent Team/iu }).click()
+    await action.getByRole('tablist', { name: 'Agent Team views', exact: true }).waitFor()
+    expect(await action.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true')
     await action.getByText('No shared tasks yet').waitFor()
     await action.getByText('lead').waitFor()
 

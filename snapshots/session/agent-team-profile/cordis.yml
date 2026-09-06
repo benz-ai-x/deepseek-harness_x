@@ -1,4 +1,9 @@
 # Load the private Agent Teams layer over the shipped headless base profile.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    includeDefaultRoots: false
+
 - id: tool-subagent-control
   disabled: true
 

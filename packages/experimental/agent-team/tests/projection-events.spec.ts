@@ -46,7 +46,7 @@ function pending(state: TeamState): TeamMessageSnapshot[] {
 /** Whether one Team state contains no projected records. */
 function isEmptyState(state: TeamState): boolean {
   return state.members.length === 0 && state.tasks.length === 0
-    && state.messages.length === 0 && state.delivered.length === 0
+    && state.messages.length === 0 && state.messageIndex.length === 0 && state.delivered.length === 0
 }
 
 function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
@@ -484,7 +484,15 @@ describe('Agent Teams projection events', () => {
       messageId: TeamMessageId('message-1'),
       targetId: CHILD,
     }, SessionSeq(1))
-    expect(pending(projectTeam(ROOT, [queued, delivered]))).toEqual([])
+    const state = projectTeam(ROOT, [queued, delivered])
+    expect(pending(state)).toEqual([])
+    expect(state.messageIndex).toEqual([{
+      messageId: TeamMessageId('message-1'),
+      queuedSeq: SessionSeq(0),
+      queuedAt: 0,
+      deliveredSeq: SessionSeq(1),
+      deliveredAt: 1,
+    }])
     expect(() => projectTeam(ROOT, [queued, queued])).toThrow(/queued twice/)
     expect(() => projectTeam(ROOT, [delivered])).toThrow(/delivered before queueing/)
     expect(() => projectTeam(ROOT, [queued, event('team/message/delivered', {
@@ -606,6 +614,58 @@ describe('Agent Teams projection events', () => {
       message: message({ content: [extension] }),
     }, SessionSeq(0))])
     expect(pending(state)[0]?.content).toEqual([extension])
+  })
+
+  it('indexes ordinary and native message facts from event-owned sequence and time', () => {
+    const provisioning = member({ provider: 'native', externalRuntime: externalRuntime() })
+    const native = event('team/native-operation/committed', {
+      version: 4,
+      kind: 'message',
+      teamId: TEAM,
+      message: message({
+        id: TeamMessageId('native-message'), senderId: CHILD, senderName: 'worker-a', targetId: ROOT,
+      }),
+      receipt: {
+        id: TeamNativeOperationId('2e57e0ef07a7b8566bad1d2bfa654b3b8d3054c6474bf4ac361b32c2ab2c0df5'),
+        memberId: CHILD,
+        provider: 'native',
+        nativeHandle: TeammateRuntimeHandle('handle-1'),
+        source: {
+          kind: 'tool', turnId: TeammateRuntimeTurnId('turn-1'), callId: TeammateRuntimeToolCallId('call-1'),
+        },
+        inputFingerprint: '0f36bd40cf1f1795f9a1a7fba7e085abf11a0c4400a6b005ae146770f3274147',
+        result: {
+          ok: true,
+          operation: 'messages.send',
+          value: { messageId: TeamMessageId('native-message'), status: 'queued' },
+        },
+      },
+    }, SessionSeq(12))
+    const state = projectTeam(ROOT, [
+      event('team/message/queued', {
+        version: 2, teamId: TEAM, message: message({ id: TeamMessageId('ordinary-message') }),
+      }, SessionSeq(0)),
+      event('team/member', { version: 2, teamId: TEAM, member: provisioning }, SessionSeq(1)),
+      event('team/member', {
+        version: 2,
+        teamId: TEAM,
+        member: {
+          ...provisioning,
+          phase: 'active',
+          externalRuntime: { ...provisioning.externalRuntime!, nativeHandle: TeammateRuntimeHandle('handle-1') },
+        },
+      }, SessionSeq(2)),
+      native,
+    ])
+    expect(state.messageIndex).toEqual([
+      { messageId: TeamMessageId('ordinary-message'), queuedSeq: SessionSeq(0), queuedAt: 0 },
+      { messageId: TeamMessageId('native-message'), queuedSeq: SessionSeq(12), queuedAt: 12 },
+    ])
+    expect(teamProjectionDefinition.stateVersion).toBe(6)
+    expect(() => teamProjectionDefinition.stateSchema.parse({
+      ...state,
+      messageIndex: undefined,
+    })).toThrow()
   })
 
   it('records unsupported event versions without applying them', () => {

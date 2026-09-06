@@ -380,6 +380,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable message identity and immediate-delivery observation.',
       },
       {
+        signature: 'async listMessages(caller: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>',
+        description: 'Read one bounded metadata page from a fixed committed Team-message window.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'request', description: 'filters, page size, and optional stable continuation.' }],
+        returns: 'message metadata without message content.',
+      },
+      {
+        signature: 'async getMessage(caller: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>',
+        description: 'Read sanitized intentional content for one message in a committed window.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'request', description: 'message identity and its committed list cursor.' }],
+        returns: 'message metadata and browser-safe content.',
+      },
+      {
         signature: 'async readTeammateRuntimeEvidence( caller: Agent, targetName: string, request: Omit<TeammateRuntimeEvidenceRequest, \'nativeHandle\'>, ): Promise<TeammateRuntimeEvidenceResult>',
         description: 'Read bounded normalized evidence for one exact external teammate.',
         parameters: [{ name: 'caller', description: 'exact live Lead Agent used as the authority credential.' }, { name: 'targetName', description: 'active provider-native teammate name.' }, { name: 'request', description: 'bounded evidence cursor, limit, and caller cancellation.' }],
@@ -438,6 +450,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read the current roster and non-deleted task board through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }],
         returns: 'detached current roster and task views.',
+      },
+      {
+        signature: '@Remote(\'listMessages\') remoteListMessages(agent: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>',
+        description: 'Read persisted message metadata through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team Lead used as the authority credential.' }, { name: 'request', description: 'bounded committed message query.' }],
+        returns: 'metadata page with stable cursors and no message body.',
+      },
+      {
+        signature: '@Remote(\'getMessage\') remoteGetMessage(agent: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>',
+        description: 'Read one sanitized persisted message through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team Lead used as the authority credential.' }, { name: 'request', description: 'stable message identity and committed query cursor.' }],
+        returns: 'safe intentional content with explicit completeness.',
       },
       {
         signature: '@Remote(\'createTask\') remoteCreateTask(agent: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskMutationResult>',
@@ -4055,6 +4079,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface GenericResultView {\n    card: \'generic\';\n    title?: string;\n    content?: ContentBlock[];\n}',
   },
   {
+    name: 'GetTeamMessageRequest',
+    declaration: 'export interface GetTeamMessageRequest {\n    readonly messageId: TeamMessageId;\n    readonly committedCursor: TeamMessageCursor;\n}',
+  },
+  {
     name: 'GoalActivation',
     declaration: 'export type GoalActivation = \'armed\' | \'disarmed\';',
   },
@@ -4245,6 +4273,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'KvUnitDescriptor',
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
+  },
+  {
+    name: 'ListTeamMessagesRequest',
+    declaration: 'export interface ListTeamMessagesRequest {\n    readonly filters?: TeamMessageFilters;\n    readonly cursor?: TeamMessageCursor;\n    readonly limit?: number;\n}',
   },
   {
     name: 'LlmAdapter',
@@ -5799,8 +5831,48 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly requestedRoute?: TeamMemberRouteSnapshot;\n    readonly resolvedRoute?: TeamMemberRouteSnapshot;\n    readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot;\n    readonly diagnostics: string[];\n}',
   },
   {
+    name: 'TeamMessageContent',
+    declaration: 'export interface TeamMessageContent {\n    readonly completeness: \'complete\' | \'partial\' | \'unavailable\';\n    readonly omittedCount: number;\n    readonly parts: TeamMessageContentPart[];\n}',
+  },
+  {
+    name: 'TeamMessageContentPart',
+    declaration: 'export type TeamMessageContentPart = {\n    readonly type: \'text\';\n    readonly text: string;\n} | {\n    readonly type: \'image\';\n    readonly mediaType: \'image/png\' | \'image/jpeg\' | \'image/webp\' | \'image/gif\';\n    readonly bytes: number;\n    readonly width: number;\n    readonly height: number;\n} | {\n    readonly type: \'omitted\';\n};',
+  },
+  {
+    name: 'TeamMessageCursor',
+    declaration: 'export type TeamMessageCursor = Branded<\'TeamMessageCursor\'>;',
+  },
+  {
+    name: 'TeamMessageDelivery',
+    declaration: 'export type TeamMessageDelivery = {\n    readonly stage: \'pending\';\n} | {\n    readonly stage: \'delivered\';\n    readonly deliveredAt: number;\n} | {\n    readonly stage: \'unknown\';\n};',
+  },
+  {
+    name: 'TeamMessageDetail',
+    declaration: 'export interface TeamMessageDetail extends TeamMessageSummary {\n    readonly content: TeamMessageContent;\n}',
+  },
+  {
+    name: 'TeamMessageDirection',
+    declaration: 'export type TeamMessageDirection = \'sent\' | \'received\';',
+  },
+  {
+    name: 'TeamMessageFilters',
+    declaration: 'export interface TeamMessageFilters {\n    readonly memberId?: SessionId;\n    readonly direction?: TeamMessageDirection;\n    readonly delivery?: TeamMessageDelivery[\'stage\'];\n}',
+  },
+  {
     name: 'TeamMessageId',
     declaration: 'export type TeamMessageId = Branded<\'TeamMessageId\'>;',
+  },
+  {
+    name: 'TeamMessagePage',
+    declaration: 'export interface TeamMessagePage {\n    readonly items: TeamMessageSummary[];\n    readonly committedCursor: TeamMessageCursor;\n    readonly nextCursor?: TeamMessageCursor;\n    readonly complete: true;\n}',
+  },
+  {
+    name: 'TeamMessageParticipant',
+    declaration: 'export interface TeamMessageParticipant {\n    readonly id: SessionId;\n    readonly name: string;\n}',
+  },
+  {
+    name: 'TeamMessageSummary',
+    declaration: 'export interface TeamMessageSummary {\n    readonly id: TeamMessageId;\n    readonly sender: TeamMessageParticipant;\n    readonly recipient: TeamMessageParticipant;\n    readonly sentAt: number;\n    readonly delivery: TeamMessageDelivery;\n}',
   },
   {
     name: 'TeamTaskAction',

@@ -1,5 +1,5 @@
 ---
-description: "使用并排查实验性 Web Agent Teams roster、共享任务板与 teammate 导航面板。"
+description: "使用并排查实验性 Web Agent Teams roster、任务板、teammate 导航与公开子视图。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包向 Web 会话页头添加 Agent Teams action，让用户检查当前 roster、管理共享任务板并导航到 teammate 会话。它通过生成的 `ctx.remote.agentTeams` contribution 读取权威 Team 状态，并让普通 child history 导航继续使用稳定的 addressed-subagent 路径。需要实验性源码 checkout Web profile 时选择本包；正式发布会排除它。这个浏览器 projection 不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
+本包向 Web 会话页头添加唯一的 Agent Teams action 与 dialog，让用户检查当前 roster、管理共享任务板、导航到 teammate 会话并打开扩展拥有的 Team 视图。它通过生成的 `ctx.remote.agentTeams` contribution 读取权威 Team 状态，并让普通 child history 导航继续使用稳定的 addressed-subagent 路径。需要实验性源码 checkout Web profile 时选择本包；正式发布会排除它。这个浏览器 projection 不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
 
 ## 目录
 
@@ -35,6 +35,10 @@ kind: "package-reference"
 
 任务板展示 task identity、owner、blocker、readiness、提示性 write scope 与重叠 warning。用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、完成、重开和删除任务。每次 update 都发送当前显示的 revision，create 或 update rejection 都保留为显式 business result。
 
+### 扩展 Team 面板
+
+页头 action 拥有唯一的 Team dialog，并在其中声明 session-scoped list Slot `agent-team.panel.view`。Client 扩展通过该公开 Slot 提供稳定 id、顺序、本地化标签与组件；Team owner 会传入当前会话解析出的精确 Lead `teamSessionId`。Contribution 会作为“概览”旁的 tab 出现，无需导入本包的私有组件。注册、locale 变化与移除会更新导航列表，释放任一 Fiber 都会移除相应权限与 UI。
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -43,14 +47,14 @@ kind: "package-reference"
 <details>
 <summary>实现细节——点击展开</summary>
 
-Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.zh.md) 的生成式 `ctx.remote.agentTeams` contribution，然后通过 Cordis effect 注册 locale dictionary 与一个 conversation-header slot。Dispose plugin fiber 会移除这两项 registration。
+Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.zh.md) 的生成式 `ctx.remote.agentTeams` contribution，然后通过 Cordis effect 注册 locale dictionary 与一个 conversation-header entry。该 entry 声明 `agent-team.panel.view`，观察其公开 contribution 与本地化标签，并在既有 dialog 内渲染所选 contribution。释放 plugin Fiber 会移除 Remote、locale、entry、子 Slot、subscription 与 contribution navigation。
 
 开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。`team-task-conflict` 结果仅在重新读取成功后显示状态陈旧提示；如果重新读取失败，则保留该错误。由于 Team service 把任务文本或 scope 编辑与 dependency 修改公开为独立 action，两者使用两个连续的 compare-and-set mutation。
 
 | 文件 | 职责 |
 |---|---|
-| [`src/client/mount.ts`](src/client/mount.ts) | 生成式 Remote、locale、导航与 slot registration |
-| [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Roster 与任务板交互状态 |
+| [`src/client/mount.ts`](src/client/mount.ts) | 生成式 Remote、locale、导航、公开子视图 projection 与 slot registration |
+| [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Team dialog、子视图 tab、roster 与任务板交互状态 |
 | [`src/client/locales.ts`](src/client/locales.ts) | 中英文 panel 文案 |
 | [`src/index.ts`](src/index.ts) | 不执行行为的 Host entry |
 
@@ -81,7 +85,8 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh**——panel 会在打开、显式 refresh 与 mutation 后刷新；它没有实时 event subscription 或 mailbox timeline。
+- **Snapshot refresh**——“概览”会在打开、显式 refresh 与 mutation 后刷新；它没有实时 event subscription。
+- **仅提供概览**——本基础包提供 roster 与 task control；消息或其他 Team 视图需要单独的 `agent-team.panel.view` contribution。
 - **普通 child continuation**——导航后发送的人类消息使用稳定 addressed-subagent prompt 路径，而不是 Team peer mailbox。
 - **没有 lifecycle 或 workspace control**——panel 不能 spawn、rename、delete 或 interrupt teammate，write scope 仍只是提示性 metadata。
 
@@ -95,4 +100,4 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 </details>
 
-**运行时不变式：** 不发布伴生入口。RPC 是权威来源，本包只持有一个可释放的 slot 注册。
+**运行时不变式：** 不发布伴生入口。RPC 是权威来源，本包持有一个可释放的 header entry，由它声明并渲染公开 Team 子 Slot。

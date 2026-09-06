@@ -153,6 +153,25 @@ export function apply(ctx) {
         if (!receipt.ok) throw new Error(receipt.error.code)
         const replay = await memberGrant.execute(input, exec.signal, source)
         if (JSON.stringify(replay) !== JSON.stringify(receipt)) throw new Error('native replay changed its accepted result')
+        if (exec.agent === undefined) throw new Error('snapshot Team-message read requires an Agent')
+        const page = await ctx.agentTeams.listMessages(exec.agent, {
+          filters: { memberId: memberGrant.identity.memberId, direction: 'sent' },
+          limit: 10,
+        })
+        const messageId = receipt.value.messageId
+        const row = page.items.find(item => item.id === messageId)
+        if (row === undefined || row.sender.name !== 'external-worker' || row.recipient.name !== 'lead') {
+          throw new Error('snapshot Team-message metadata did not preserve Host-owned participants')
+        }
+        const detail = await ctx.agentTeams.getMessage(exec.agent, {
+          messageId,
+          committedCursor: page.committedCursor,
+        })
+        const textPart = detail.content.parts.find(part => part.type === 'text')
+        if (detail.content.completeness !== 'complete' || detail.content.omittedCount !== 0
+          || textPart?.text !== input.text) {
+          throw new Error('snapshot Team-message detail did not preserve sanitized intentional text')
+        }
         return { accepted: true }
       },
     }))
