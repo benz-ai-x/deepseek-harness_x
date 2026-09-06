@@ -696,8 +696,8 @@ describe('native Team member queries', () => {
     expect(provider.grants.get(handle)).not.toBe(oldGrant)
     const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
     try {
-      expect((await stored.read(0)).filter(event => event.type === 'team/message/delivered'))
-        .toContainEqual(expect.objectContaining({ data: expect.objectContaining({ messageId: receipt.messageId }) }))
+      const deliveries = (await stored.read(0)).filter(event => event.type === 'team/message/delivered')
+      expect(deliveries.map(event => event.data.messageId)).toContain(receipt.messageId)
     } finally { await stored.close() }
     expect(await oldGrant.execute({ operation: 'members.list' }, new AbortController().signal))
       .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
