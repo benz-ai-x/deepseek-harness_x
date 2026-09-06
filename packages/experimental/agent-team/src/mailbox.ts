@@ -305,6 +305,9 @@ export class TeamMailbox {
         && member.phase === 'active'
         && member.externalRuntime?.nativeHandle !== undefined)
       if (externalMember?.externalRuntime?.nativeHandle !== undefined) {
+        if (this.teammateRuntimes.runtimePresence(externalMember.provider, externalMember.externalRuntime.nativeHandle) === 'inactive') {
+          await this.roster.recoverFor(root, signal)
+        }
         const delivered = await this.teammateRuntimes.deliver(externalMember.provider, {
           nativeHandle: externalMember.externalRuntime.nativeHandle,
           deliveryId: message.id,

@@ -199,7 +199,7 @@
           "index": 0,
           "id": "advanced-define",
           "name": "cordis_define",
-          "argumentsDelta": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+          "argumentsDelta": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
         }
       }
     },
@@ -217,7 +217,7 @@
             "type": "tool-call",
             "id": "advanced-define",
             "name": "cordis_define",
-            "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+            "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
           }
         }
       }
@@ -268,7 +268,7 @@
               "type": "tool-call",
               "id": "advanced-define",
               "name": "cordis_define",
-              "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+              "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
             }
           ],
           "source": {
@@ -302,7 +302,7 @@
         "step": 1,
         "callId": "advanced-define",
         "name": "cordis_define",
-        "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+        "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
       }
     },
     {
@@ -998,8 +998,49 @@
       }
     },
     {
-      "type": "tool/result",
+      "type": "team/native-operation/committed",
       "seq": 57,
+      "time": 0,
+      "data": {
+        "version": 3,
+        "teamId": "{{parent}}",
+        "message": {
+          "id": "snapshot-native-message-1",
+          "senderId": "snapshot-external-member-1",
+          "senderName": "external-worker",
+          "targetId": "{{parent}}",
+          "content": [
+            {
+              "type": "text",
+              "text": "The native review is ready."
+            }
+          ]
+        },
+        "receipt": {
+          "id": "02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184",
+          "memberId": "snapshot-external-member-1",
+          "provider": "snapshot-native",
+          "nativeHandle": "snapshot-native-runtime-1",
+          "source": {
+            "kind": "tool",
+            "turnId": "snapshot-native-turn-1",
+            "callId": "snapshot-native-call-1"
+          },
+          "inputFingerprint": "a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c",
+          "result": {
+            "ok": true,
+            "operation": "messages.send",
+            "value": {
+              "messageId": "snapshot-native-message-1",
+              "status": "queued"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "tool/result",
+      "seq": 58,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1033,7 +1074,7 @@
     },
     {
       "type": "step/end",
-      "seq": 58,
+      "seq": 59,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1042,7 +1083,7 @@
     },
     {
       "type": "step/start",
-      "seq": 59,
+      "seq": 60,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1051,16 +1092,16 @@
     },
     {
       "type": "session-log-deepseek/delivery-accepted",
-      "seq": 60,
+      "seq": 61,
       "time": 0,
       "data": {
         "sessionId": "{{parent}}",
-        "throughSeq": 59
+        "throughSeq": 60
       }
     },
     {
       "type": "assistant/chunk",
-      "seq": 61,
+      "seq": 62,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1074,7 +1115,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 62,
+      "seq": 63,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1090,7 +1131,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 63,
+      "seq": 64,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1109,7 +1150,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 64,
+      "seq": 65,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1126,7 +1167,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 65,
+      "seq": 66,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1141,7 +1182,7 @@
     },
     {
       "type": "assistant/message",
-      "seq": 66,
+      "seq": 67,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1170,17 +1211,17 @@
         }
       },
       "sourceEventSeqs": [
-        61,
         62,
         63,
         64,
-        65
+        65,
+        66
       ],
       "surfaceOp": "append"
     },
     {
       "type": "tool/call",
-      "seq": 67,
+      "seq": 68,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1192,7 +1233,7 @@
     },
     {
       "type": "tool/result",
-      "seq": 68,
+      "seq": 69,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1220,13 +1261,13 @@
         }
       },
       "sourceEventSeqs": [
-        67
+        68
       ],
       "surfaceOp": "append"
     },
     {
       "type": "step/end",
-      "seq": 69,
+      "seq": 70,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1235,7 +1276,7 @@
     },
     {
       "type": "step/start",
-      "seq": 70,
+      "seq": 71,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1244,16 +1285,16 @@
     },
     {
       "type": "session-log-deepseek/delivery-accepted",
-      "seq": 71,
+      "seq": 72,
       "time": 0,
       "data": {
         "sessionId": "{{parent}}",
-        "throughSeq": 70
+        "throughSeq": 71
       }
     },
     {
       "type": "assistant/chunk",
-      "seq": 72,
+      "seq": 73,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1267,7 +1308,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 73,
+      "seq": 74,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1283,7 +1324,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 74,
+      "seq": 75,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1302,7 +1343,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 75,
+      "seq": 76,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1319,7 +1360,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 76,
+      "seq": 77,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1334,7 +1375,7 @@
     },
     {
       "type": "assistant/message",
-      "seq": 77,
+      "seq": 78,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1363,17 +1404,17 @@
         }
       },
       "sourceEventSeqs": [
-        72,
         73,
         74,
         75,
-        76
+        76,
+        77
       ],
       "surfaceOp": "append"
     },
     {
       "type": "tool/call",
-      "seq": 78,
+      "seq": 79,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1385,7 +1426,7 @@
     },
     {
       "type": "tool-workflow/run-start",
-      "seq": 79,
+      "seq": 80,
       "time": 0,
       "data": {
         "runId": "{{workflow-run}}",
@@ -1394,7 +1435,7 @@
     },
     {
       "type": "tool-workflow/agent-start",
-      "seq": 80,
+      "seq": 81,
       "time": 0,
       "data": {
         "runId": "{{workflow-run}}",
@@ -1406,7 +1447,7 @@
     },
     {
       "type": "tool-workflow/agent-end",
-      "seq": 81,
+      "seq": 82,
       "time": 0,
       "data": {
         "runId": "{{workflow-run}}",
@@ -1416,7 +1457,7 @@
     },
     {
       "type": "tool-workflow/run-end",
-      "seq": 82,
+      "seq": 83,
       "time": 0,
       "data": {
         "runId": "{{workflow-run}}",
@@ -1425,7 +1466,7 @@
     },
     {
       "type": "tool/result",
-      "seq": 83,
+      "seq": 84,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1453,13 +1494,13 @@
         }
       },
       "sourceEventSeqs": [
-        78
+        79
       ],
       "surfaceOp": "append"
     },
     {
       "type": "step/end",
-      "seq": 84,
+      "seq": 85,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1468,7 +1509,7 @@
     },
     {
       "type": "step/start",
-      "seq": 85,
+      "seq": 86,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1477,16 +1518,16 @@
     },
     {
       "type": "session-log-deepseek/delivery-accepted",
-      "seq": 86,
+      "seq": 87,
       "time": 0,
       "data": {
         "sessionId": "{{parent}}",
-        "throughSeq": 85
+        "throughSeq": 86
       }
     },
     {
       "type": "assistant/chunk",
-      "seq": 87,
+      "seq": 88,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1500,7 +1541,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 88,
+      "seq": 89,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1516,7 +1557,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 89,
+      "seq": 90,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1535,7 +1576,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 90,
+      "seq": 91,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1552,7 +1593,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 91,
+      "seq": 92,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1567,7 +1608,7 @@
     },
     {
       "type": "assistant/message",
-      "seq": 92,
+      "seq": 93,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1596,17 +1637,17 @@
         }
       },
       "sourceEventSeqs": [
-        87,
         88,
         89,
         90,
-        91
+        91,
+        92
       ],
       "surfaceOp": "append"
     },
     {
       "type": "tool/call",
-      "seq": 93,
+      "seq": 94,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1618,7 +1659,7 @@
     },
     {
       "type": "tool/result",
-      "seq": 94,
+      "seq": 95,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1646,13 +1687,13 @@
         }
       },
       "sourceEventSeqs": [
-        93
+        94
       ],
       "surfaceOp": "append"
     },
     {
       "type": "step/end",
-      "seq": 95,
+      "seq": 96,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1661,7 +1702,7 @@
     },
     {
       "type": "step/start",
-      "seq": 96,
+      "seq": 97,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1670,7 +1711,7 @@
     },
     {
       "type": "request/header",
-      "seq": 97,
+      "seq": 98,
       "time": 0,
       "data": {
         "header": {
@@ -1706,16 +1747,16 @@
     },
     {
       "type": "session-log-deepseek/delivery-accepted",
-      "seq": 98,
+      "seq": 99,
       "time": 0,
       "data": {
         "sessionId": "{{parent}}",
-        "throughSeq": 97
+        "throughSeq": 98
       }
     },
     {
       "type": "assistant/chunk",
-      "seq": 99,
+      "seq": 100,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1729,7 +1770,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 100,
+      "seq": 101,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1743,7 +1784,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 101,
+      "seq": 102,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1760,7 +1801,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 102,
+      "seq": 103,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1777,7 +1818,7 @@
     },
     {
       "type": "assistant/chunk",
-      "seq": 103,
+      "seq": 104,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1792,7 +1833,7 @@
     },
     {
       "type": "assistant/message",
-      "seq": 104,
+      "seq": 105,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1819,17 +1860,17 @@
         }
       },
       "sourceEventSeqs": [
-        99,
         100,
         101,
         102,
-        103
+        103,
+        104
       ],
       "surfaceOp": "append"
     },
     {
       "type": "step/end",
-      "seq": 105,
+      "seq": 106,
       "time": 0,
       "data": {
         "turn": 1,
@@ -1838,7 +1879,7 @@
     },
     {
       "type": "turn/end",
-      "seq": 106,
+      "seq": 107,
       "time": 0,
       "data": {
         "turn": 1,
@@ -2123,7 +2164,7 @@
               "index": 0,
               "id": "advanced-define",
               "name": "cordis_define",
-              "argumentsDelta": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+              "argumentsDelta": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
             }
           }
         }
@@ -2147,7 +2188,7 @@
                 "type": "tool-call",
                 "id": "advanced-define",
                 "name": "cordis_define",
-                "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+                "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
               }
             }
           }
@@ -2216,7 +2257,7 @@
                   "type": "tool-call",
                   "id": "advanced-define",
                   "name": "cordis_define",
-                  "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+                  "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
                 }
               ],
               "source": {
@@ -2256,7 +2297,7 @@
             "step": 1,
             "callId": "advanced-define",
             "name": "cordis_define",
-            "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
+            "arguments": "{\"plugin\": {\"kind\": \"new\", \"idPrefix\": \"snap\"}, \"name\": \"Snapshot Double\", \"purpose\": \"Expose a deterministic doubling tool for executable snapshot verification.\", \"code\": {\"host\": \"return (ctx) => {\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_double',\\n    description: 'Double a number for executable snapshot verification.',\\n    parameters: { value: { type: 'number', required: true } },\\n    output: {\\n      schema: { type: 'number' },\\n      render(_args, value) {\\n        return [{ type: 'text', text: String(value) }]\\n      }\\n    },\\n    async execute(args) {\\n      return args.value * 2\\n    }\\n  }))\\n  harness.registerTool(ctx, harness.defineTool({\\n    name: 'snapshot_external_team_member',\\n    description: 'Record one external Team member event for SDK projection verification.',\\n    parameters: {},\\n    output: {\\n      schema: {\\n        type: 'object',\\n        additionalProperties: false,\\n        properties: {\\n          name: { type: 'string', required: true },\\n          nativeHandle: { type: 'string', required: true }\\n        }\\n      },\\n      render(_args, value) {\\n        return [{ type: 'text', text: JSON.stringify(value) }]\\n      }\\n    },\\n    async execute(_args, exec) {\\n      if (!exec.agent) throw new Error('Python SDK Team event snapshot requires an Agent')\\n      const nativeHandle = 'snapshot-native-runtime-1'\\n      exec.agent.session.append('team/member', {\\n        version: 1,\\n        teamId: exec.agent.id,\\n        member: {\\n          id: 'snapshot-external-member-1',\\n          name: 'external-worker',\\n          description: 'Python SDK external event worker',\\n          provider: 'snapshot-native',\\n          context: 'fresh',\\n          externalRuntime: {\\n            kind: 'external-agent',\\n            launchRequestId: 'snapshot-native-launch-1',\\n            requestFingerprint: '23141189f1aad9c1b1dd243a9a2d5ddf08904f600d68a50914dca0adb325b68e',\\n            requirements: {\\n              contextMode: 'fresh',\\n              profileCapabilities: ['persona', 'mission'],\\n              runtimeCapabilities: []\\n            },\\n            nativeHandle\\n          },\\n          phase: 'active'\\n        }\\n      })\\n      if (exec.agent.id !== '{{parent}}') throw new Error('Team receipt fixture requires its recorded session')\\n      const messageId = 'snapshot-native-message-1'\\n      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }\\n      const text = 'The native review is ready.'\\n      exec.agent.session.append('team/native-operation/committed', {\\n        version: 3,\\n        teamId: exec.agent.id,\\n        message: {\\n          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',\\n          targetId: exec.agent.id, content: [{ type: 'text', text }]\\n        },\\n        receipt: {\\n          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',\\n          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,\\n          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',\\n          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }\\n        }\\n      })\\n      return { name: 'external-worker', nativeHandle }\\n    }\\n  }))\\n}\\n\"}}"
           }
         }
       }
@@ -3180,8 +3221,55 @@
       "payload": {
         "sessionId": "{{parent}}",
         "event": {
-          "type": "tool/result",
+          "type": "team/native-operation/committed",
           "seq": 57,
+          "time": 0,
+          "data": {
+            "version": 3,
+            "teamId": "{{parent}}",
+            "message": {
+              "id": "snapshot-native-message-1",
+              "senderId": "snapshot-external-member-1",
+              "senderName": "external-worker",
+              "targetId": "{{parent}}",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The native review is ready."
+                }
+              ]
+            },
+            "receipt": {
+              "id": "02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184",
+              "memberId": "snapshot-external-member-1",
+              "provider": "snapshot-native",
+              "nativeHandle": "snapshot-native-runtime-1",
+              "source": {
+                "kind": "tool",
+                "turnId": "snapshot-native-turn-1",
+                "callId": "snapshot-native-call-1"
+              },
+              "inputFingerprint": "a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c",
+              "result": {
+                "ok": true,
+                "operation": "messages.send",
+                "value": {
+                  "messageId": "snapshot-native-message-1",
+                  "status": "queued"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "session.event",
+      "payload": {
+        "sessionId": "{{parent}}",
+        "event": {
+          "type": "tool/result",
+          "seq": 58,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3221,7 +3309,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/end",
-          "seq": 58,
+          "seq": 59,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3236,7 +3324,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/start",
-          "seq": 59,
+          "seq": 60,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3251,11 +3339,11 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "session-log-deepseek/delivery-accepted",
-          "seq": 60,
+          "seq": 61,
           "time": 0,
           "data": {
             "sessionId": "{{parent}}",
-            "throughSeq": 59
+            "throughSeq": 60
           }
         }
       }
@@ -3266,7 +3354,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 61,
+          "seq": 62,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3286,7 +3374,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 62,
+          "seq": 63,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3308,7 +3396,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 63,
+          "seq": 64,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3333,7 +3421,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 64,
+          "seq": 65,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3356,7 +3444,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 65,
+          "seq": 66,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3377,7 +3465,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/message",
-          "seq": 66,
+          "seq": 67,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3406,11 +3494,11 @@
             }
           },
           "sourceEventSeqs": [
-            61,
             62,
             63,
             64,
-            65
+            65,
+            66
           ],
           "surfaceOp": "append"
         }
@@ -3422,7 +3510,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool/call",
-          "seq": 67,
+          "seq": 68,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3927,7 +4015,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool/result",
-          "seq": 68,
+          "seq": 69,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3955,7 +4043,7 @@
             }
           },
           "sourceEventSeqs": [
-            67
+            68
           ],
           "surfaceOp": "append"
         }
@@ -3967,7 +4055,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/end",
-          "seq": 69,
+          "seq": 70,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3982,7 +4070,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/start",
-          "seq": 70,
+          "seq": 71,
           "time": 0,
           "data": {
             "turn": 1,
@@ -3997,11 +4085,11 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "session-log-deepseek/delivery-accepted",
-          "seq": 71,
+          "seq": 72,
           "time": 0,
           "data": {
             "sessionId": "{{parent}}",
-            "throughSeq": 70
+            "throughSeq": 71
           }
         }
       }
@@ -4012,7 +4100,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 72,
+          "seq": 73,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4032,7 +4120,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 73,
+          "seq": 74,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4054,7 +4142,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 74,
+          "seq": 75,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4079,7 +4167,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 75,
+          "seq": 76,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4102,7 +4190,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 76,
+          "seq": 77,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4123,7 +4211,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/message",
-          "seq": 77,
+          "seq": 78,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4152,11 +4240,11 @@
             }
           },
           "sourceEventSeqs": [
-            72,
             73,
             74,
             75,
-            76
+            76,
+            77
           ],
           "surfaceOp": "append"
         }
@@ -4168,7 +4256,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool/call",
-          "seq": 78,
+          "seq": 79,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4186,7 +4274,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool-workflow/run-start",
-          "seq": 79,
+          "seq": 80,
           "time": 0,
           "data": {
             "runId": "{{workflow-run}}",
@@ -4290,7 +4378,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool-workflow/agent-start",
-          "seq": 80,
+          "seq": 81,
           "time": 0,
           "data": {
             "runId": "{{workflow-run}}",
@@ -4705,7 +4793,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool-workflow/agent-end",
-          "seq": 81,
+          "seq": 82,
           "time": 0,
           "data": {
             "runId": "{{workflow-run}}",
@@ -4721,7 +4809,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool-workflow/run-end",
-          "seq": 82,
+          "seq": 83,
           "time": 0,
           "data": {
             "runId": "{{workflow-run}}",
@@ -4736,7 +4824,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool/result",
-          "seq": 83,
+          "seq": 84,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4764,7 +4852,7 @@
             }
           },
           "sourceEventSeqs": [
-            78
+            79
           ],
           "surfaceOp": "append"
         }
@@ -4776,7 +4864,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/end",
-          "seq": 84,
+          "seq": 85,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4791,7 +4879,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/start",
-          "seq": 85,
+          "seq": 86,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4806,11 +4894,11 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "session-log-deepseek/delivery-accepted",
-          "seq": 86,
+          "seq": 87,
           "time": 0,
           "data": {
             "sessionId": "{{parent}}",
-            "throughSeq": 85
+            "throughSeq": 86
           }
         }
       }
@@ -4821,7 +4909,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 87,
+          "seq": 88,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4841,7 +4929,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 88,
+          "seq": 89,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4863,7 +4951,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 89,
+          "seq": 90,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4888,7 +4976,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 90,
+          "seq": 91,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4911,7 +4999,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 91,
+          "seq": 92,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4932,7 +5020,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/message",
-          "seq": 92,
+          "seq": 93,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4961,11 +5049,11 @@
             }
           },
           "sourceEventSeqs": [
-            87,
             88,
             89,
             90,
-            91
+            91,
+            92
           ],
           "surfaceOp": "append"
         }
@@ -4977,7 +5065,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool/call",
-          "seq": 93,
+          "seq": 94,
           "time": 0,
           "data": {
             "turn": 1,
@@ -4995,7 +5083,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "tool/result",
-          "seq": 94,
+          "seq": 95,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5023,7 +5111,7 @@
             }
           },
           "sourceEventSeqs": [
-            93
+            94
           ],
           "surfaceOp": "append"
         }
@@ -5035,7 +5123,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/end",
-          "seq": 95,
+          "seq": 96,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5050,7 +5138,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/start",
-          "seq": 96,
+          "seq": 97,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5065,7 +5153,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "request/header",
-          "seq": 97,
+          "seq": 98,
           "time": 0,
           "data": {
             "header": {
@@ -5107,11 +5195,11 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "session-log-deepseek/delivery-accepted",
-          "seq": 98,
+          "seq": 99,
           "time": 0,
           "data": {
             "sessionId": "{{parent}}",
-            "throughSeq": 97
+            "throughSeq": 98
           }
         }
       }
@@ -5122,7 +5210,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 99,
+          "seq": 100,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5142,7 +5230,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 100,
+          "seq": 101,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5162,7 +5250,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 101,
+          "seq": 102,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5185,7 +5273,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 102,
+          "seq": 103,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5208,7 +5296,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/chunk",
-          "seq": 103,
+          "seq": 104,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5229,7 +5317,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "assistant/message",
-          "seq": 104,
+          "seq": 105,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5256,11 +5344,11 @@
             }
           },
           "sourceEventSeqs": [
-            99,
             100,
             101,
             102,
-            103
+            103,
+            104
           ],
           "surfaceOp": "append"
         }
@@ -5272,7 +5360,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "step/end",
-          "seq": 105,
+          "seq": 106,
           "time": 0,
           "data": {
             "turn": 1,
@@ -5287,7 +5375,7 @@
         "sessionId": "{{parent}}",
         "event": {
           "type": "turn/end",
-          "seq": 106,
+          "seq": 107,
           "time": 0,
           "data": {
             "turn": 1,

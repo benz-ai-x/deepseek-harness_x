@@ -157,6 +157,24 @@ return (ctx) => {
           phase: 'active'
         }
       })
+      if (exec.agent.id !== 'advanced-executable') throw new Error('Team receipt fixture requires its recorded session')
+      const messageId = 'snapshot-native-message-1'
+      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }
+      const text = 'The native review is ready.'
+      exec.agent.session.append('team/native-operation/committed', {
+        version: 3,
+        teamId: exec.agent.id,
+        message: {
+          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',
+          targetId: exec.agent.id, content: [{ type: 'text', text }]
+        },
+        receipt: {
+          id: '02e71b6ed8349f0da20b7bf23d052f1a1608524169214d2f18fae9a24bf75184',
+          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,
+          inputFingerprint: 'a80a3c3004861e0f3fad652552587dd93b77fca4b8af7079d64b0e727c695f3c',
+          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }
+        }
+      })
       return { name: 'external-worker', nativeHandle }
     }
   }))
@@ -1342,6 +1360,17 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
             raise AssertionError(f"advanced snapshot emitted unexpected subagent lifecycle: {methods}")
         if not any(event.get("type") == "tool/code-dispatch" for event in result.events):
             raise AssertionError("advanced snapshot emitted no tool/code-dispatch event")
+
+        receipts = [event for event in result.events if event.get("type") == "team/native-operation/committed"]
+        assert len(receipts) == 1, receipts
+        accepted = receipts[0]["data"]
+        assert accepted["version"] == 3
+        assert accepted["message"]["id"] == "snapshot-native-message-1"
+        assert accepted["message"]["senderId"] == "snapshot-external-member-1"
+        assert accepted["receipt"]["result"]["value"] == {"messageId": "snapshot-native-message-1", "status": "queued"}
+        assert accepted["receipt"]["source"] == {
+            "kind": "tool", "turnId": "snapshot-native-turn-1", "callId": "snapshot-native-call-1",
+        }
 
         logs = read_session_logs(sessions)
         child_ids = snapshot_child_ids(result)

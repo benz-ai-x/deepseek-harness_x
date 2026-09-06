@@ -800,6 +800,20 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       }
       await verifyHeaders(scenario, ordered, actualContext, assertions.dshSdkChild?.agentConfig)
 
+      if (scenario.name === 'agent-team-external') {
+        const receipts = notifications.filter(notification => notification.method === 'session.event')
+          .map(notification => notification.params.event as JsonObject)
+          .filter(event => event.type === 'team/native-operation/committed')
+        expect(receipts).toHaveLength(1)
+        expect(receipts[0]).toMatchObject({ data: {
+          version: 3,
+          message: { id: 'snapshot-native-message-1', senderId: 'snapshot-external-member-1',
+            content: [{ type: 'text', text: 'The native review is ready.' }] },
+          receipt: { source: { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' },
+            result: { ok: true, operation: 'messages.send', value: { messageId: 'snapshot-native-message-1', status: 'queued' } } },
+        } })
+      }
+
       // Genuine SDK protocol cases retain their secondary wire projections.
       const finalResult = results.at(-1)
       if (hasWireGoldens) {

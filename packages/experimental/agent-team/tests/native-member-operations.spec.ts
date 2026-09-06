@@ -670,6 +670,39 @@ describe('native Team member queries', () => {
     }))).toThrow(/must publish evaluation tools exactly when evaluation is supported/u)
   })
 
+  it('reattaches and reauthorizes an inactive native member before mailbox delivery', async () => {
+    class RestartingProduct extends NativeProduct {
+      report: (event: TeammateRuntimePresenceEvent) => void = () => {}
+      onPresenceChanged(listener: (event: TeammateRuntimePresenceEvent) => void) {
+        this.report = listener
+        return () => { this.report = () => {} }
+      }
+      override async deliver(request: TeammateRuntimeDeliverRequest): Promise<TeammateRuntimeDeliverResult> {
+        const grant = this.grants.get(request.nativeHandle)!
+        const result = await grant.execute({ operation: 'members.list' }, request.signal)
+        if (!result.ok) throw new Error(result.error.code)
+        return { turnId: TeammateRuntimeTurnId('reattached-work'), presence: 'idle' }
+      }
+    }
+    const provider = new RestartingProduct()
+    const { ctx, lead, handle } = await setup(provider)
+    const oldGrant = provider.grants.get(handle)!
+    provider.report({ nativeHandle: handle, presence: 'inactive' })
+    expect(oldGrant.signal.aborted).toBe(true)
+    const receipt = await ctx.agentTeams.sendMessage(lead.agent, {
+      target: 'reviewer', content: [{ type: 'text', text: 'Continue the review.' }], signal: new AbortController().signal,
+    })
+    expect(receipt.status).toBe('accepted')
+    expect(provider.grants.get(handle)).not.toBe(oldGrant)
+    const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
+    try {
+      expect((await stored.read(0)).filter(event => event.type === 'team/message/delivered'))
+        .toContainEqual(expect.objectContaining({ data: expect.objectContaining({ messageId: receipt.messageId }) }))
+    } finally { await stored.close() }
+    expect(await oldGrant.execute({ operation: 'members.list' }, new AbortController().signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+  })
+
   it('never revives an old grant when a detached native process reports presence again', async () => {
     class ReportingProduct extends NativeProduct {
       private readonly listeners = new Set<(event: TeammateRuntimePresenceEvent) => void>()

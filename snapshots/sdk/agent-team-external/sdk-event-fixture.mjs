@@ -1,6 +1,8 @@
 /** Record one external Team member through the real SDK session event path. */
 
-import { defineTool } from '@deepseek-ai/dsh-tools'
+const { defineTool } = process.env.DSH_EXAMPLE_MODE === 'lib'
+  ? await import('../../../packages/core/tools/lib/index.js')
+  : await import('@deepseek-ai/dsh-tools')
 
 export const name = 'agent-team-sdk-event-fixture'
 export const inject = ['tools']
@@ -61,6 +63,29 @@ export function apply(ctx) {
           },
           phase: 'active',
         },
+      })
+      const { createHash } = await import('node:crypto')
+      const messageId = 'snapshot-native-message-1'
+      const source = { kind: 'tool', turnId: 'snapshot-native-turn-1', callId: 'snapshot-native-call-1' }
+      const text = 'The native review is ready.'
+      exec.agent.session.append('team/native-operation/committed', {
+        version: 3,
+        teamId: exec.agent.id,
+        message: {
+          id: messageId, senderId: 'snapshot-external-member-1', senderName: 'external-worker',
+          targetId: exec.agent.id, content: [{ type: 'text', text }]
+        },
+        receipt: {
+          id: createHash('sha256').update(JSON.stringify([
+            exec.agent.id, 'snapshot-external-member-1', 'snapshot-native', nativeHandle,
+            source.kind, source.turnId, source.callId
+          ])).digest('hex'),
+          memberId: 'snapshot-external-member-1', provider: 'snapshot-native', nativeHandle, source,
+          inputFingerprint: createHash('sha256').update(JSON.stringify({
+            operation: 'messages.send', target: 'lead', text
+          })).digest('hex'),
+          result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }
+        }
       })
       return { name: 'external-worker', nativeHandle }
     },

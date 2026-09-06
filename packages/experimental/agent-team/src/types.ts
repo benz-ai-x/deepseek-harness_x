@@ -90,7 +90,7 @@ export interface TeammateRuntimeRequirements {
   readonly runtimeCapabilities: readonly TeammateRuntimeCapability[]
 }
 
-/** Read-only Team operations available through a native member's authorized channel. */
+/** Team operations available through a native member's authorized channel. */
 export type NativeMemberOperationName = 'members.list' | 'tasks.list' | 'tasks.get' | 'messages.send'
 
 /** Detached provider metadata safe for local catalogs and diagnostics. */
