@@ -33,10 +33,17 @@ export type NativeMemberMailboxRequest =
   | { readonly operation: 'messages.send'; readonly target: string; readonly text: string }
   | { readonly operation: 'turns.settle'; readonly outcome: NativeMemberTurnOutcome; readonly text: string }
 
+/** Member-owned work identities and previously committed terminal text, without incoming prompts. */
+export type NativeMemberRecoveryItem =
+  | { readonly kind: 'launch'; readonly launchRequestId: TeammateLaunchRequestId; readonly turnId?: TeammateRuntimeTurnId }
+  | { readonly kind: 'delivery'; readonly deliveryId: TeamMessageId }
+  | { readonly kind: 'settlement'; readonly turnId: TeammateRuntimeTurnId; readonly outcome: NativeMemberTurnOutcome; readonly text: string }
+
 /** Bounded query result or durable acceptance from an authorized native Team operation. */
 export type NativeMemberOperationResult =
   | NativeMemberMessageResult
   | NativeMemberTaskResult
+  | { readonly ok: true; readonly operation: 'turns.recover'; readonly value: { readonly items: readonly NativeMemberRecoveryItem[]; readonly nextOffset?: number } }
   | { readonly ok: true; readonly operation: 'wait'; readonly value: TeamWaitResult }
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }

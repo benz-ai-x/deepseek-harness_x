@@ -46,6 +46,7 @@ export type * from './types.ts'
 export type {
   NativeMemberGrant,
   NativeMemberOperationResult,
+  NativeMemberRecoveryItem,
   TeammateRuntimeMemberOperationsRequest,
   ExternalTeammateRuntimeLaunch,
   SpawnContinuableTeammateRequest,

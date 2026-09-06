@@ -334,6 +334,11 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "NativeMemberRecoveryItem",
+      "source": "packages/experimental/agent-team/src/service-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "NativeMemberOperationResult",
       "source": "packages/experimental/agent-team/src/service-types.ts"
     },

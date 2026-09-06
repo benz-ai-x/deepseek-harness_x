@@ -51,6 +51,11 @@ try {
     kind: 'settlement', turnId: source.turnId,
   })
   assert.equal(settled.ok, true)
+  const recovery = await grant.execute({ operation: 'turns.recover' }, signal)
+  assert.deepEqual(recovery, { ok: true, operation: 'turns.recover', value: { items: [
+    { kind: 'launch', launchRequestId: 'native-loader-launch', turnId: source.turnId },
+    { kind: 'settlement', turnId: source.turnId, outcome: 'completed', text: 'The review found no issues.' },
+  ] } })
   const handle = await ctx.sessionPersistence.open(lead.agent.id, 'read')
   let operations
   try {
@@ -79,7 +84,7 @@ try {
   }
   await ctx.fiber.dispose()
   const revoked = await grant.execute({ operation: 'members.list' }, signal)
-  process.stdout.write(`${JSON.stringify({ query, forged, conflict, operations, revoked }, null, 2)}\n`)
+  process.stdout.write(`${JSON.stringify({ query, forged, conflict, recovery, operations, revoked }, null, 2)}\n`)
 } finally {
   await ctx.fiber.dispose()
 }

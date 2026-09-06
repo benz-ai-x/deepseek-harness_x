@@ -15,6 +15,8 @@ import type { TeamActivity } from './activity.ts'
 const taskId = z.string().min(1).max(128)
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('members.list') }).strict(),
+  z.object({ operation: z.literal('turns.recover'), limit: z.number().int().min(1).max(100).default(10),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0) }).strict(),
   z.object({
     operation: z.literal('tasks.list'),
     limit: z.number().int().min(1).max(100).default(20),
@@ -31,8 +33,11 @@ const requestSchema = z.discriminatedUnion('operation', [
 /** Bound the complete JSON value, including the operation and page metadata. */
 function boundedResult(result: NativeMemberOperationResult): NativeMemberOperationResult {
   if (Buffer.byteLength(JSON.stringify(result), 'utf8') <= 65_536) return result
+  const message = result.ok && result.operation === 'turns.recover'
+    ? 'The Team recovery result exceeds 65536 UTF-8 bytes; request a smaller recovery page.'
+    : 'The Team query result exceeds 65536 UTF-8 bytes; request a smaller task page.'
   return { ok: false, error: {
-    code: 'TEAM_NATIVE_RESULT_LIMIT', message: 'The Team query result exceeds 65536 UTF-8 bytes; request a smaller task page.',
+    code: 'TEAM_NATIVE_RESULT_LIMIT', message,
   } }
 }
 
@@ -53,7 +58,7 @@ export function createNativeMemberGrant(
   authorize: () => TeamMembership,
   members: (membership: TeamMembership) => TeamMemberView[],
   tasks: Pick<TeamTaskBoard, 'list' | 'get' | 'updateNative'>,
-  mailbox: Pick<TeamMailbox, 'sendNative'>,
+  mailbox: Pick<TeamMailbox, 'sendNative' | 'readNativeRecovery'>,
   activity: Pick<TeamActivity, 'wait'>,
 ): NativeMemberGrant {
   return Object.freeze({
@@ -89,6 +94,20 @@ export function createNativeMemberGrant(
         const request = parsed.data
         try {
           switch (request.operation) {
+            case 'turns.recover': {
+              const items = await mailbox.readNativeRecovery(identity, authorize, AbortSignal.any([signal, callerSignal]))
+              signal.throwIfAborted()
+              callerSignal.throwIfAborted()
+              authorize()
+              if (request.offset > items.length) return { ok: false, error: {
+                code: 'TEAM_NATIVE_INVALID_CURSOR', message: 'The recovery offset is outside the current member history.',
+              } }
+              const end = Math.min(request.offset + request.limit, items.length)
+              return boundedResult({ ok: true, operation: request.operation, value: {
+                items: items.slice(request.offset, end),
+                ...end < items.length ? { nextOffset: end } : {},
+              } })
+            }
             case 'wait': {
               const value = await activity.wait(membership.id, request.timeoutMs, AbortSignal.any([signal, callerSignal]))
               signal.throwIfAborted()
@@ -140,17 +159,22 @@ export function createNativeMemberGrant(
             }
           }
         } catch (error: unknown) {
-          if (request.operation === 'wait' || request.operation === 'tasks.update'
+          if (request.operation === 'turns.recover' || request.operation === 'wait' || request.operation === 'tasks.update'
             || request.operation === 'messages.send' || request.operation === 'turns.settle') {
             if (signal.aborted) return { ok: false, error: {
               code: 'TEAM_NATIVE_GRANT_REVOKED', message: 'This Team authorization is no longer active.',
             } }
             if (callerSignal.aborted) return { ok: false, error: {
-              code: 'TEAM_NATIVE_CANCELLED', message: 'The Team operation was cancelled before acceptance.',
+              code: 'TEAM_NATIVE_CANCELLED', message: request.operation === 'turns.recover'
+                ? 'The Team query was cancelled.'
+                : 'The Team operation was cancelled before acceptance.',
             } }
             if (error instanceof TeamError) return { ok: false, error: {
               code: error.code, message: error.message,
               ...error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision },
+            } }
+            if (request.operation === 'turns.recover') return { ok: false, error: {
+              code: 'TEAM_NATIVE_QUERY_FAILED', message: 'The committed member recovery facts could not be read; retry the request.',
             } }
             return { ok: false, error: {
               code: 'TEAM_NATIVE_OPERATION_FAILED', message: 'The Team operation could not be committed; retry the same call.',

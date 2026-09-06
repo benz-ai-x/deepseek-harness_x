@@ -105,6 +105,8 @@ Team 所有者只在持久成员接受或验证恢复后，向当前 provider �
 
 原生消息、任务变化和终态结果共享[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。必需的 payload-4 消息／任务事件将变更与其 `TeamNativeOperationId` 回执一起记录；projection version 5 重建两者，并明确保留 payload-3 消息和 payload-2 读取分支。任务回执保留已校验输入和精简的原始接受结果。[原生任务规则](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.zh.md)说明先于 CAS 的重放及只观察变化的等待。
 
+`turns.recover` 是 Host-only grant reader，不是发布给模型的操作。当前 grant 校验通过后，它与 Team journal 串行执行、flush Lead Session，并返回分离的当前视图，其中只包含获授权成员的 launch 关联、入站 delivery id，以及已提交结算的结果和有意文本。它排除入站消息文本与所有同级成员或其他 Team 的事实，也不发布 Team 活动。页面使用数字 offset，默认包含 10 项，允许 1 至 100 项，并保留稳定身份，以便并发追加移动后续页面时由适配器对条目去重。
+
 ```ts type-equiv
 /** Trusted provider correlation supplied separately from model tool arguments. */
 type NativeMemberOperationSource =
@@ -181,10 +183,19 @@ type TeamNativeOperationReceipt = TeamNativeMessageReceipt | TeamNativeTaskRecei
 ```
 
 ```ts type-equiv
+/** Member-owned work identities and previously committed terminal text, without incoming prompts. */
+type NativeMemberRecoveryItem =
+  | { readonly kind: 'launch'; readonly launchRequestId: TeammateLaunchRequestId; readonly turnId?: TeammateRuntimeTurnId }
+  | { readonly kind: 'delivery'; readonly deliveryId: TeamMessageId }
+  | { readonly kind: 'settlement'; readonly turnId: TeammateRuntimeTurnId; readonly outcome: NativeMemberTurnOutcome; readonly text: string }
+```
+
+```ts type-equiv
 /** Bounded query result or durable acceptance from an authorized native Team operation. */
 type NativeMemberOperationResult =
   | NativeMemberMessageResult
   | NativeMemberTaskResult
+  | { readonly ok: true; readonly operation: 'turns.recover'; readonly value: { readonly items: readonly NativeMemberRecoveryItem[]; readonly nextOffset?: number } }
   | { readonly ok: true; readonly operation: 'wait'; readonly value: TeamWaitResult }
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }

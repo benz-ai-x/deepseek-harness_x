@@ -108,6 +108,157 @@ async function setup(provider = new NativeProduct()) {
 }
 
 describe('native Team member queries', () => {
+  it('reports a cancelled queued recovery read as a query cancellation', async () => {
+    const { provider, handle } = await setup()
+    const controller = new AbortController()
+    const reading = provider.grants.get(handle)!.execute({ operation: 'turns.recover' }, controller.signal)
+    await Promise.resolve()
+    controller.abort()
+    await expect(reading).resolves.toEqual({ ok: false, error: {
+      code: 'TEAM_NATIVE_CANCELLED', message: 'The Team query was cancelled.',
+    } })
+  })
+
+  it('pages detached recovery facts and refuses an oversized complete result', async () => {
+    const { provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    const text = '界'.repeat(1300)
+    for (let index = 0; index < 17; index++) {
+      await expect(grant.execute({ operation: 'turns.settle', outcome: 'completed', text }, signal,
+        { kind: 'settlement', turnId: TeammateRuntimeTurnId(`recovery-${index}`) })).resolves.toMatchObject({ ok: true })
+    }
+    const first = await grant.execute({ operation: 'turns.recover', limit: 1 }, signal)
+    expect(first).toEqual({ ok: true, operation: 'turns.recover', value: {
+      items: [{ kind: 'launch', launchRequestId: 'native-query-launch' }], nextOffset: 1,
+    } })
+    const page = await grant.execute({ operation: 'turns.recover', offset: 1, limit: 1 }, signal)
+    expect(page).toEqual({ ok: true, operation: 'turns.recover', value: {
+      items: [{ kind: 'settlement', turnId: 'recovery-0', outcome: 'completed', text }], nextOffset: 2,
+    } })
+    if (!page.ok || page.operation !== 'turns.recover') throw new Error('recovery page was refused')
+    Reflect.set(page.value.items[0]!, 'text', 'Caller mutation')
+    expect(await grant.execute({ operation: 'turns.recover', offset: 1, limit: 1 }, signal)).toMatchObject({
+      ok: true, value: { items: [{ text }] },
+    })
+    expect(await grant.execute({ operation: 'turns.recover' }, signal)).toMatchObject({ ok: true, value: { nextOffset: 10 } })
+    expect(await grant.execute({ operation: 'turns.recover', offset: 17, limit: 1 }, signal)).toEqual({
+      ok: true, operation: 'turns.recover', value: { items: [{ kind: 'settlement', turnId: 'recovery-16', outcome: 'completed', text }] },
+    })
+    expect(await grant.execute({ operation: 'turns.recover', offset: 18 }, signal)).toEqual({
+      ok: true, operation: 'turns.recover', value: { items: [] },
+    })
+    expect(await grant.execute({ operation: 'turns.recover', offset: 19 }, signal)).toMatchObject({
+      ok: false, error: { code: 'TEAM_NATIVE_INVALID_CURSOR' },
+    })
+    expect(await grant.execute({ operation: 'turns.recover', limit: 100 }, signal)).toMatchObject({
+      ok: false, error: {
+        code: 'TEAM_NATIVE_RESULT_LIMIT',
+        message: 'The Team recovery result exceeds 65536 UTF-8 bytes; request a smaller recovery page.',
+      },
+    })
+    for (const input of [{ limit: 0 }, { limit: 101 }, { offset: -1 }, { offset: 0.5 }, { memberId: 'another-member' }]) {
+      expect(await grant.execute({ operation: 'turns.recover', ...input }, signal)).toMatchObject({
+        ok: false, error: { code: 'TEAM_NATIVE_INVALID_REQUEST' },
+      })
+    }
+  })
+
+  it('does not wake Team waiters when reading unchanged recovery facts', async () => {
+    const { provider, handle } = await setup()
+    const grant = provider.grants.get(handle)!
+    const controller = new AbortController()
+    const waiting = grant.execute({ operation: 'wait', timeoutMs: 10_000 }, controller.signal)
+    await Promise.resolve()
+    await expect(grant.execute({ operation: 'turns.recover' }, new AbortController().signal)).resolves.toMatchObject({ ok: true })
+    controller.abort()
+    await expect(waiting).resolves.toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_CANCELLED' } })
+  })
+
+  it('does not return an unflushed terminal as a committed recovery fact', async () => {
+    const { ctx, lead, provider, handle, root } = await setup()
+    const signal = new AbortController().signal
+    const grant = provider.grants.get(handle)!
+    await ctx.sessions.flush(lead.agent.session)
+    const relative = readdirSync(root, { recursive: true }).find(path =>
+      typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.jsonl.zstd'))
+    if (typeof relative !== 'string') throw new Error('Lead has no durable Session log')
+    const path = join(root, relative)
+    const backup = `${path}.before-recovery-flush`
+    renameSync(path, backup)
+    try {
+      mkdirSync(path)
+      await expect(grant.execute({ operation: 'turns.settle', outcome: 'failed', text: 'Original failure.' }, signal,
+        { kind: 'settlement', turnId: TeammateRuntimeTurnId('failed-flush-turn') })).resolves.toMatchObject({ ok: false })
+      await expect(grant.execute({ operation: 'turns.recover' }, signal)).resolves.toMatchObject({ ok: false })
+    } finally {
+      rmSync(path, { recursive: true, force: true })
+      renameSync(backup, path)
+    }
+    await expect(grant.execute({ operation: 'turns.recover' }, signal)).resolves.toMatchObject({ ok: true, value: { items: [
+      { kind: 'launch' }, { kind: 'settlement', turnId: 'failed-flush-turn', outcome: 'failed', text: 'Original failure.' },
+    ] } })
+    const stored = await ctx.sessionPersistence.open(lead.agent.id, 'read')
+    try {
+      expect((await stored.read(0)).filter(event => event.type === 'team/native-operation/committed')).toHaveLength(1)
+    } finally { await stored.close() }
+  })
+
+  it('reads its original work correlations and committed terminal text without exposing incoming prompts', async () => {
+    class RecoveringProduct extends NativeProduct {
+      override async create(request: TeammateRuntimeCreateRequest) {
+        return { ...await super.create(request), turnId: request.launchRequestId === 'native-query-launch'
+          ? TeammateRuntimeTurnId('native-initial')
+          : TeammateRuntimeTurnId(`native-initial-${request.memberId}`) }
+      }
+      override async deliver(request: TeammateRuntimeDeliverRequest) {
+        return { turnId: TeammateRuntimeTurnId(`native-followup-${request.deliveryId}`), presence: 'idle' as const }
+      }
+    }
+    const { ctx, lead, unrelated, provider, handle } = await setup(new RecoveringProduct())
+    const signal = new AbortController().signal
+    const incoming = await ctx.agentTeams.sendMessage(lead.agent, {
+      target: 'reviewer', content: [{ type: 'text', text: 'PRIVATE_INCOMING_PROMPT' }], signal,
+    })
+    const externalRuntime = (launchRequestId: string) => ({
+      kind: 'external-agent' as const, provider: provider.id, launchRequestId: TeammateLaunchRequestId(launchRequestId),
+      profile: { persona: 'Keep results private.', mission: 'Test isolation.', context: [], memory: [],
+        toolPolicy: { mode: 'inherit' as const, names: [] }, hooks: [] },
+      requirements: { contextMode: 'fresh' as const, profileCapabilities: ['persona', 'mission'] as const,
+        runtimeCapabilities: [] },
+    })
+    const peer = await ctx.agentTeams.spawnTeammate(lead.agent, {
+      name: 'peer', description: 'Produce an unrelated Team result.', context: 'fresh',
+      prompt: [{ type: 'text', text: 'PRIVATE_PEER_PROMPT' }], signal, runtime: externalRuntime('private-peer-launch'),
+    })
+    const outsider = await ctx.agentTeams.spawnTeammate(unrelated.agent, {
+      name: 'outsider', description: 'Produce another Team result.', context: 'fresh',
+      prompt: [{ type: 'text', text: 'PRIVATE_OTHER_TEAM_PROMPT' }], signal, runtime: externalRuntime('private-other-team-launch'),
+    })
+    const peerGrant = provider.grants.get(peer.member.externalRuntime!.nativeHandle!)!
+    const outsiderGrant = provider.grants.get(outsider.member.externalRuntime!.nativeHandle!)!
+    await expect(peerGrant.execute({ operation: 'turns.settle', outcome: 'completed', text: 'PRIVATE_PEER_RESULT' }, signal,
+      { kind: 'settlement', turnId: TeammateRuntimeTurnId('private-peer-turn') })).resolves.toMatchObject({ ok: true })
+    await expect(outsiderGrant.execute({ operation: 'turns.settle', outcome: 'failed', text: 'PRIVATE_OTHER_TEAM_RESULT' }, signal,
+      { kind: 'settlement', turnId: TeammateRuntimeTurnId('private-other-team-turn') })).resolves.toMatchObject({ ok: true })
+    const peerMessage = await peerGrant.execute({ operation: 'messages.send', target: 'reviewer', text: 'PRIVATE_PEER_MESSAGE' }, signal,
+      { kind: 'tool', turnId: TeammateRuntimeTurnId('private-peer-turn'), callId: TeammateRuntimeToolCallId('private-peer-call') })
+    if (!peerMessage.ok || peerMessage.operation !== 'messages.send') throw new Error('peer message was refused')
+    const grant = provider.grants.get(handle)!
+    await expect(grant.execute({ operation: 'turns.settle', outcome: 'interrupted', text: 'Original work was interrupted.' },
+      signal, { kind: 'settlement', turnId: TeammateRuntimeTurnId('native-initial') })).resolves.toMatchObject({ ok: true })
+    const recovered = await grant.execute({ operation: 'turns.recover', limit: 10 }, signal)
+    expect(recovered).toEqual({ ok: true, operation: 'turns.recover', value: { items: [
+      { kind: 'launch', launchRequestId: 'native-query-launch', turnId: 'native-initial' },
+      { kind: 'delivery', deliveryId: incoming.messageId },
+      { kind: 'delivery', deliveryId: peerMessage.value.messageId },
+      { kind: 'settlement', turnId: 'native-initial', outcome: 'interrupted', text: 'Original work was interrupted.' },
+    ] } })
+    expect(JSON.stringify(recovered)).not.toContain('PRIVATE_INCOMING_PROMPT')
+    expect(JSON.stringify(recovered)).not.toContain('PRIVATE_PEER')
+    expect(JSON.stringify(recovered)).not.toContain('PRIVATE_OTHER_TEAM')
+  })
+
   it.each([
     { action: 'edit' as const, correction: { writeScopes: ['src'] },
       message: 'task edit requires a subject, description, or write scope change' },

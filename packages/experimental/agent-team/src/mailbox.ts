@@ -20,7 +20,7 @@ import type { TeamMembership, TeamRoster } from './roster.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { nativeOperationFingerprint, nativeOperationId } from './native-operation.ts'
-import type { NativeMemberGrant, NativeMemberMailboxRequest, TeammateRuntimeRegistry } from './service-types.ts'
+import type { NativeMemberGrant, NativeMemberMailboxRequest, NativeMemberRecoveryItem, TeammateRuntimeRegistry } from './service-types.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
@@ -121,6 +121,52 @@ export class TeamMailbox {
       void this.tryDispatch(current.root, message, this.lifecycle.signal)
       return structuredClone(receipt.result)
     }))
+  }
+
+  /**
+   * Read work correlations and terminal messages belonging to one authorized native member.
+   * @param identity - current Team-issued provider and handle identity.
+   * @param authorize - exact current grant check repeated in the read queue and after flushing pending facts.
+   * @param signal - cancellation before returning a committed view.
+   * @returns detached launch, inbound delivery ids, and committed settlement values; incoming text is excluded.
+   */
+  async readNativeRecovery(
+    identity: NativeMemberGrant['identity'],
+    authorize: () => TeamMembership,
+    signal: AbortSignal,
+  ): Promise<NativeMemberRecoveryItem[]> {
+    const membership = authorize()
+    return await this.trackDispatch(this.journal.transact(membership.root.id, async () => {
+      signal.throwIfAborted()
+      const current = authorize()
+      await this.ctx.sessions.flush(current.root.session)
+      signal.throwIfAborted()
+      authorize()
+      return this.nativeRecoveryItems(identity, current)
+    }))
+  }
+
+  private nativeRecoveryItems(identity: NativeMemberGrant['identity'], membership: TeamMembership): NativeMemberRecoveryItem[] {
+    const state = this.journal.state(membership.root)
+    const external = state.members.find(member => member.id === identity.memberId)?.externalRuntime
+    assert(external !== undefined, 'An authorized native member must retain its launch identity')
+    const items: NativeMemberRecoveryItem[] = [{ kind: 'launch', launchRequestId: external.launchRequestId,
+      ...external.initialTurnId === undefined ? {} : { turnId: external.initialTurnId },
+    }]
+    for (const message of state.messages) {
+      if (message.targetId === identity.memberId) items.push({ kind: 'delivery', deliveryId: message.id })
+    }
+    for (const receipt of state.nativeOperations) {
+      if (receipt.memberId !== identity.memberId || receipt.provider !== identity.provider || receipt.nativeHandle !== identity.nativeHandle
+        || receipt.source.kind !== 'settlement' || receipt.result.operation !== 'turns.settle') continue
+      const { messageId, outcome } = receipt.result.value
+      const message = state.messages.find(message => message.id === messageId)
+      assert(message !== undefined, 'A committed native settlement must retain its message')
+      const block = message.content[0]
+      assert(message.content.length === 1 && block?.type === 'text', 'A native settlement must retain one intentional text block')
+      items.push({ kind: 'settlement', turnId: receipt.source.turnId, outcome, text: block.text })
+    }
+    return structuredClone(items)
   }
 
   /**

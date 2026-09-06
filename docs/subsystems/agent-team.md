@@ -105,6 +105,8 @@ The Team owner delivers `NativeMemberGrant` only to the current provider after d
 
 Native messages, task changes and terminal results share the [atomic receipt decision](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md). One required payload-4 message/task event records the mutation with its `TeamNativeOperationId` receipt; projection version 5 reconstructs both, with explicit payload-3 message and payload-2 readers. Task receipts retain validated input and a compact original acceptance. [Native task rules](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.md) explain replay before CAS and observation-only waits.
 
+`turns.recover` is a Host-only grant reader rather than an advertised model operation. After current-grant checks, it serializes against the Team journal, flushes the Lead Session, and returns a detached current view containing only the granted member's launch correlation, inbound delivery ids, and committed settlement outcome and intentional text. It excludes incoming message text and every sibling or other-Team fact, and it emits no Team activity. Pages use a numeric offset, default to 10 items, accept 1 to 100, and retain stable identities so adapters can de-duplicate items if concurrent appends shift later pages.
+
 ```ts type-equiv
 /** Trusted provider correlation supplied separately from model tool arguments. */
 type NativeMemberOperationSource =
@@ -181,10 +183,19 @@ type TeamNativeOperationReceipt = TeamNativeMessageReceipt | TeamNativeTaskRecei
 ```
 
 ```ts type-equiv
+/** Member-owned work identities and previously committed terminal text, without incoming prompts. */
+type NativeMemberRecoveryItem =
+  | { readonly kind: 'launch'; readonly launchRequestId: TeammateLaunchRequestId; readonly turnId?: TeammateRuntimeTurnId }
+  | { readonly kind: 'delivery'; readonly deliveryId: TeamMessageId }
+  | { readonly kind: 'settlement'; readonly turnId: TeammateRuntimeTurnId; readonly outcome: NativeMemberTurnOutcome; readonly text: string }
+```
+
+```ts type-equiv
 /** Bounded query result or durable acceptance from an authorized native Team operation. */
 type NativeMemberOperationResult =
   | NativeMemberMessageResult
   | NativeMemberTaskResult
+  | { readonly ok: true; readonly operation: 'turns.recover'; readonly value: { readonly items: readonly NativeMemberRecoveryItem[]; readonly nextOffset?: number } }
   | { readonly ok: true; readonly operation: 'wait'; readonly value: TeamWaitResult }
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
   | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }

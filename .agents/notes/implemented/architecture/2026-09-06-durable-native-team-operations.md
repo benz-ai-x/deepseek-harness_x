@@ -1,4 +1,4 @@
-# Agent Note: Commit native Team messages with their replay receipts
+# Agent Note: Commit and recover native Team messages with their replay receipts
 
 Status: implemented
 
@@ -18,6 +18,8 @@ The event uses payload version 4 with explicit message/task variants and the Tea
 
 The current grant is checked at admission and again in the write queue. A failed flush returns no success and starts no delivery. Retrying flushes the original event before publishing the receipt and continuing delivery. Durable acceptance transfers settlement to the Team; provider retirement still prevents its old grant from returning a successful response. A verified new grant can replay the accepted receipt.
 
+The verified grant also exposes the Host-only `turns.recover` reader. The Team serializes this read with journal operations, flushes the Lead Session, and returns detached pages grouped as the member's launch correlation, inbound delivery ids, and committed settlements. Incoming message text, sibling and other-Team facts, and raw provider history stay with their owners. Reading publishes no Team activity. Stable launch, delivery, and turn identities let an adapter de-duplicate entries when concurrent appends shift numeric-offset pages.
+
 ## Alternatives considered
 
 **Separate mutation and receipt commits.** A crash between them makes the original response unrecoverable and can repeat the mutation. One event makes the two facts inseparable in a readable log prefix.
@@ -28,4 +30,4 @@ The current grant is checked at admission and again in the write queue. A failed
 
 ## Consequences
 
-Receipts survive Host replacement and expose no grant credential or raw provider payload. Queries remain read-only; native message tools and terminal settlement publish only intentional text under the same bounded request policy. The guarantee covers one Host's explicit retry and recovery paths, not cross-Host exactly-once execution. Native adapters remain responsible for preserving trusted SDK correlations and recovering intentional terminal output from their own durable history.
+Receipts survive Host replacement and expose no grant credential or raw provider payload. Queries remain read-only; native message tools and terminal settlement publish only intentional text under the same bounded request policy. A resumed adapter can reconcile its durable history with Host-owned work identities and already committed outcomes without copying prompts into another store. Recovery may wait for the Lead Session flush and fails if that durability check fails. The guarantee covers one Host's explicit retry and recovery paths, not cross-Host exactly-once execution. Native adapters remain responsible for preserving trusted SDK correlations and recovering intentional terminal output from their own durable history.

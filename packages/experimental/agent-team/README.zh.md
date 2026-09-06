@@ -73,6 +73,10 @@ kind: "package-reference"
 
 原生 provider 可以通过自己的工具通道查询成员和任务、变更获授权任务、等待活动，并以成员身份发送消息。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份使用现有 roster、task board 或 mailbox；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
 
+provider 适配器可在验证恢复后调用 grant 的 Host-only `turns.recover` reader；该操作不会作为模型工具发布。reader 会先 flush Lead Session，再返回该获授权成员的分离事实：其 launch request 与可选 initial turn、入站 delivery id，以及已提交结算的结果和文本。返回值排除入站消息文本、同级成员和其他 Team 的事实、原始 provider 历史与 grant 凭据。读取不会发布 Team 活动。
+
+恢复页默认包含 10 项，允许 1 至 100 项。数字 offset 索引当前列表，顺序为 launch、入站 delivery、结算；offset 等于当前长度时返回空页，大于当前长度时无效。并发追加可能使稳定条目跨页重复，因此适配器要按 launch、delivery 与 turn 身份去重，直至 `nextOffset` 不再出现。
+
 原生操作的完整 JSON 请求最多为 4,096 UTF-8 字节，结果最多为 65,536 字节，包含操作与分页元数据。任务列表默认返回 20 条，允许 1 至 100 条；cursor 标识最后返回的任务，该任务不在当前列表时 cursor 失效。过大的结果返回固定错误而不是不完整 JSON；请请求更小的分页。调用方取消会拒绝本次调用。Lead 释放、handle 释放、原生进程离线或 provider 退役会永久撤销 grant；后续在线状态本身不授予访问权。这些 grant 不暴露任意 RPC 或 DSH Agent 凭据。[原生成员授权参考](../../../docs/subsystems/agent-team.zh.md#native-member-authorization)定义 Host 类型。
 
 任务写入复用 DSH 成员的所有权、expectedRevision、DAG 和墓碑规则；Lead-only 重新分配仍被拒绝。过期写入报告 currentRevision。变更回执仅包含任务 id、revision、状态、所有者名称和就绪状态；完整详情通过任务读取获得。等待只观察随后十秒至一小时内的 Team 活动，不启动工作。

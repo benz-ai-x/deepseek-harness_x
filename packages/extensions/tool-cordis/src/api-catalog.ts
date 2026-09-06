@@ -4496,11 +4496,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'NativeMemberOperationResult',
-    declaration: 'export type NativeMemberOperationResult = NativeMemberMessageResult | NativeMemberTaskResult | {\n    readonly ok: true;\n    readonly operation: \'wait\';\n    readonly value: TeamWaitResult;\n} | {\n    readonly ok: true;\n    readonly operation: \'members.list\';\n    readonly value: {\n        readonly members: readonly TeamMemberView[];\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.list\';\n    readonly value: {\n        readonly tasks: readonly TeamTaskView[];\n        readonly nextCursor?: TeamTaskId;\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.get\';\n    readonly value: {\n        readonly task: TeamTaskView;\n    };\n} | {\n    readonly ok: false;\n    readonly error: {\n        readonly code: string;\n        readonly message: string;\n        readonly currentRevision?: number;\n    };\n};',
+    declaration: 'export type NativeMemberOperationResult = NativeMemberMessageResult | NativeMemberTaskResult | {\n    readonly ok: true;\n    readonly operation: \'turns.recover\';\n    readonly value: {\n        readonly items: readonly NativeMemberRecoveryItem[];\n        readonly nextOffset?: number;\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'wait\';\n    readonly value: TeamWaitResult;\n} | {\n    readonly ok: true;\n    readonly operation: \'members.list\';\n    readonly value: {\n        readonly members: readonly TeamMemberView[];\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.list\';\n    readonly value: {\n        readonly tasks: readonly TeamTaskView[];\n        readonly nextCursor?: TeamTaskId;\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.get\';\n    readonly value: {\n        readonly task: TeamTaskView;\n    };\n} | {\n    readonly ok: false;\n    readonly error: {\n        readonly code: string;\n        readonly message: string;\n        readonly currentRevision?: number;\n    };\n};',
   },
   {
     name: 'NativeMemberOperationSource',
     declaration: 'export type NativeMemberOperationSource = {\n    readonly kind: \'tool\';\n    readonly turnId: TeammateRuntimeTurnId;\n    readonly callId: TeammateRuntimeToolCallId;\n} | {\n    readonly kind: \'settlement\';\n    readonly turnId: TeammateRuntimeTurnId;\n};',
+  },
+  {
+    name: 'NativeMemberRecoveryItem',
+    declaration: 'export type NativeMemberRecoveryItem = {\n    readonly kind: \'launch\';\n    readonly launchRequestId: TeammateLaunchRequestId;\n    readonly turnId?: TeammateRuntimeTurnId;\n} | {\n    readonly kind: \'delivery\';\n    readonly deliveryId: TeamMessageId;\n} | {\n    readonly kind: \'settlement\';\n    readonly turnId: TeammateRuntimeTurnId;\n    readonly outcome: NativeMemberTurnOutcome;\n    readonly text: string;\n};',
   },
   {
     name: 'NativeMemberTaskResult',

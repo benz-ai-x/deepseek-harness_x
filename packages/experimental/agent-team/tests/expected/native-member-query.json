@@ -32,6 +32,25 @@
       "message": "The native call already accepted different input."
     }
   },
+  "recovery": {
+    "ok": true,
+    "operation": "turns.recover",
+    "value": {
+      "items": [
+        {
+          "kind": "launch",
+          "launchRequestId": "native-loader-launch",
+          "turnId": "native-loader-turn"
+        },
+        {
+          "kind": "settlement",
+          "turnId": "native-loader-turn",
+          "outcome": "completed",
+          "text": "The review found no issues."
+        }
+      ]
+    }
+  },
   "operations": [
     {
       "version": 4,

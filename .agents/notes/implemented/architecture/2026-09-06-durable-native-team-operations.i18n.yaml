@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.md
-2026-09-06-durable-native-team-operations.md: ae10c68ba5847559853adcaacf724ac33285c7f6
-2026-09-06-durable-native-team-operations.zh.md: e74cc3bc8bf39451fcfde05028f765120090bbe7
+2026-09-06-durable-native-team-operations.md: 22aef3b7ca0968300e2344a64fda0e5be538c604
+2026-09-06-durable-native-team-operations.zh.md: 67c68ee5edb30d8f0de7ad27940739f57a507504
