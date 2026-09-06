@@ -19,13 +19,14 @@ import type {
   TeammateRuntimeTurnId,
   TeamId,
   TeamMemberView,
+  TeamTaskId,
   TeamTaskView,
 } from './types.ts'
 
 /** Canonical result of an authorized native Team query. */
 export type NativeMemberOperationResult =
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
-  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: string } }
+  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
 

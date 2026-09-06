@@ -28,4 +28,4 @@ provider 通过 `bindMemberOperations` 接收 grant。注册表只允许挂载�
 
 适配器必须把当前 grant 绑定到精确原生连接，并执行自己的协议关联校验、取消和完整工具响应大小限制。声明操作必须提供 binder；元数据只描述适配器实际实现的操作。文件系统、审批和网络策略仍由适配器负责，grant 不会扩大这些权限。
 
-[公开 grant 测试](../../../../packages/experimental/agent-team/tests/native-member-operations.spec.ts)使用真实 Team 持久化验证当前 Team 读取、分页、大小限制、取消、身份拒绝、清理前退役、Lead 恢复与评测隔离。[Loader 场景](../../../../packages/experimental/agent-team/tests/native-member-loader.e2e.ts)通过已交付 profile 组合记录模型可见结果及撤销行为。已认证的原生产品执行属于消费方适配器的验收测试。
+[公开 grant 测试](../../../../packages/experimental/agent-team/tests/native-member-operations.spec.ts)使用真实 Team 持久化验证当前 Team 读取、分页、大小限制、取消、身份拒绝、清理前退役、Lead 恢复与评测隔离。[headless 记录会话场景](../../../../snapshots/session/agent-team-profile/snapshot.yml)通过已交付 profile 保留原生成员查询请求、完整权威结果及后续模型上下文。[Loader 场景](../../../../packages/experimental/agent-team/tests/native-member-loader.e2e.ts)另行验证撤销行为。已认证的原生产品执行属于消费方适配器的验收测试。

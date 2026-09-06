@@ -4492,7 +4492,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'NativeMemberOperationResult',
-    declaration: 'export type NativeMemberOperationResult = {\n    readonly ok: true;\n    readonly operation: \'members.list\';\n    readonly value: {\n        readonly members: readonly TeamMemberView[];\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.list\';\n    readonly value: {\n        readonly tasks: readonly TeamTaskView[];\n        readonly nextCursor?: string;\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.get\';\n    readonly value: {\n        readonly task: TeamTaskView;\n    };\n} | {\n    readonly ok: false;\n    readonly error: {\n        readonly code: string;\n        readonly message: string;\n    };\n};',
+    declaration: 'export type NativeMemberOperationResult = {\n    readonly ok: true;\n    readonly operation: \'members.list\';\n    readonly value: {\n        readonly members: readonly TeamMemberView[];\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.list\';\n    readonly value: {\n        readonly tasks: readonly TeamTaskView[];\n        readonly nextCursor?: TeamTaskId;\n    };\n} | {\n    readonly ok: true;\n    readonly operation: \'tasks.get\';\n    readonly value: {\n        readonly task: TeamTaskView;\n    };\n} | {\n    readonly ok: false;\n    readonly error: {\n        readonly code: string;\n        readonly message: string;\n    };\n};',
   },
   {
     name: 'ObjectJsonSchema',

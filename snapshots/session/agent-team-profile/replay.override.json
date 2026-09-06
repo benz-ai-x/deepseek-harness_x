@@ -10,6 +10,72 @@
       {
         "type": "tool-call-delta",
         "index": 0,
+        "id": "call_task_inspect",
+        "name": "team_task_create",
+        "argumentsDelta": "{\"subject\":\"Inspect\",\"description\":\"Inspect the shared source.\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_task_inspect",
+          "name": "team_task_create",
+          "arguments": "{\"subject\":\"Inspect\",\"description\":\"Inspect the shared source.\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_task_verify",
+        "name": "team_task_create",
+        "argumentsDelta": "{\"subject\":\"Verify\",\"description\":\"Verify the report.\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_task_verify",
+          "name": "team_task_create",
+          "arguments": "{\"subject\":\"Verify\",\"description\":\"Verify the report.\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
         "id": "call_agent_team_external",
         "name": "provision_external_teammate",
         "argumentsDelta": "{}"
@@ -71,19 +137,151 @@
       {
         "type": "block-start",
         "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_native_members",
+        "name": "query_external_teammate",
+        "argumentsDelta": "{\"operation\":\"members.list\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_native_members",
+          "name": "query_external_teammate",
+          "arguments": "{\"operation\":\"members.list\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_native_tasks_first",
+        "name": "query_external_teammate",
+        "argumentsDelta": "{\"operation\":\"tasks.list\",\"limit\":1}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_native_tasks_first",
+          "name": "query_external_teammate",
+          "arguments": "{\"operation\":\"tasks.list\",\"limit\":1}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_native_tasks_next",
+        "name": "query_external_teammate",
+        "argumentsDelta": "{\"operation\":\"tasks.list\",\"limit\":1,\"cursor\":\"task-1\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_native_tasks_next",
+          "name": "query_external_teammate",
+          "arguments": "{\"operation\":\"tasks.list\",\"limit\":1,\"cursor\":\"task-1\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_native_task_detail",
+        "name": "query_external_teammate",
+        "argumentsDelta": "{\"operation\":\"tasks.get\",\"taskId\":\"task-1\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_native_task_detail",
+          "name": "query_external_teammate",
+          "arguments": "{\"operation\":\"tasks.get\",\"taskId\":\"task-1\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
         "blockType": "text"
       },
       {
         "type": "text-delta",
         "index": 0,
-        "text": "TEAM READY"
+        "text": "TEAM QUERIES READY"
       },
       {
         "type": "block-end",
         "index": 0,
         "block": {
           "type": "text",
-          "text": "TEAM READY"
+          "text": "TEAM QUERIES READY"
         }
       },
       {

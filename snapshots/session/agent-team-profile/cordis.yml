@@ -34,4 +34,4 @@
         forkProvider: fork
 
     - id: agent-team-external-snapshot-fixture
-      name: './external-provider-fixture.ts'
+      name: './external-provider-fixture.mjs'

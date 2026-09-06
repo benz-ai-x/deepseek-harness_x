@@ -107,7 +107,7 @@ Team 所有者只在持久成员接受或验证恢复后，向当前 provider �
 /** Canonical result of an authorized native Team query. */
 type NativeMemberOperationResult =
   | { readonly ok: true; readonly operation: 'members.list'; readonly value: { readonly members: readonly TeamMemberView[] } }
-  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: string } }
+  | { readonly ok: true; readonly operation: 'tasks.list'; readonly value: { readonly tasks: readonly TeamTaskView[]; readonly nextCursor?: TeamTaskId } }
   | { readonly ok: true; readonly operation: 'tasks.get'; readonly value: { readonly task: TeamTaskView } }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
 ```
