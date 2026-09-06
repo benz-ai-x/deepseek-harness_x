@@ -36,17 +36,18 @@ async function mount(storageRoot: string, script: ConstructorParameters<typeof M
   await ctx.plugin(SubagentService)
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
-  await ctx.plugin(TeamService)
+  const teamFiber = ctx.plugin(TeamService)
+  await teamFiber
   ctx.llm.registerAdapter(['mock'], new MockAdapter(script))
-  return ctx
+  return { ctx, teamFiber }
 }
 
 async function setup(rootId = 'message-read-lead', script: ConstructorParameters<typeof MockAdapter>[0] = []) {
   const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-message-read-'))
   roots.push(storageRoot)
-  const ctx = await mount(storageRoot, script)
+  const { ctx, teamFiber } = await mount(storageRoot, script)
   const lead = await ctx.agentLoop.create(SessionId(rootId), { provider: 'mock', model: 'mock' })
-  return { ctx, lead, storageRoot }
+  return { ctx, lead, storageRoot, teamFiber }
 }
 
 function cursorEnvelope(payload: unknown, checksum?: string): TeamMessageCursor {
@@ -57,6 +58,11 @@ function cursorEnvelope(payload: unknown, checksum?: string): TeamMessageCursor 
 
 function rawCursorEnvelope(value: unknown): TeamMessageCursor {
   return TeamMessageCursor(Buffer.from(JSON.stringify(value), 'utf8').toString('base64url'))
+}
+
+function cursorPayload(cursor: TeamMessageCursor): { readonly through: number } {
+  const outer = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as [string, string]
+  return JSON.parse(outer[0]) as { readonly through: number }
 }
 
 function activeMember(id: SessionId, name: string): [TeamMemberSnapshot, TeamMemberSnapshot] {
@@ -435,28 +441,28 @@ describe('Agent Teams committed message reader', () => {
     const leadId = SessionId('message-restart-lead')
     const alpha = SessionId('message-restart-alpha')
     const first = await mount(storageRoot)
-    const lead = await first.agentLoop.create(leadId, { provider: 'mock', model: 'mock' })
+    const lead = await first.ctx.agentLoop.create(leadId, { provider: 'mock', model: 'mock' })
     appendMember(lead, alpha, 'alpha')
     const message = appendMessage(lead, 'message-restart-row', lead.id, 'lead', alpha, [
       { type: 'text', text: 'survives restart' },
     ])
-    await first.sessions.flush(lead.session)
-    const before = await first.agentTeams.listMessages(lead, {})
-    await first.fiber.dispose()
+    await first.ctx.sessions.flush(lead.session)
+    const before = await first.ctx.agentTeams.listMessages(lead, {})
+    await first.ctx.fiber.dispose()
 
     const restarted = await mount(storageRoot)
-    const handle = await restarted.agents.resume({
+    const handle = await restarted.ctx.agents.resume({
       resumeSessionId: leadId,
       agentOptions: { provider: 'mock', model: 'mock' },
     })
-    const after = await restarted.agentTeams.listMessages(handle.agent, { cursor: before.committedCursor })
+    const after = await restarted.ctx.agentTeams.listMessages(handle.agent, { cursor: before.committedCursor })
     expect(after.items).toEqual(before.items)
-    expect((await restarted.agentTeams.getMessage(handle.agent, {
+    expect((await restarted.ctx.agentTeams.getMessage(handle.agent, {
       messageId: message.id,
       committedCursor: before.committedCursor,
     })).content.parts).toEqual([{ type: 'text', text: 'survives restart' }])
     await handle.dispose()
-    await restarted.fiber.dispose()
+    await restarted.ctx.fiber.dispose()
   })
 
   it('returns a complete empty window for an eventless Team Lead', async () => {
@@ -487,5 +493,57 @@ describe('Agent Teams committed message reader', () => {
       committedCursor: page.committedCursor,
     })
     await expect(changed).rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+
+  it('pins a new committed cursor to the live cutoff captured before the durability barrier', async () => {
+    const { ctx, lead } = await setup('message-cursor-cutoff-lead')
+    const alpha = SessionId('message-cursor-cutoff-alpha')
+    appendMember(lead, alpha, 'alpha')
+    const message = appendMessage(lead, 'message-cursor-cutoff-row', lead.id, 'lead', alpha, [
+      { type: 'text', text: 'durable at the read barrier' },
+    ])
+    const through = lead.session.snapshotEvents().at(-1)!.seq
+    const flush = ctx.sessions.flush.bind(ctx.sessions)
+    vi.spyOn(ctx.sessions, 'flush').mockImplementationOnce(async (session) => {
+      const participated = await flush(session)
+      session.append('turn/start', { turn: 1 })
+      return participated
+    })
+
+    const page = await ctx.agentTeams.listMessages(lead, {})
+
+    expect(page.items.map(item => item.id)).toEqual([message.id])
+    expect(cursorPayload(page.committedCursor).through).toBe(through)
+    expect(lead.session.snapshotEvents().at(-1)!.seq).toBe(through + 1)
+  })
+
+  it('closes read admission and settles an accepted read before Team disposal completes', async () => {
+    const { ctx, lead, teamFiber } = await setup('message-reader-lifecycle-lead')
+    const service = ctx.agentTeams
+    const flushStarted = Promise.withResolvers<undefined>()
+    const releaseFlush = Promise.withResolvers<undefined>()
+    const flush = ctx.sessions.flush.bind(ctx.sessions)
+    vi.spyOn(ctx.sessions, 'flush').mockImplementationOnce(async (session) => {
+      flushStarted.resolve(undefined)
+      await releaseFlush.promise
+      return await flush(session)
+    })
+
+    const read = service.listMessages(lead, {})
+    await flushStarted.promise
+    let disposed = false
+    const disposal = teamFiber.dispose().then(() => { disposed = true })
+    await Promise.resolve()
+    const disposedBeforeRelease = disposed
+    releaseFlush.resolve(undefined)
+    const outcome = await read.then(
+      value => ({ ok: true as const, value }),
+      error => ({ ok: false as const, error }),
+    )
+    await disposal
+
+    expect(disposedBeforeRelease).toBe(false)
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'TEAM_DISPOSED' } })
+    await expect(service.listMessages(lead, {})).rejects.toMatchObject({ code: 'TEAM_DISPOSED' })
   })
 })

@@ -208,7 +208,7 @@ export class TeamService extends TypertRemoteService {
       this.config.maxPendingMessagesPerMember,
       this.config.maxMessageBytes,
     )
-    this.messageReader = new TeamMessageReader(ctx, this.journal, this.roster)
+    this.messageReader = new TeamMessageReader(ctx, this.journal, this.roster, this.lifecycle)
     this.tasks = new TeamTaskBoard(this.journal, this.config.maxTasks)
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
@@ -560,6 +560,7 @@ export class TeamService extends TypertRemoteService {
     this.teammateRuntimeRegistry.closeAdmission()
 
     const failures: unknown[] = []
+    await this.lifecycle.settle(this.messageReader.pendingReads(), failures)
     await this.lifecycle.settle([...this.inFlightRecoveries], failures)
     await this.lifecycle.settle(this.roster.pendingCreations(), failures)
     await this.lifecycle.settle(this.mailbox.pendingDispatches(), failures)

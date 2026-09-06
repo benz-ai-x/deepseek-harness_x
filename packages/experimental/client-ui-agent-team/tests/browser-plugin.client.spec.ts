@@ -194,15 +194,15 @@ describe('ui-team browser plugin', () => {
   it('projects public child-view navigation and removes it with its Fiber', async () => {
     const b = await bench()
     const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
-    expect(actions.panelViews.getSnapshot()).toEqual([])
+    expect(actions.hooks.panelViews.getSnapshot()).toEqual([])
 
     const contribution = b.registerPanelView('messages', 'Messages')
     await Promise.resolve()
-    expect(actions.panelViews.getSnapshot()).toEqual([{ id: 'messages', label: 'Messages' }])
+    expect(actions.hooks.panelViews.getSnapshot()).toEqual([{ id: 'messages', label: 'Messages' }])
 
     contribution()
     await Promise.resolve()
-    expect(actions.panelViews.getSnapshot()).toEqual([])
+    expect(actions.hooks.panelViews.getSnapshot()).toEqual([])
   })
 
   it('unmounts the Remote contribution when later Client registration fails', async () => {

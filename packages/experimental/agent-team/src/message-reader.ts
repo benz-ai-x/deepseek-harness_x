@@ -9,6 +9,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { TeamMessageCursor as toTeamMessageCursor } from './brand.ts'
 import { TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
+import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import type { TeamMessageIndexEntry, TeamState } from './projection.ts'
 import type { TeamMembership, TeamRoster } from './roster.ts'
 import type {
@@ -51,16 +52,25 @@ interface IndexedMessage {
 
 /** Owns stable message paging without exposing mailbox payloads in list responses. */
 export class TeamMessageReader {
+  private readonly inFlight = new Set<Promise<unknown>>()
+
   /**
    * @param ctx - Host services used for the durable read barrier.
    * @param journal - serialized Team transaction and authoritative projection owner.
    * @param roster - exact live caller and Team-role authority.
+   * @param lifecycle - shared read-admission cutoff used by Team disposal.
    */
   constructor(
     private readonly ctx: Context,
     private readonly journal: TeamJournal,
     private readonly roster: TeamRoster,
+    private readonly lifecycle: TeamRuntimeLifecycle,
   ) {}
+
+  /** Snapshot every accepted read that has not settled yet. */
+  pendingReads(): readonly Promise<unknown>[] {
+    return [...this.inFlight]
+  }
 
   /**
    * Read one newest-first metadata page from a fixed committed window.
@@ -69,40 +79,44 @@ export class TeamMessageReader {
    * @returns metadata only, plus committed and next-page cursors.
    */
   async list(caller: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage> {
-    const initial = this.lead(caller)
-    return await this.journal.transact(initial.root.id, async () => {
-      const beforeFlush = this.lead(caller)
-      await this.ctx.sessions.flush(beforeFlush.root.session)
-      const current = this.lead(caller)
-      const state = this.journal.state(current.root)
-      const filters = this.filters(request.filters, state, current.root.id)
-      const limit = this.pageSize(request.limit)
-      const lastSeq = current.root.session.snapshotEvents().at(-1)?.seq ?? -1
-      const cursor = request.cursor === undefined
-        ? { version: CURSOR_VERSION, teamId: current.id, filters, through: lastSeq } satisfies CursorPayload
-        : this.decodeCursor(request.cursor, current.id, filters, lastSeq)
-      const candidates = this.indexed(state, current.root.id)
-        .filter(candidate => candidate.index.queuedSeq <= cursor.through
-          && (cursor.before === undefined || candidate.index.queuedSeq < cursor.before)
-          && this.matches(candidate, filters, cursor.through))
-        .sort((left, right) => right.index.queuedSeq - left.index.queuedSeq)
-      const window = candidates.slice(0, limit)
-      const committedCursor = this.encodeCursor({
-        version: cursor.version,
-        teamId: cursor.teamId,
-        filters: cursor.filters,
-        through: cursor.through,
+    return await this.admit(async () => {
+      const initial = this.lead(caller)
+      return await this.journal.transact(initial.root.id, async () => {
+        this.lifecycle.signal.throwIfAborted()
+        const beforeFlush = this.lead(caller)
+        const lastSeq = beforeFlush.root.session.snapshotEvents().at(-1)?.seq ?? -1
+        await this.ctx.sessions.flush(beforeFlush.root.session)
+        this.lifecycle.signal.throwIfAborted()
+        const current = this.lead(caller)
+        const state = this.journal.state(current.root)
+        const filters = this.filters(request.filters, state, current.root.id)
+        const limit = this.pageSize(request.limit)
+        const cursor = request.cursor === undefined
+          ? { version: CURSOR_VERSION, teamId: current.id, filters, through: lastSeq } satisfies CursorPayload
+          : this.decodeCursor(request.cursor, current.id, filters, lastSeq)
+        const candidates = this.indexed(state, current.root.id)
+          .filter(candidate => candidate.index.queuedSeq <= cursor.through
+            && (cursor.before === undefined || candidate.index.queuedSeq < cursor.before)
+            && this.matches(candidate, filters, cursor.through))
+          .sort((left, right) => right.index.queuedSeq - left.index.queuedSeq)
+        const window = candidates.slice(0, limit)
+        const committedCursor = this.encodeCursor({
+          version: cursor.version,
+          teamId: cursor.teamId,
+          filters: cursor.filters,
+          through: cursor.through,
+        })
+        const next = candidates.length > limit ? window.at(-1) : undefined
+        return {
+          items: window.map(candidate => this.summary(candidate, state, current.root.id, cursor.through)),
+          committedCursor,
+          ...(next === undefined ? {} : { nextCursor: this.encodeCursor({
+            ...cursor,
+            before: next.index.queuedSeq,
+          }) }),
+          complete: true,
+        }
       })
-      const next = candidates.length > limit ? window.at(-1) : undefined
-      return {
-        items: window.map(candidate => this.summary(candidate, state, current.root.id, cursor.through)),
-        committedCursor,
-        ...(next === undefined ? {} : { nextCursor: this.encodeCursor({
-          ...cursor,
-          before: next.index.queuedSeq,
-        }) }),
-        complete: true,
-      }
     })
   }
 
@@ -113,29 +127,45 @@ export class TeamMessageReader {
    * @returns metadata and content with omissions reported explicitly.
    */
   async get(caller: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail> {
-    const initial = this.lead(caller)
-    return await this.journal.transact(initial.root.id, async () => {
-      const beforeFlush = this.lead(caller)
-      await this.ctx.sessions.flush(beforeFlush.root.session)
-      const current = this.lead(caller)
-      const state = this.journal.state(current.root)
-      const lastSeq = current.root.session.snapshotEvents().at(-1)?.seq ?? -1
-      const cursor = this.decodeCursor(request.committedCursor, current.id, undefined, lastSeq)
-      if (cursor.before !== undefined) {
-        throw new TeamError('message detail requires a committed window cursor', 'TEAM_MESSAGE_CURSOR_INVALID')
-      }
-      this.filters(cursor.filters, state, current.root.id)
-      const selected = this.indexed(state, current.root.id).find(candidate => candidate.message.id === request.messageId
-        && candidate.index.queuedSeq <= cursor.through
-        && this.matches(candidate, cursor.filters, cursor.through))
-      if (selected === undefined) {
-        throw new TeamError('Team message is not part of the committed query window', 'TEAM_MESSAGE_NOT_FOUND')
-      }
-      return {
-        ...this.summary(selected, state, current.root.id, cursor.through),
-        content: this.content(selected.message.content),
-      }
+    return await this.admit(async () => {
+      const initial = this.lead(caller)
+      return await this.journal.transact(initial.root.id, async () => {
+        this.lifecycle.signal.throwIfAborted()
+        const beforeFlush = this.lead(caller)
+        const lastSeq = beforeFlush.root.session.snapshotEvents().at(-1)?.seq ?? -1
+        await this.ctx.sessions.flush(beforeFlush.root.session)
+        this.lifecycle.signal.throwIfAborted()
+        const current = this.lead(caller)
+        const state = this.journal.state(current.root)
+        const cursor = this.decodeCursor(request.committedCursor, current.id, undefined, lastSeq)
+        if (cursor.before !== undefined) {
+          throw new TeamError('message detail requires a committed window cursor', 'TEAM_MESSAGE_CURSOR_INVALID')
+        }
+        this.filters(cursor.filters, state, current.root.id)
+        const selected = this.indexed(state, current.root.id).find(candidate => candidate.message.id === request.messageId
+          && candidate.index.queuedSeq <= cursor.through
+          && this.matches(candidate, cursor.filters, cursor.through))
+        if (selected === undefined) {
+          throw new TeamError('Team message is not part of the committed query window', 'TEAM_MESSAGE_NOT_FOUND')
+        }
+        return {
+          ...this.summary(selected, state, current.root.id, cursor.through),
+          content: this.content(selected.message.content),
+        }
+      })
     })
+  }
+
+  /** Admit one read before the shared cutoff and retain it until either outcome settles. */
+  private admit<T>(operation: () => Promise<T>): Promise<T> {
+    this.lifecycle.signal.throwIfAborted()
+    const admitted = operation()
+    this.inFlight.add(admitted)
+    void admitted.then(
+      () => { this.inFlight.delete(admitted) },
+      () => { this.inFlight.delete(admitted) },
+    )
+    return admitted
   }
 
   /** Resolve and enforce the exact current Lead identity at each read edge. */

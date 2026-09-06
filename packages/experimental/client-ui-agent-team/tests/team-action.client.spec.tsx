@@ -6,7 +6,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamTaskId, TeamTaskView as TeamTask, TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
-import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import {
   TeamAction, type TeamActionInjected, type TeamActionProps, type TeamActionResult,
@@ -70,19 +70,23 @@ function remoteFailure(message: string): TeamActionResult<never> {
 }
 
 function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): TeamActionProps {
+  const { hooks, ...plain } = actions
   return {
     sessionId,
     renderSlot: () => null,
-    ...actions,
+    ...plain,
+    usePanelViews: bindSnapshotSelector(hooks.panelViews),
     t: makeTranslate(zh, commonZh),
   } as unknown as TeamActionProps
 }
 
 function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjected {
   return {
-    panelViews: {
-      getSnapshot: () => EMPTY_PANEL_VIEWS,
-      subscribe: () => () => {},
+    hooks: {
+      panelViews: {
+        getSnapshot: () => EMPTY_PANEL_VIEWS,
+        subscribe: () => () => {},
+      },
     },
     resolveTeamSessionId: sessionId => sessionId,
     load: () => Promise.resolve({ ok: true, value: view }),
@@ -101,9 +105,11 @@ describe('TeamAction', () => {
     const renderSlot = vi.fn(() => <div>Injected message center</div>)
     const messageViews = [{ id: 'messages', label: '消息' }] as const
     const injected = actions({
-      panelViews: {
-        getSnapshot: () => messageViews,
-        subscribe: () => () => {},
+      hooks: {
+        panelViews: {
+          getSnapshot: () => messageViews,
+          subscribe: () => () => {},
+        },
       },
     })
     render(<TeamAction {...{

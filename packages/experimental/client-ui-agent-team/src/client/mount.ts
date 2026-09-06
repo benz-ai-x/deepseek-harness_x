@@ -49,7 +49,7 @@ function registerUi(ctx: ClientContext): void {
 
   let panelViewSnapshot: readonly TeamPanelView[] = []
   const panelViewListeners = new Set<() => void>()
-  const panelViews: TeamActionInjected['panelViews'] = {
+  const panelViews: TeamActionInjected['hooks']['panelViews'] = {
     getSnapshot: () => panelViewSnapshot,
     subscribe: (listener) => {
       panelViewListeners.add(listener)
@@ -73,7 +73,7 @@ function registerUi(ctx: ClientContext): void {
   }
 
   const actions: TeamActionInjected = {
-    panelViews,
+    hooks: { panelViews },
     resolveTeamSessionId: leadSessionId,
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
