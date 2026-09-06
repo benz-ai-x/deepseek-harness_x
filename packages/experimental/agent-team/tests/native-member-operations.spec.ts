@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -9,17 +9,27 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import Subagents from '@deepseek-ai/dsh-subagent'
+import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { MockAdapter } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import TeamService, {
+  TeamId,
   TeammateEvaluationHandle,
   TeammateEvaluationId,
   TeammateLaunchRequestId,
   TeammateRuntimeHandle,
   TeammateRuntimeEvidenceId,
+  TeammateRuntimeToolCallId,
   TeammateRuntimeTurnId,
   type NativeMemberGrant,
+  type TeammateProfileCapability,
   type TeammateRuntimeCapability,
   type TeammateRuntimeCreateRequest,
+  type TeammateRuntimeCreateResult,
+  type TeammateRuntimeEvidenceItem,
+  type TeammateRuntimeEvidenceRequest,
   type TeammateRuntimeProvider,
+  type TeammateRuntimePresenceEvent,
+  type TeammateRuntimeProfileSnapshot,
   type TeammateRuntimeResumeRequest,
 } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
@@ -29,13 +39,13 @@ class NativeProduct implements TeammateRuntimeProvider {
   readonly id = 'native-query'
   readonly displayName = 'Native query fixture'
   readonly contextModes = ['fresh'] as const
-  readonly profileCapabilities = ['persona', 'mission'] as const
+  readonly profileCapabilities: readonly TeammateProfileCapability[] = ['persona', 'mission']
   readonly runtimeCapabilities: readonly TeammateRuntimeCapability[] = []
   readonly memberOperations = ['members.list', 'tasks.list', 'tasks.get'] as const
   readonly grants = new Map<TeammateRuntimeHandle, NativeMemberGrant>()
   constructor(readonly handles = new Map<string, TeammateRuntimeHandle>()) {}
 
-  async create(request: TeammateRuntimeCreateRequest) {
+  async create(request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult> {
     const handle = TeammateRuntimeHandle(`native-${request.memberId}`)
     this.handles.set(request.memberId, handle)
     return { nativeHandle: handle, presence: 'idle' as const }
@@ -73,7 +83,7 @@ async function setup(provider = new NativeProduct()) {
   await ctx.plugin(TestSessionQuery)
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(Subagents)
-  await ctx.plugin(TeamService)
+  const teamFiber = await ctx.plugin(TeamService)
   const lead = await ctx.agents.create({ sessionId: SessionId('native-team-lead') })
   const unrelated = await ctx.agents.create({ sessionId: SessionId('unrelated-lead') })
   const registration = ctx.agentTeams.registerTeammateRuntimeProvider(provider)
@@ -90,10 +100,410 @@ async function setup(provider = new NativeProduct()) {
     },
   })
   const handle = launched.member.externalRuntime!.nativeHandle!
-  return { ctx, lead, unrelated, provider, registration, launched, handle }
+  return { ctx, lead, unrelated, provider, registration, launched, handle, teamFiber, root }
 }
 
 describe('native Team member queries', () => {
+  it('revokes native grants even when a DSH child cannot persist its final state', async () => {
+    const { ctx, provider, handle, root, teamFiber } = await setup()
+    const failures: unknown[] = []
+    ctx.logger.exporter({ export(message) { if (message.type === 'error') failures.push(...message.args) } })
+    await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+    ctx.llm.registerAdapter(['mock'], new MockAdapter(['hang']))
+    const lead = await ctx.agentLoop.create(SessionId('failed-storage-lead'), { provider: 'mock', model: 'mock' })
+    const launched = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'dsh-worker', description: 'Hold a live model request.', context: 'fresh', provider: 'spawn',
+      prompt: [{ type: 'text', text: 'Wait for instructions.' }], signal: new AbortController().signal,
+    })
+    await vi.waitFor(() => { expect(ctx.agents.get(launched.member.id)?.status).toBe('running') })
+    await ctx.sessions.flush(ctx.agents.get(launched.member.id)!.session)
+    const relative = readdirSync(root, { recursive: true }).find(path =>
+      typeof path === 'string' && path.includes(launched.member.id) && path.endsWith('session.jsonl.zstd'))
+    if (typeof relative !== 'string') throw new Error('DSH child has no persisted session file')
+    const path = join(root, relative)
+    const backup = `${path}.before-failure`
+    renameSync(path, backup)
+    try {
+      mkdirSync(path)
+      await teamFiber.dispose()
+    } finally {
+      rmSync(path, { recursive: true, force: true })
+      renameSync(backup, path)
+    }
+    expect(failures).toContainEqual(expect.objectContaining({
+      code: 'ACTIVATION_TEARDOWN_FAILED', message: expect.stringContaining('selected activation(s)'),
+    }))
+    expect(ctx.agents.get(launched.member.id)).toBeUndefined()
+    expect(ctx.get('agentTeams')).toBeUndefined()
+    expect(await provider.grants.get(handle)!.execute({ operation: 'members.list' }, new AbortController().signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+  })
+
+  it('keeps authority revoked when registration disposal overtakes a replacement', async () => {
+    const started = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    class DrainingProduct extends NativeProduct {
+      override async dispose() {
+        started.resolve(undefined)
+        await release.promise
+      }
+    }
+    const original = new DrainingProduct()
+    const { registration, handle } = await setup(original)
+    cleanups.push(async () => { release.resolve(undefined) })
+    const next = new NativeProduct(original.handles)
+    const replacement = registration.replace(next)
+    void replacement.catch(() => undefined)
+    try {
+      await started.promise
+      const disposing = registration()
+      release.resolve(undefined)
+      await expect(replacement).rejects.toMatchObject({ code: 'TEAM_RUNTIME_UNAVAILABLE' })
+      await disposing
+      expect(registration.available()).toBe(false)
+      expect(next.grants.size).toBe(0)
+      expect(original.grants.get(handle)!.signal.aborted).toBe(true)
+    } finally { release.resolve(undefined) }
+  })
+
+  it('quarantines concurrent invalid evidence without restoring native authority', async () => {
+    class EvidenceProduct extends NativeProduct {
+      override readonly runtimeCapabilities = ['evidence'] as const
+      async evidence(request: TeammateRuntimeEvidenceRequest) {
+        return { nativeHandle: request.nativeHandle, items: [{
+          id: TeammateRuntimeEvidenceId('bad-native-result'), kind: 'turn' as const, timestamp: -1,
+        }], complete: true }
+      }
+    }
+    const provider = new EvidenceProduct()
+    const { ctx, lead, registration, handle } = await setup(provider)
+    const request = { limit: 1, signal: new AbortController().signal }
+    const outcomes = await Promise.allSettled([
+      ctx.agentTeams.readTeammateRuntimeEvidence(lead.agent, 'reviewer', request),
+      ctx.agentTeams.readTeammateRuntimeEvidence(lead.agent, 'reviewer', request),
+    ])
+    expect(outcomes).toMatchObject([
+      { status: 'rejected', reason: { code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' } },
+      { status: 'rejected', reason: { code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' } },
+    ])
+    expect(registration.available()).toBe(false)
+    expect(provider.grants.get(handle)!.signal.aborted).toBe(true)
+  })
+
+  it('refuses running native work without lifecycle observation before issuing a grant', async () => {
+    class UnobservableProduct extends NativeProduct {
+      override async create(request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult> {
+        return { ...await super.create(request), presence: 'running' }
+      }
+    }
+    const { ctx, lead, provider, handle } = await setup()
+    const unobservable = Object.assign(new UnobservableProduct(), { id: 'unobservable-native' })
+    const registration = ctx.agentTeams.registerTeammateRuntimeProvider(unobservable)
+    await expect(ctx.agentTeams.spawnTeammate(lead.agent, {
+      name: 'unobservable', description: 'Cannot observe completion.', context: 'fresh',
+      prompt: [{ type: 'text', text: 'Read tasks.' }], signal: new AbortController().signal,
+      runtime: { kind: 'external-agent', provider: unobservable.id,
+        launchRequestId: TeammateLaunchRequestId('unobservable-launch'),
+        profile: { persona: 'Be precise.', mission: 'Review.', context: [], memory: [],
+          toolPolicy: { mode: 'inherit', names: [] }, hooks: [] },
+        requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission'], runtimeCapabilities: [] },
+      },
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
+    expect(registration.available()).toBe(false)
+    expect(unobservable.grants.size).toBe(0)
+    expect(provider.grants.get(handle)!.signal.aborted).toBe(false)
+    await registration()
+  })
+
+  it.each([false, true])('recovers pending native identity and rejects a conflicting concurrent handle: %s', async (conflict) => {
+    const firstEntered = Promise.withResolvers<undefined>()
+    const secondEntered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    class RecoveringProduct extends NativeProduct {
+      pendingResumes = 0
+      override async resume(request: TeammateRuntimeResumeRequest) {
+        if (request.memberId !== 'pending-query-member') return await super.resume(request)
+        const call = ++this.pendingResumes
+        if (call === 1) firstEntered.resolve(undefined)
+        if (call === 2) secondEntered.resolve(undefined)
+        await release.promise
+        return { nativeHandle: TeammateRuntimeHandle(conflict && call === 2 ? 'conflicting-native' : 'pending-native'), presence: 'idle' as const }
+      }
+    }
+    const provider = new RecoveringProduct()
+    const { ctx, lead, registration, handle } = await setup(provider)
+    cleanups.push(async () => { release.resolve(undefined) })
+    const original = lead.agent.session.ownEvents().find(event => event.type === 'team/member' && event.data.member.phase === 'provisioning')
+    if (original?.type !== 'team/member' || original.data.member.externalRuntime === undefined) throw new Error('fixture has no durable provisioning record')
+    const pending = await ctx.agents.create({ sessionId: SessionId('pending-query-lead') })
+    pending.agent.session.append('team/member', {
+      version: 2, teamId: TeamId(pending.agent.id), member: {
+        ...original.data.member, id: SessionId('pending-query-member'),
+        externalRuntime: { ...original.data.member.externalRuntime, launchRequestId: TeammateLaunchRequestId('pending-query-launch') },
+      },
+    })
+    await ctx.sessions.flush(pending.agent.session)
+    const firstTrigger = ctx.agentTeams.registerTeammateRuntimeProvider(Object.assign(new NativeProduct(), { id: 'first-recovery-trigger' }))
+    try {
+      await firstEntered.promise
+      const secondTrigger = ctx.agentTeams.registerTeammateRuntimeProvider(Object.assign(new NativeProduct(), { id: 'second-recovery-trigger' }))
+      try {
+        await secondEntered.promise
+        release.resolve(undefined)
+        await vi.waitFor(() => {
+          expect(ctx.agentTeams.listMembers(pending.agent)[1]?.externalRuntime?.nativeHandle).toBe('pending-native')
+          expect(registration.available()).toBe(!conflict)
+          if (!conflict) expect(provider.grants.get(TeammateRuntimeHandle('pending-native'))).toBeDefined()
+        })
+        if (conflict) {
+          expect(provider.grants.get(handle)!.signal.aborted).toBe(true)
+          expect(provider.grants.has(TeammateRuntimeHandle('conflicting-native'))).toBe(false)
+        } else {
+          expect(await provider.grants.get(TeammateRuntimeHandle('pending-native'))!.execute({ operation: 'members.list' }, new AbortController().signal))
+            .toMatchObject({ ok: true, value: { members: [{ id: pending.agent.id }, { id: 'pending-query-member' }] } })
+        }
+      } finally { release.resolve(undefined); await secondTrigger() }
+    } finally { release.resolve(undefined); await firstTrigger() }
+  })
+
+  it('preserves exact DSH roles while native topology changes around ordinary subagents', async () => {
+    const { ctx, lead, provider, handle } = await setup()
+    await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+    ctx.llm.registerAdapter(['mock'], new MockAdapter(['hang', 'hang']))
+    const dshLead = await ctx.agentLoop.create(SessionId('dsh-role-lead'), { provider: 'mock', model: 'mock' })
+    const ordinary = await ctx.subagents.startContinuable({
+      provider: 'spawn', label: 'ordinary worker',
+      request: { prompt: [{ type: 'text', text: 'Wait for instructions.' }], parent: dshLead },
+      signal: new AbortController().signal,
+    })
+    await vi.waitFor(() => { expect(ctx.agents.get(ordinary.childId)?.status).toBe('running') })
+    expect(ctx.agentTeams.tryMembership(ctx.agents.get(ordinary.childId)!)).toBeUndefined()
+    const teammate = await ctx.agentTeams.spawnTeammate(dshLead, {
+      name: 'dsh-worker', description: 'Wait for instructions.', context: 'fresh', provider: 'spawn',
+      prompt: [{ type: 'text', text: 'Wait for instructions.' }], signal: new AbortController().signal,
+    })
+    await vi.waitFor(() => { expect(ctx.agents.get(teammate.member.id)?.status).toBe('running') })
+    await expect(ctx.agentTeams.readTeammateRuntimeEvidence(ctx.agents.get(teammate.member.id)!, 'lead', {
+      limit: 1, signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
+    await expect(ctx.agentTeams.readTeammateRuntimeEvidence(lead.agent, 'lead', {
+      limit: 1, signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'TEAM_MEMBER_NOT_FOUND' })
+    const additional = ctx.agentTeams.registerTeammateRuntimeProvider(Object.assign(new NativeProduct(), { id: 'topology-observer' }))
+    expect(ctx.agentTeams.tryMembership(ctx.agents.get(ordinary.childId)!)).toBeUndefined()
+    expect(await provider.grants.get(handle)!.execute({ operation: 'members.list' }, new AbortController().signal))
+      .toMatchObject({ ok: true, value: { members: [{ name: 'lead' }, { name: 'reviewer' }] } })
+    await additional()
+  })
+
+  it.each(['observe', 'cleanup'] as const)('revokes old grants when replacement presence %s fails', async (failure) => {
+    class ObservedProduct extends NativeProduct {
+      failObservation = false
+      failCleanup = false
+      onPresenceChanged() {
+        if (this.failObservation) throw new Error('native presence observation failed')
+        return () => {
+          if (!this.failCleanup) return
+          this.failCleanup = false
+          throw new Error('native presence cleanup failed')
+        }
+      }
+    }
+    const original = new ObservedProduct()
+    const { registration, handle } = await setup(original)
+    const grant = original.grants.get(handle)!
+    const replacement = new ObservedProduct(original.handles)
+    original.failCleanup = failure === 'cleanup'
+    replacement.failObservation = failure === 'observe'
+    await expect(registration.replace(replacement)).rejects.toThrow(/observation failed|retirement failed/u)
+    expect(registration.available()).toBe(false)
+    expect(replacement.grants.size).toBe(0)
+    expect(grant.signal.aborted).toBe(true)
+    expect(await grant.execute({ operation: 'members.list' }, new AbortController().signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+    await registration()
+  })
+
+  it('preserves bounded usage and tool evidence but revokes an unqualified approval producer', async () => {
+    let items: readonly TeammateRuntimeEvidenceItem[] = [
+      { id: TeammateRuntimeEvidenceId('usage-1'), kind: 'usage', timestamp: 1,
+        usage: { inputTokens: 14, outputTokens: 7, cacheWriteTokens: 2 } },
+      { id: TeammateRuntimeEvidenceId('tool-1'), kind: 'tool', timestamp: 2,
+        callId: TeammateRuntimeToolCallId('call-1'), name: 'read',
+        usage: { inputTokens: 14, outputTokens: 7, totalTokens: 21, cacheReadTokens: 3, reasoningTokens: 1 } },
+    ]
+    class EvidenceProduct extends NativeProduct {
+      override readonly runtimeCapabilities = ['evidence'] as const
+      async evidence(request: TeammateRuntimeEvidenceRequest) {
+        return { nativeHandle: request.nativeHandle, items, complete: true }
+      }
+    }
+    const provider = new EvidenceProduct()
+    const { ctx, lead, handle, registration } = await setup(provider)
+    const result = await ctx.agentTeams.readTeammateRuntimeEvidence(lead.agent, 'reviewer', {
+      limit: 2, signal: new AbortController().signal,
+    })
+    expect(result.items).toEqual([
+      { id: 'usage-1', kind: 'usage', timestamp: 1, usage: { inputTokens: 14, outputTokens: 7, cacheWriteTokens: 2 } },
+      { id: 'tool-1', kind: 'tool', timestamp: 2, callId: 'call-1', name: 'read',
+        usage: { inputTokens: 14, outputTokens: 7, totalTokens: 21, cacheReadTokens: 3, reasoningTokens: 1 } },
+    ])
+    items = [{ id: TeammateRuntimeEvidenceId('approval-1'), kind: 'approval', timestamp: 3 }]
+    await expect(ctx.agentTeams.readTeammateRuntimeEvidence(lead.agent, 'reviewer', {
+      limit: 1, signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_IDENTITY_CONFLICT' })
+    expect(registration.available()).toBe(false)
+    expect(provider.grants.get(handle)!.signal.aborted).toBe(true)
+  })
+
+  it.each([
+    { kind: 'turn', timestamp: -1 },
+    { kind: 'turn', timestamp: Number.NaN },
+    { kind: 'approval', outcome: 'asked' },
+    { kind: 'approval', turnId: 'turn-1', name: 'read', approvalId: 'approval-1', callId: 'call-1', policyId: 'policy-1', outcome: 'unrecognized' },
+    { kind: 'other' },
+    { kind: 'turn', approvalId: 'approval-1' },
+    { kind: 'turn', policyId: 'policy-1' },
+    { kind: 'turn', callId: 'call-1' },
+    { kind: 'turn', step: 1 },
+    { kind: 'tool', step: 0 },
+    { kind: 'tool', outcome: 'unrecognized' },
+    { kind: 'usage', usage: { inputTokens: -1, outputTokens: 0 } },
+  ])('revokes native authority when external evidence violates its contract: %j', async (malformed) => {
+    class EvidenceProduct extends NativeProduct {
+      override readonly runtimeCapabilities = ['evidence', 'exact-call-approval'] as const
+      override readonly profileCapabilities = ['persona', 'mission', 'hooks'] as const
+      async evidence(request: TeammateRuntimeEvidenceRequest) {
+        const item = { id: TeammateRuntimeEvidenceId('native-evidence-1'), timestamp: 1, ...malformed } as TeammateRuntimeEvidenceItem
+        return { nativeHandle: request.nativeHandle, items: [item], complete: true }
+      }
+    }
+    const provider = new EvidenceProduct()
+    const { ctx, lead, handle, registration } = await setup(provider)
+    const grant = provider.grants.get(handle)!
+    await expect(ctx.agentTeams.readTeammateRuntimeEvidence(lead.agent, 'reviewer', {
+      limit: 1, signal: new AbortController().signal,
+    })).rejects.toThrow()
+    expect(registration.available()).toBe(false)
+    expect(grant.signal.aborted).toBe(true)
+    expect(await grant.execute({ operation: 'tasks.list' }, new AbortController().signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+  })
+
+  const invalidProfiles: readonly Partial<TeammateRuntimeProfileSnapshot>[] = [
+    { persona: ' ' },
+    { context: [{ id: 'bad id', title: 'Context', content: 'Read only.' }] },
+    { toolPolicy: { mode: 'inherit', names: ['read'] } },
+    { toolPolicy: { mode: 'allow', names: ['read', 'read'] } },
+    { hooks: [{ point: 'session-start', effect: 'deny', text: 'Refuse.' }] },
+    { hooks: [{ point: 'before-step', effect: 'context', matcher: 'read', text: 'Review.' }] },
+    { hooks: [{ point: 'before-tool', effect: 'context', matcher: 'read', text: 'Review.' }] },
+    { hooks: [{ point: 'before-tool', effect: 'deny', text: 'Refuse.' }] },
+    { hooks: [{ point: 'after-tool', effect: 'deny', matcher: 'read', text: 'Refuse.' }] },
+    { hooks: [{ point: 'after-tool', effect: 'context', text: 'Review.' }] },
+    { hooks: [{ id: 'bad id', point: 'before-step', effect: 'context', text: 'Review.' }] },
+    { hooks: [{ point: 'before-tool', effect: 'ask', matcher: 'read', text: 'Confirm.' }] },
+  ]
+  it.each(invalidProfiles)('rejects malformed native launch policy without issuing another grant: %j', async (invalid) => {
+    class ProfileProduct extends NativeProduct {
+      override readonly profileCapabilities = ['persona', 'mission', 'context', 'memory', 'tool-policy', 'hooks'] as const
+    }
+    const provider = new ProfileProduct()
+    const { ctx, lead } = await setup(provider)
+    await expect(ctx.agentTeams.spawnTeammate(lead.agent, {
+      name: 'invalid-policy', description: 'Must not reach native creation.', context: 'fresh',
+      prompt: [{ type: 'text', text: 'Read the task board.' }], signal: new AbortController().signal,
+      runtime: {
+        kind: 'external-agent', provider: provider.id, launchRequestId: TeammateLaunchRequestId('invalid-native-profile'),
+        profile: { persona: 'Review carefully.', mission: 'Inspect.', context: [], memory: [],
+          toolPolicy: { mode: 'inherit', names: [] }, hooks: [], ...invalid },
+        requirements: { contextMode: 'fresh', profileCapabilities: provider.profileCapabilities, runtimeCapabilities: [] },
+      },
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    expect(provider.handles.size).toBe(1)
+    expect(provider.grants.size).toBe(1)
+    expect(ctx.agentTeams.listMembers(lead.agent).map(member => member.name)).toEqual(['lead', 'reviewer'])
+  })
+
+  it('rejects unknown or duplicate operation declarations before publishing a provider', async () => {
+    const { ctx } = await setup()
+    for (const memberOperations of [['tasks.delete'], ['tasks.list', 'tasks.list']]) {
+      const provider = Object.assign(new NativeProduct(), { id: 'invalid-native-queries', memberOperations })
+      expect(() => ctx.agentTeams.registerTeammateRuntimeProvider(provider))
+        .toThrow(expect.objectContaining({ code: 'TEAM_RUNTIME_INVALID_PROVIDER' }))
+    }
+    for (const declaration of [
+      { memberOperations: undefined }, { bindMemberOperations: undefined },
+    ]) {
+      const provider = Object.assign(new NativeProduct(), { id: 'missing-native-queries', ...declaration })
+      expect(() => ctx.agentTeams.registerTeammateRuntimeProvider(provider))
+        .toThrow(expect.objectContaining({ code: 'TEAM_RUNTIME_INVALID_PROVIDER' }))
+    }
+    const unavailableEvaluation = Object.assign(new NativeProduct(), {
+      id: 'incomplete-evaluation-provider', runtimeCapabilities: ['evaluation'], evaluationTools: [],
+    })
+    expect(() => ctx.agentTeams.registerTeammateRuntimeProvider(unavailableEvaluation))
+      .toThrow(/advertises evaluation without implementing it/u)
+    expect(() => ctx.agentTeams.registerTeammateRuntimeProvider(Object.assign(new NativeProduct(), {
+      id: 'unqualified-evaluation-tools', evaluationTools: [],
+    }))).toThrow(/must publish evaluation tools exactly when evaluation is supported/u)
+  })
+
+  it('never revives an old grant when a detached native process reports presence again', async () => {
+    class ReportingProduct extends NativeProduct {
+      private readonly listeners = new Set<(event: TeammateRuntimePresenceEvent) => void>()
+      onPresenceChanged(listener: (event: TeammateRuntimePresenceEvent) => void) {
+        this.listeners.add(listener)
+        return () => { this.listeners.delete(listener) }
+      }
+      report(event: TeammateRuntimePresenceEvent) {
+        for (const listener of this.listeners) listener(event)
+      }
+      queueReport(event: TeammateRuntimePresenceEvent) {
+        const pending = [...this.listeners]
+        return () => { for (const listener of pending) listener(event) }
+      }
+    }
+    const provider = new ReportingProduct()
+    const { handle, registration } = await setup(provider)
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    provider.report({ nativeHandle: TeammateRuntimeHandle('unattached-native-handle'), presence: 'inactive' })
+    expect(grant.signal.aborted).toBe(false)
+    provider.report({ nativeHandle: handle, presence: 'inactive' })
+    expect(await grant.execute({ operation: 'members.list' }, signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+    provider.report({ nativeHandle: handle, presence: 'idle' })
+    expect(await grant.execute({ operation: 'members.list' }, signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+    expect(grant.signal.aborted).toBe(true)
+    const late = provider.queueReport({ nativeHandle: handle, presence: 'idle' })
+    await registration()
+    late()
+    expect(registration.available()).toBe(false)
+    expect(await grant.execute({ operation: 'members.list' }, signal))
+      .toMatchObject({ ok: false, error: { code: 'TEAM_NATIVE_GRANT_REVOKED' } })
+  })
+
+  it('keeps current authority across unrelated Agent disposal and idempotent provider recovery', async () => {
+    const { ctx, provider, handle, unrelated } = await setup()
+    const grant = provider.grants.get(handle)!
+    await unrelated.dispose()
+    expect(grant.signal.aborted).toBe(false)
+    const rebound = Promise.withResolvers<undefined>()
+    const bind = provider.bindMemberOperations.bind(provider)
+    provider.bindMemberOperations = (request) => {
+      bind(request)
+      rebound.resolve(undefined)
+    }
+    const registration = ctx.agentTeams.registerTeammateRuntimeProvider(Object.assign(new NativeProduct(), { id: 'another-native-provider' }))
+    await rebound.promise
+    expect(provider.grants.get(handle)).toBe(grant)
+    expect(await grant.execute({ operation: 'tasks.list' }, new AbortController().signal))
+      .toEqual({ ok: true, operation: 'tasks.list', value: { tasks: [] } })
+    await registration()
+  })
+
   it('gives an accepted native member a query grant for its actual Team', async () => {
     const { provider, handle, lead, unrelated, launched } = await setup()
     const grant = provider.grants.get(handle)
@@ -238,6 +648,7 @@ describe('native Team member queries', () => {
   it('never grants production Team authority to isolated evaluation handles', async () => {
     class EvaluatingProduct extends NativeProduct {
       override readonly runtimeCapabilities = ['evaluation'] as const
+      override readonly profileCapabilities = ['persona', 'mission', 'hooks'] as const
       readonly evaluationTools = []
       async createEvaluationHandle() {
         return {
@@ -255,15 +666,29 @@ describe('native Team member queries', () => {
       evaluationId: TeammateEvaluationId('isolated-case'),
       profile: {
         persona: 'Be precise.', mission: 'Review only the fixture.', context: [], memory: [],
-        toolPolicy: { mode: 'inherit', names: [] }, hooks: [],
+        toolPolicy: { mode: 'inherit', names: [] },
+        hooks: [{ id: 'evaluation-context', point: 'before-step', effect: 'context', text: 'Read only.' }],
       },
-      requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission'], runtimeCapabilities: ['evaluation'] },
+      requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission', 'hooks'], runtimeCapabilities: ['evaluation'] },
       input: [{ type: 'text', text: 'Evaluate this fixture.' }],
       environment: { sandbox: 'read-only', approval: 'never', toolAllowlist: [], fixtures: [], maxSteps: 1, maxOutputTokens: 100, maxElapsedMs: 1_000 },
       signal: new AbortController().signal,
     })
     expect(result).toMatchObject({ terminal: 'completed' })
     expect([...provider.grants.keys()]).toEqual([handle])
+    expect(ctx.agentTeams.listMembers(lead.agent)).toEqual(before)
+    await expect(ctx.agentTeams.runTeammateEvaluation(lead.agent, provider.id, {
+      evaluationId: TeammateEvaluationId('oversized-isolated-case'),
+      profile: { persona: 'Be precise.', mission: 'Review.', context: [], memory: [],
+        toolPolicy: { mode: 'inherit', names: [] }, hooks: [] },
+      requirements: { contextMode: 'fresh', profileCapabilities: ['persona', 'mission'], runtimeCapabilities: ['evaluation'] },
+      input: [{ type: 'text', text: 'Evaluate.' }],
+      environment: { sandbox: 'read-only', approval: 'never', toolAllowlist: [],
+        fixtures: [{ id: 'oversized-fixture', content: 'x'.repeat(200_000) }],
+        maxSteps: 1, maxOutputTokens: 100, maxElapsedMs: 1_000 },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+    expect(provider.grants.get(handle)!.signal.aborted).toBe(false)
     expect(ctx.agentTeams.listMembers(lead.agent)).toEqual(before)
   })
 

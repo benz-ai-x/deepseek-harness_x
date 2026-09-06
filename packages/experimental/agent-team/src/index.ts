@@ -232,12 +232,14 @@ export class TeamService extends TypertRemoteService {
 
   private bindNativeMember(root: Agent, member: TeamMemberSnapshot): void {
     const nativeHandle = member.externalRuntime?.nativeHandle
+    /* v8 ignore if -- all callers pass the active native snapshot after durable acceptance or verified resume. */
     if (nativeHandle === undefined || member.phase !== 'active') return
     this.teammateRuntimeRegistry.bindMemberOperations(member.provider, nativeHandle, root, (signal, current) => {
       const identity = { teamId: TeamId(root.id), memberId: member.id, provider: member.provider, nativeHandle }
       return createNativeMemberGrant(identity, signal, () => {
         const membership = this.roster.membership(root)
         const actual = this.journal.state(root).members.find(candidate => candidate.id === member.id)
+        /* v8 ignore if -- accepted identity is immutable; every ownership cutoff aborts the grant before this fallback. */
         if (!current() || membership.role !== 'lead' || actual?.phase !== 'active'
           || actual.provider !== member.provider || actual.externalRuntime?.nativeHandle !== nativeHandle) {
           throw new TeamError('native member authorization expired', 'TEAM_NATIVE_GRANT_REVOKED')

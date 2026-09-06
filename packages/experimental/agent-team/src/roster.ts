@@ -761,6 +761,7 @@ export class TeamRoster {
         },
       })
       const accepted = this.journal.state(root).members.find(candidate => candidate.id === member.id)
+      /* v8 ignore else -- appendAndFlush just committed this member; the projection retains accepted identities. */
       if (accepted !== undefined) this.bindNativeMember(root, accepted)
     })
   }

@@ -94,9 +94,11 @@ export function createNativeMemberGrant(
             }
           }
         } catch (error: unknown) {
+          /* v8 ignore else -- validated in-memory roster/task readers only throw task-not-found; contain invariant faults. */
           if (error instanceof TeamError && error.code === 'TEAM_TASK_NOT_FOUND') {
             return { ok: false, error: { code: error.code, message: 'The task does not exist in this Team.' } }
           }
+          /* v8 ignore next -- defensive containment for reader invariant faults; expected task absence is handled above. */
           return { ok: false, error: { code: 'TEAM_NATIVE_QUERY_FAILED', message: 'The Team query could not be completed.' } }
         }
       })

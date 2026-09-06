@@ -216,7 +216,7 @@ function uniqueCanonical<T extends string>(
   values: readonly T[],
   order: readonly T[],
 ): readonly T[] {
-  if (new Set(values).size !== values.length) {
+  if (new Set(values).size !== values.length || values.some(value => !order.includes(value))) {
     throw new TeammateRuntimeError(
       `teammate runtime provider "${providerId}" has invalid ${field}`,
       'TEAM_RUNTIME_INVALID_PROVIDER',
@@ -307,13 +307,16 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
       'TEAM_RUNTIME_INVALID_PROVIDER',
     )
   }
+  const memberOperations = provider.memberOperations === undefined ? undefined : uniqueCanonical(
+    providerId, 'member operations', provider.memberOperations, ['members.list', 'tasks.list', 'tasks.get'],
+  )
   return Object.freeze({
     id: providerId,
     displayName,
     contextModes,
     profileCapabilities,
     runtimeCapabilities,
-    ...(provider.memberOperations === undefined ? {} : { memberOperations: Object.freeze([...provider.memberOperations]) }),
+    ...(memberOperations === undefined ? {} : { memberOperations }),
     ...(evaluationTools === undefined ? {} : { evaluationTools }),
   })
 }
@@ -483,6 +486,7 @@ function normalizeEvaluationEnvironment(
     )
   }
   const toolAllowlist = environment.toolAllowlist.map(tool => tool.trim()).sort()
+  /* v8 ignore next -- evaluation admission requires the immutable tools declaration validated at registration. */
   const supported = new Set(metadata.evaluationTools ?? [])
   if (new Set(toolAllowlist).size !== toolAllowlist.length
     || toolAllowlist.some(tool => !IDENTIFIER.test(tool) || !supported.has(tool))) {
@@ -591,6 +595,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     let effect: () => Promise<void>
     try {
       effect = owner.effect(function* (this: TeammateRuntimeRegistryHost) {
+        /* v8 ignore if -- register synchronously reserves this id in records before invoking its effect. */
         if (this.providers.has(metadata.id)) {
           throw new TeammateRuntimeError(
             `teammate runtime provider "${metadata.id}" is already registered`,
@@ -1228,6 +1233,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
       .map((outcome): unknown => outcome.reason)
     if (failures.length > 0) throw new AggregateError(failures, 'teammate runtime cleanup failed')
+    /* v8 ignore else -- successful retirement settles all work and releases every record before this continuation. */
     if (this.records.size === 0) this.clearCorrelations()
   }
 
@@ -1267,6 +1273,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     try {
       record.stopPresenceObserver?.()
     } catch (error: unknown) {
+      /* v8 ignore next -- publication can fail only before assigning the observer; later Host publication is synchronous and infallible. */
       this.reportAsyncFailure(error)
     }
     record.stopPresenceObserver = undefined
@@ -1306,6 +1313,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
 
   private providerFor(record: ProviderRecord): TeammateRuntimeProvider {
     const provider = record.provider
+    /* v8 ignore if -- admitted operations retain the provider until their tracked work and attached resources settle. */
     if (provider === undefined) {
       throw new TeammateRuntimeError(
         `teammate runtime provider "${record.metadata.id}" was released`,
@@ -1534,9 +1542,11 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     try {
       const outcomes = await Promise.allSettled([...record.inFlight])
       for (const outcome of outcomes) {
+        /* v8 ignore if -- retirement aborts this lifecycle before awaiting the native promises. */
         if (outcome.status === 'rejected' && !record.lifecycle.signal.aborted) failures.push(outcome.reason)
       }
     } catch (error: unknown) {
+      /* v8 ignore next -- native Promise.allSettled over the owned Set cannot reject; retain invariant-fault containment. */
       failures.push(error)
     }
     try {
@@ -1623,6 +1633,8 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
   ): void {
     const key = stableKey([providerId, nativeHandle])
     if (this.presence.get(key)?.owner === record) {
+      record.memberGrants.get(nativeHandle)?.controller.abort()
+      record.memberGrants.delete(nativeHandle)
       this.presence.delete(key)
       if (this.providers.get(providerId) === record && record.accepting) {
         this.onPresenceChanged(providerId)
