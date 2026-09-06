@@ -70,7 +70,7 @@ export function prepareTaskUpdate(
     case 'edit':
       authorizeOwner()
       if (request.subject === undefined && request.description === undefined && request.writeScopes === undefined) {
-        throw new TeamError('task edit requires subject, description, or write_scopes', 'TEAM_INVALID_ARGUMENT')
+        throw new TeamError('task edit requires a subject, description, or write scope change', 'TEAM_INVALID_ARGUMENT')
       }
       next = {
         ...current,
@@ -83,7 +83,7 @@ export function prepareTaskUpdate(
       break
     case 'set_dependencies':
       authorizeOwner()
-      if (request.blockedBy === undefined) throw new TeamError('set_dependencies requires blocked_by', 'TEAM_INVALID_ARGUMENT')
+      if (request.blockedBy === undefined) throw new TeamError('set_dependencies requires a dependency list', 'TEAM_INVALID_ARGUMENT')
       next = { ...current, blockedBy: taskDependencies(request.blockedBy, state, current.id) }
       break
     case 'complete':

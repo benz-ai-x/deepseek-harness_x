@@ -108,6 +108,32 @@ async function setup(provider = new NativeProduct()) {
 }
 
 describe('native Team member queries', () => {
+  it.each([
+    { action: 'edit' as const, correction: { writeScopes: ['src'] },
+      message: 'task edit requires a subject, description, or write scope change' },
+    { action: 'set_dependencies' as const, correction: { blockedBy: [] },
+      message: 'set_dependencies requires a dependency list' },
+  ])('lets DSH and native callers correct missing $action input from shared diagnostics', async ({ action, correction, message }) => {
+    const { ctx, lead, provider, handle } = await setup()
+    const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Correct input', description: 'Use the caller schema.' })
+    const grant = provider.grants.get(handle)!
+    const signal = new AbortController().signal
+    const source = { kind: 'tool' as const, turnId: TeammateRuntimeTurnId('diagnostic-turn'),
+      callId: TeammateRuntimeToolCallId('claim') }
+    expect(await grant.execute({ operation: 'tasks.update', taskId: task.id, expectedRevision: 1, action: 'claim' }, signal, source))
+      .toMatchObject({ ok: true, value: { task: { revision: 2 } } })
+    const request = { taskId: task.id, expectedRevision: 2, action }
+    await expect(ctx.agentTeams.updateTask(lead.agent, request)).rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT', message })
+    const attempt = { ...source, callId: TeammateRuntimeToolCallId('correct-input') }
+    expect(await grant.execute({ operation: 'tasks.update', ...request }, signal, attempt))
+      .toEqual({ ok: false, error: { code: 'TEAM_INVALID_ARGUMENT', message } })
+    expect(ctx.agentTeams.getTask(lead.agent, task.id).revision).toBe(2)
+    expect(await grant.execute({ operation: 'tasks.update', ...request, ...correction }, signal, attempt))
+      .toMatchObject({ ok: true, value: { task: { revision: 3 } } })
+    expect(await ctx.agentTeams.updateTask(lead.agent, { ...request, ...correction, expectedRevision: 3 }))
+      .toMatchObject({ revision: 4, ...correction })
+  })
+
   it('lets a native member claim a ready task under its own durable identity', async () => {
     const { ctx, lead, provider, handle, launched } = await setup()
     const task = await ctx.agentTeams.createTask(lead.agent, {
