@@ -1,0 +1,8 @@
+version: 1
+scenario: agent-team-panel
+profile: web
+composition: agent-team-web-profile
+recording: authored
+header:
+  class: agent-team-panel
+  pin: true

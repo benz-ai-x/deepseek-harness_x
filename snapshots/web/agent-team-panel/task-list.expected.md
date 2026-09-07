@@ -1,0 +1,45 @@
+- button "Agent Team" [expanded]:
+  - img
+  - text: Agent Team
+- dialog "Agent Team":
+  - strong: Agent Team
+  - button "Refresh Team":
+    - img
+  - button "Close":
+    - img
+  - tablist "Agent Team views":
+    - tab "Overview" [selected]
+  - heading "Members" [level=3]
+  - 'button "lead Idle · Model: deepseek-v4-flash" [disabled]'
+  - heading "Shared tasks" [level=3]
+  - button "New task":
+    - img
+    - text: New task
+  - group "Task display":
+    - button "Task list" [pressed]
+    - button "Task dependency graph"
+  - searchbox "Filter tasks"
+  - list "Task list":
+    - listitem:
+      - button "task-1 · Prepare inputs" [pressed]:
+        - strong: Prepare inputs
+        - text: Pending task-1
+    - listitem:
+      - button "task-2 · Publish result":
+        - strong: Publish result
+        - text: "Pending task-2 Blocked by dependencies Blocked by: task-1"
+  - region "Task details":
+    - article:
+      - strong: task-1 · Prepare inputs
+      - text: Pending
+      - paragraph: Prepare the shared inputs.
+      - text: "Ready Write scopes: src/input Owner"
+      - combobox "Owner":
+        - option "Unowned" [selected]
+        - option "lead"
+      - button "Edit":
+        - img
+        - text: Edit
+      - button "Delete":
+        - img
+        - text: Delete
