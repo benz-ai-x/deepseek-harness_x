@@ -493,7 +493,7 @@ export function TeamAction({
     } else if (event.key === 'End') {
       nextId = graphLayout.nodes.at(-1)?.task.id
     }
-    if (nextId === undefined) return
+    if (nextId === undefined || !graphLayout.byId.has(nextId)) return
     event.preventDefault()
     setSelectedTaskId(nextId)
     graphNodeRefs.current.get(nextId)?.focus()
