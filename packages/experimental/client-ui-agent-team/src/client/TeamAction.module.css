@@ -171,6 +171,150 @@
   gap: 7px;
 }
 
+.taskViewSwitch {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 7px;
+}
+
+.taskViewSwitch button {
+  padding: 4px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.taskViewSwitch button[aria-pressed='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.taskFilter {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 7px;
+  padding: 5px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+}
+
+.hiddenDependency {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+}
+
+.taskChoice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskChoice[aria-pressed='true'],
+.taskNode[aria-pressed='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 1px var(--dsw-alias-brand-primary);
+}
+
+.taskGraphFrame {
+  display: grid;
+  gap: 6px;
+}
+
+.taskGraphControls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.taskGraphControls button {
+  min-width: 26px;
+  padding: 3px 7px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.taskGraph {
+  position: relative;
+  height: 260px;
+  overflow: hidden;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 9px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.taskGraph:active {
+  cursor: grabbing;
+}
+
+.taskGraphCanvas {
+  position: relative;
+  transform-origin: 0 0;
+}
+
+.taskEdges,
+.taskNodes {
+  position: absolute;
+  inset: 0;
+}
+
+.taskEdges {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.taskEdge {
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-width: 1.5;
+}
+
+.taskArrow {
+  fill: var(--dsw-alias-label-tertiary);
+}
+
+.taskNode {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 144px;
+  height: 104px;
+  padding: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskNode span,
+.taskNode small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+}
+
+.taskDetail {
+  margin-top: 8px;
+}
+
 .task,
 .form {
   padding: 9px;

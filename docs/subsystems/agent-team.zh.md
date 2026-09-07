@@ -601,6 +601,14 @@ tryMembership(agent: Agent): TeamMembership | undefined
 @Remote('view') remoteView(agent: Agent): TeamView
 
 /**
+ * Read one authoritative task detail, including a retained deletion tombstone.
+ * @param agent - exact live Team member used as the authority credential.
+ * @param taskId - Team-local task identity selected from a view or graph.
+ * @returns the current runtime-enriched task view from the same Lead log.
+ */
+@Remote('getTask') remoteGetTask(agent: Agent, taskId: TeamTaskId): TeamTaskView
+
+/**
  * Read persisted message metadata through the generated Remote API.
  * @param agent - exact live Team Lead used as the authority credential.
  * @param request - bounded committed message query.

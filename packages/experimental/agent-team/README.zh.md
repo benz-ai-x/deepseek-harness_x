@@ -213,7 +213,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 ### 浏览器 Remote
 
-`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还直接负责生成式 `agentTeams/view`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/sendMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出浏览器安全的 view、消息查询／提交、净化内容与 task mutation type。消息 list 和 detail failure 保留为普通外层 `RemoteResult` failure。人类发送、task create 与 task update rejection 则作为 transport 成功响应中的显式 domain result，其中 message request conflict 与过期 task revision 都能同其他 Team rejection 区分。
+`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还直接负责生成式 `agentTeams/view`、`agentTeams/getTask`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/sendMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出浏览器安全的 view、消息查询／提交、净化内容与 task mutation type。`view` 返回未删除 task board；`getTask` 以真实 Team-local id 读取同一 Lead log，也包含其保留的删除墓碑。Task 与消息 read failure 保留为普通外层 `RemoteResult` failure。人类发送、task create 与 task update rejection 则作为 transport 成功响应中的显式 domain result，其中 message request conflict 与过期 task revision 都能同其他 Team rejection 区分。
 
 ## 模型体验
 

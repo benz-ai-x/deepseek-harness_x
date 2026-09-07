@@ -1066,6 +1066,7 @@ describe('Team Remote API', () => {
     expect(createdResult).toMatchObject({ ok: true, value: { revision: 1 } })
     if (!createdResult.ok) throw new Error('Remote task creation did not succeed')
     const created = createdResult.value
+    expect(ctx.agentTeams.remoteGetTask(lead, created.id)).toEqual(created)
     await expect(ctx.agentTeams.remoteUpdateTask(lead, {
       taskId: created.id,
       expectedRevision: created.revision,

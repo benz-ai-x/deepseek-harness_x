@@ -42,6 +42,7 @@ describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
       methods: [
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/createTask',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/getMessage',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/getTask',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/listMessages',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/sendMessage',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/updateTask',

@@ -458,6 +458,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'detached current roster and task views.',
       },
       {
+        signature: '@Remote(\'getTask\') remoteGetTask(agent: Agent, taskId: TeamTaskId): TeamTaskView',
+        description: 'Read one authoritative task detail, including a retained deletion tombstone.',
+        parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }, { name: 'taskId', description: 'Team-local task identity selected from a view or graph.' }],
+        returns: 'the current runtime-enriched task view from the same Lead log.',
+      },
+      {
         signature: '@Remote(\'listMessages\') remoteListMessages(agent: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>',
         description: 'Read persisted message metadata through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team Lead used as the authority credential.' }, { name: 'request', description: 'bounded committed message query.' }],

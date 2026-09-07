@@ -1,24 +1,26 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamTaskId, TeamTaskView as TeamTask, TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import {
   TeamAction, type TeamActionInjected, type TeamActionProps, type TeamActionResult,
   type TeamTaskActionResult,
 } from '../src/client/TeamAction.tsx'
-import { zh } from '../src/client/locales.ts'
+import { en, zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
 const SESSION = 'lead' as SessionId
 const TASK_1 = 'task-1' as TeamTaskId
 const TASK_2 = 'task-2' as TeamTaskId
+const TASK_3 = 'task-3' as TeamTaskId
 const EMPTY_PANEL_VIEWS: readonly [] = []
 const task: TeamTask = {
   id: TASK_1,
@@ -101,6 +103,211 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
 }
 
 describe('TeamAction', () => {
+  it('shares real task selection and detail between the list and dependency graph', async () => {
+    const dependent: TeamTask = {
+      id: TASK_2,
+      revision: 4,
+      subject: 'Publish result',
+      description: 'Publish after the runtime is complete',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      writeScopes: ['docs'],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [task, dependent] } }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Publish result')
+    fireEvent.click(screen.getByRole('button', { name: 'task-2 · Publish result' }))
+
+    const detail = screen.getByRole('region', { name: '任务详情' })
+    expect(detail.textContent).toContain('task-2')
+    expect(detail.textContent).toContain('Publish after the runtime is complete')
+    expect(detail.textContent).toContain('task-1')
+    expect(detail.textContent).toContain('被依赖阻塞')
+    expect(detail.querySelector('select')?.value).toBe('')
+    expect(screen.getByRole('button', { name: /编辑/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /删除/u })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '任务依赖图' }))
+    const graph = screen.getByRole('application', { name: '任务依赖图' })
+    const edge = within(graph).getByLabelText('task-1 → task-2')
+    expect(edge.getAttribute('data-from-task-id')).toBe('task-1')
+    expect(edge.getAttribute('data-to-task-id')).toBe('task-2')
+    expect(edge.getAttribute('marker-end')).toBe('url(#agent-team-task-arrow)')
+    const dependentNode = within(graph).getByRole('button', { name: 'task-2 · Publish result' })
+    expect(dependentNode.getAttribute('aria-pressed')).toBe('true')
+    expect(dependentNode.textContent).toContain(zh.unowned)
+    expect(dependentNode.textContent).toContain(zh.blocked)
+    expect(dependentNode.textContent).toContain('task-1')
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('task-2')
+
+    fireEvent.click(within(graph).getByRole('button', { name: 'task-1 · Implement runtime' }))
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('task-1')
+    fireEvent.click(screen.getByRole('button', { name: '任务列表' }))
+    expect(screen.getByRole('button', { name: 'task-1 · Implement runtime' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('Build the Team runtime')
+  })
+
+  it('auto-lays out the DAG and supports zoom, pan, fit, and directional keyboard navigation', async () => {
+    const prerequisite: TeamTask = {
+      ...task,
+      status: 'completed',
+      revision: 2,
+      ready: false,
+    }
+    const middle: TeamTask = {
+      id: TASK_2,
+      revision: 1,
+      subject: 'Integrate runtime',
+      description: 'Use the completed runtime',
+      status: 'completed',
+      blockedBy: [TASK_1],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    const dependent: TeamTask = {
+      id: TASK_3,
+      revision: 1,
+      subject: 'Publish result',
+      description: 'Publish after integration',
+      status: 'pending',
+      blockedBy: [TASK_2],
+      writeScopes: [],
+      ready: true,
+      writeScopeWarnings: [],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({
+        ok: true,
+        value: { ...view, tasks: [prerequisite, middle, dependent] },
+      }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Publish result')
+    fireEvent.click(screen.getByRole('button', { name: '任务依赖图' }))
+
+    const graph = screen.getByRole('application', { name: '任务依赖图' })
+    const first = within(graph).getByRole('button', { name: 'task-1 · Implement runtime' })
+    const second = within(graph).getByRole('button', { name: 'task-2 · Integrate runtime' })
+    const third = within(graph).getByRole('button', { name: 'task-3 · Publish result' })
+    expect(first.getAttribute('data-graph-column')).toBe('0')
+    expect(second.getAttribute('data-graph-column')).toBe('1')
+    expect(third.getAttribute('data-graph-column')).toBe('2')
+
+    fireEvent.click(screen.getByRole('button', { name: '放大依赖图' }))
+    expect(graph.getAttribute('data-zoom')).toBe('1.2')
+    fireEvent.pointerDown(within(graph).getByLabelText('task-1 → task-2'), {
+      clientX: 20,
+      clientY: 30,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(graph, { clientX: 55, clientY: 70, pointerId: 1 })
+    fireEvent.pointerUp(graph, { pointerId: 1 })
+    expect(graph.getAttribute('data-pan-x')).toBe('35')
+    expect(graph.getAttribute('data-pan-y')).toBe('40')
+    fireEvent.click(screen.getByRole('button', { name: '适配依赖图视野' }))
+    expect(graph.getAttribute('data-pan-x')).not.toBe('35')
+    expect(Number(graph.getAttribute('data-zoom'))).toBeGreaterThan(0)
+
+    first.focus()
+    fireEvent.keyDown(first, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(second)
+    expect(second.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.keyDown(second, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(third)
+    fireEvent.keyDown(third, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(second)
+    fireEvent.click(screen.getByRole('button', { name: '任务列表' }))
+    expect(screen.getByRole('button', { name: 'task-2 · Integrate runtime' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('shows filtered-out dependency hints without changing Host readiness', async () => {
+    const prerequisite: TeamTask = {
+      ...task,
+      subject: 'Hidden prerequisite',
+    }
+    const dependent: TeamTask = {
+      id: TASK_2,
+      revision: 3,
+      subject: 'Visible dependent',
+      description: 'Still blocked by the hidden task',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [prerequisite, dependent] } }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Visible dependent')
+    fireEvent.click(screen.getByRole('button', { name: 'task-2 · Visible dependent' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: '筛选任务' }), {
+      target: { value: 'Visible dependent' },
+    })
+
+    expect(screen.queryByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'task-2 · Visible dependent' })).toBeTruthy()
+    expect(screen.getByText('隐藏依赖：task-1')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain(zh.blocked)
+
+    fireEvent.click(screen.getByRole('button', { name: '任务依赖图' }))
+    const graph = screen.getByRole('application', { name: '任务依赖图' })
+    expect(within(graph).queryByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeNull()
+    expect(within(graph).getByRole('button', { name: 'task-2 · Visible dependent' })).toBeTruthy()
+    expect(within(graph).getByText('隐藏依赖：task-1')).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '筛选任务' }), { target: { value: '' } })
+    expect(within(graph).getByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeTruthy()
+    expect(within(graph).getByLabelText('task-1 → task-2')).toBeTruthy()
+  })
+
+  it('renders the shared task graph status and controls in English', async () => {
+    const dependent: TeamTask = {
+      id: TASK_2,
+      revision: 2,
+      subject: 'Publish result',
+      description: 'Publish after the runtime is complete',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    const injected = actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [task, dependent] } }),
+    })
+    render(<TeamAction {...{
+      ...props(injected),
+      t: makeTranslate(en, commonEn),
+    }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Publish result')
+    fireEvent.click(screen.getByRole('button', { name: en.taskGraph }))
+
+    const graph = screen.getByRole('application', { name: en.taskGraph })
+    const node = within(graph).getByRole('button', { name: 'task-2 · Publish result' })
+    expect(node.textContent).toContain(`${en.owner}: ${en.unowned}`)
+    expect(node.textContent).toContain(en.blocked)
+    expect(screen.getByRole('button', { name: en.zoomIn })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.fitGraph })).toBeTruthy()
+    expect(screen.getByRole('region', { name: en.taskDetails })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: en.taskFilter }), {
+      target: { value: 'Publish result' },
+    })
+    expect(within(graph).getByText('Hidden dependencies: task-1')).toBeTruthy()
+  })
+
   it('navigates a public child view inside the one Team-owned panel', async () => {
     const renderSlot = vi.fn(() => <div>Injected message center</div>)
     const messageViews = [{ id: 'messages', label: '消息' }] as const

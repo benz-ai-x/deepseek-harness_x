@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import {
+  useCallback, useEffect, useMemo, useRef, useState,
+  type ChangeEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamMemberView as TeamRosterMember,
@@ -72,6 +76,77 @@ interface Draft {
 
 const EMPTY_DRAFT: Draft = { subject: '', description: '', blockers: '', scopes: '' }
 
+const GRAPH_NODE_WIDTH = 144
+const GRAPH_NODE_HEIGHT = 104
+const GRAPH_COLUMN_GAP = 64
+const GRAPH_ROW_GAP = 32
+const GRAPH_PADDING = 20
+
+interface TaskGraphNode {
+  readonly task: TeamTask
+  readonly column: number
+  readonly row: number
+  readonly x: number
+  readonly y: number
+}
+
+interface TaskGraphLayout {
+  readonly nodes: readonly TaskGraphNode[]
+  readonly byId: ReadonlyMap<TeamTaskId, TaskGraphNode>
+  readonly width: number
+  readonly height: number
+}
+
+interface GraphTransform {
+  readonly x: number
+  readonly y: number
+  readonly scale: number
+}
+
+const DEFAULT_GRAPH_TRANSFORM: GraphTransform = { x: 0, y: 0, scale: 1 }
+
+/** Deterministically place prerequisites before dependents without a graph dependency. */
+function taskGraphLayout(tasks: readonly TeamTask[]): TaskGraphLayout {
+  const byTaskId = new Map(tasks.map(task => [task.id, task]))
+  const depth = new Map<TeamTaskId, number>()
+  const visiting = new Set<TeamTaskId>()
+  const taskDepth = (id: TeamTaskId): number => {
+    const prior = depth.get(id)
+    if (prior !== undefined) return prior
+    /* The Host rejects cycles; keep malformed carrier data bounded instead of recursing forever. */
+    if (visiting.has(id)) return 0
+    visiting.add(id)
+    const task = byTaskId.get(id)
+    const value = task === undefined || task.blockedBy.length === 0
+      ? 0
+      : Math.max(0, ...task.blockedBy.map(blocker => taskDepth(blocker) + 1))
+    visiting.delete(id)
+    depth.set(id, value)
+    return value
+  }
+  const rows = new Map<number, number>()
+  const nodes = tasks.map((task) => {
+    const column = taskDepth(task.id)
+    const row = rows.get(column) ?? 0
+    rows.set(column, row + 1)
+    return {
+      task,
+      column,
+      row,
+      x: GRAPH_PADDING + column * (GRAPH_NODE_WIDTH + GRAPH_COLUMN_GAP),
+      y: GRAPH_PADDING + row * (GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP),
+    }
+  })
+  const maxColumn = Math.max(0, ...nodes.map(node => node.column))
+  const maxRows = Math.max(1, ...rows.values())
+  return {
+    nodes,
+    byId: new Map(nodes.map(node => [node.task.id, node])),
+    width: GRAPH_PADDING * 2 + (maxColumn + 1) * GRAPH_NODE_WIDTH + maxColumn * GRAPH_COLUMN_GAP,
+    height: GRAPH_PADDING * 2 + maxRows * GRAPH_NODE_HEIGHT + (maxRows - 1) * GRAPH_ROW_GAP,
+  }
+}
+
 function items(value: string): string[] {
   return [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))]
 }
@@ -122,9 +197,22 @@ export function TeamAction({
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT)
   const [pendingTasks, setPendingTasks] = useState<ReadonlySet<string>>(() => new Set())
   const [activeView, setActiveView] = useState('overview')
+  const [taskViewMode, setTaskViewMode] = useState<'list' | 'graph'>('list')
+  const [selectedTaskId, setSelectedTaskId] = useState<TeamTaskId | null>(null)
+  const [taskFilter, setTaskFilter] = useState('')
+  const [graphTransform, setGraphTransform] = useState<GraphTransform>(DEFAULT_GRAPH_TRANSFORM)
   const childViews = usePanelViews(views => views)
   const sessionRef = useRef(sessionId)
   const refreshGeneration = useRef(0)
+  const graphViewportRef = useRef<HTMLDivElement>(null)
+  const graphNodeRefs = useRef(new Map<TeamTaskId, HTMLButtonElement>())
+  const graphDragRef = useRef<{
+    pointerId: number
+    clientX: number
+    clientY: number
+    originX: number
+    originY: number
+  } | null>(null)
   sessionRef.current = sessionId
 
   useEffect(() => {
@@ -139,6 +227,11 @@ export function TeamAction({
     setEditDraft(EMPTY_DRAFT)
     setPendingTasks(new Set())
     setActiveView('overview')
+    setTaskViewMode('list')
+    setSelectedTaskId(null)
+    setTaskFilter('')
+    setGraphTransform(DEFAULT_GRAPH_TRANSFORM)
+    graphDragRef.current = null
   }, [sessionId])
 
   useEffect(() => {
@@ -156,6 +249,9 @@ export function TeamAction({
     setLoading(false)
     if (result.ok) {
       setView(result.value)
+      setSelectedTaskId(current => result.value.tasks.some(task => task.id === current)
+        ? current
+        : result.value.tasks[0]?.id ?? null)
       setError(null)
       return true
     } else {
@@ -264,6 +360,94 @@ export function TeamAction({
 
   const teammates = view?.members.filter(member => member.role === 'teammate') ?? []
   const assignable = view?.members.filter(member => member.status !== 'failed' && member.status !== 'provisioning') ?? []
+  const selectedTask = view?.tasks.find(task => task.id === selectedTaskId)
+  const visibleTasks = useMemo(() => {
+    const tasks = view?.tasks ?? []
+    const query = taskFilter.trim().toLocaleLowerCase()
+    if (query === '') return tasks
+    return tasks.filter(task => [
+      task.id,
+      task.subject,
+      task.description,
+      task.status,
+      task.ownerName ?? '',
+    ].some(value => value.toLocaleLowerCase().includes(query)))
+  }, [taskFilter, view?.tasks])
+  const visibleTaskIds = useMemo(() => new Set(visibleTasks.map(task => task.id)), [visibleTasks])
+  const graphLayout = useMemo(() => taskGraphLayout(visibleTasks), [visibleTasks])
+  const hiddenBlockers = (task: TeamTask): TeamTaskId[] => task.blockedBy.filter(id => !visibleTaskIds.has(id))
+
+  const zoomGraph = (change: number): void => {
+    setGraphTransform(current => ({
+      ...current,
+      scale: Math.round(Math.min(2, Math.max(0.5, current.scale + change)) * 10) / 10,
+    }))
+  }
+
+  const fitGraph = (): void => {
+    const viewport = graphViewportRef.current
+    const width = viewport?.clientWidth === undefined || viewport.clientWidth === 0 ? 480 : viewport.clientWidth
+    const height = viewport?.clientHeight === undefined || viewport.clientHeight === 0 ? 260 : viewport.clientHeight
+    const scale = Math.min(1, Math.max(0.5, Math.min(
+      (width - 16) / graphLayout.width,
+      (height - 16) / graphLayout.height,
+    )))
+    setGraphTransform({
+      x: Math.round((width - graphLayout.width * scale) / 2),
+      y: Math.round((height - graphLayout.height * scale) / 2),
+      scale: Math.round(scale * 100) / 100,
+    })
+  }
+
+  const beginGraphPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.target instanceof Element && event.target.closest('button') !== null) return
+    graphDragRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      originX: graphTransform.x,
+      originY: graphTransform.y,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const moveGraphPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const drag = graphDragRef.current
+    if (drag === null || drag.pointerId !== event.pointerId) return
+    setGraphTransform(current => ({
+      ...current,
+      x: Math.round(drag.originX + event.clientX - drag.clientX),
+      y: Math.round(drag.originY + event.clientY - drag.clientY),
+    }))
+  }
+
+  const endGraphPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const drag = graphDragRef.current
+    if (drag === null || drag.pointerId !== event.pointerId) return
+    graphDragRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
+  const moveGraphSelection = (task: TeamTask, event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    let nextId: TeamTaskId | undefined
+    if (event.key === 'ArrowRight') {
+      nextId = graphLayout.nodes.find(node => node.task.blockedBy.includes(task.id))?.task.id
+    } else if (event.key === 'ArrowLeft') {
+      nextId = task.blockedBy[0]
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const index = graphLayout.nodes.findIndex(node => node.task.id === task.id)
+      const change = event.key === 'ArrowDown' ? 1 : -1
+      nextId = graphLayout.nodes[index + change]?.task.id
+    } else if (event.key === 'Home') {
+      nextId = graphLayout.nodes[0]?.task.id
+    } else if (event.key === 'End') {
+      nextId = graphLayout.nodes.at(-1)?.task.id
+    }
+    if (nextId === undefined) return
+    event.preventDefault()
+    setSelectedTaskId(nextId)
+    graphNodeRefs.current.get(nextId)?.focus()
+  }
 
   return (
     <div className={css.root} data-team-action>
@@ -362,79 +546,268 @@ export function TeamAction({
                   />
                 )}
                 {view.tasks.length === 0 && !creating && <div className={css.notice}>{t('empty')}</div>}
-                <div className={css.tasks}>
-                  {view.tasks.map(task => editing === task.id
-                    ? (
-                      <TaskForm
-                        key={task.id}
-                        draft={editDraft}
-                        setDraft={setEditDraft}
-                        pending={pendingTasks.has(task.id)}
-                        onSave={() => { void submitEdit(task) }}
-                        onCancel={() => { setEditing(null) }}
-                        t={t}
-                      />
-                    )
-                    : (
-                      <article key={task.id} className={css.task}>
-                        <div className={css.taskTitle}>
-                          <strong>{task.subject}</strong>
-                          <span>{t(statusKey(task.status))}</span>
+                {view.tasks.length > 0 && (
+                  <>
+                    <div className={css.taskViewSwitch} role="group" aria-label={t('taskView')}>
+                      <button
+                        type="button"
+                        aria-pressed={taskViewMode === 'list'}
+                        onClick={() => { setTaskViewMode('list') }}
+                      >{t('taskList')}</button>
+                      <button
+                        type="button"
+                        aria-pressed={taskViewMode === 'graph'}
+                        onClick={() => { setTaskViewMode('graph') }}
+                      >{t('taskGraph')}</button>
+                    </div>
+                    <input
+                      className={css.taskFilter}
+                      type="search"
+                      aria-label={t('taskFilter')}
+                      placeholder={t('taskFilter')}
+                      value={taskFilter}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => { setTaskFilter(event.target.value) }}
+                    />
+                    {visibleTasks.length === 0 && <div className={css.notice}>{t('noMatchingTasks')}</div>}
+                    {taskViewMode === 'list'
+                      ? (
+                        <div className={css.tasks} role="list" aria-label={t('taskList')}>
+                          {visibleTasks.map(task => (
+                            <div key={task.id} role="listitem">
+                              <button
+                                type="button"
+                                className={css.taskChoice}
+                                aria-label={`${task.id} · ${task.subject}`}
+                                aria-pressed={task.id === selectedTaskId}
+                                onClick={() => { setSelectedTaskId(task.id) }}
+                              >
+                                <span className={css.taskTitle}>
+                                  <strong>{task.subject}</strong>
+                                  <span>{t(statusKey(task.status))}</span>
+                                </span>
+                                <span className={css.meta}>
+                                  <span>{task.id}</span>
+                                  {task.id !== selectedTaskId && task.status === 'pending' && (
+                                    <span>{task.ready ? t('ready') : t('blocked')}</span>
+                                  )}
+                                  {task.blockedBy.length > 0 && <span>{t('blockedBy')}: {task.blockedBy.join(', ')}</span>}
+                                  {hiddenBlockers(task).length > 0 && (
+                                    <span className={css.hiddenDependency}>
+                                      {t('hiddenDependencies')}{hiddenBlockers(task).join(', ')}
+                                    </span>
+                                  )}
+                                  {task.id !== selectedTaskId && task.writeScopeWarnings.map(warning => (
+                                    <span key={warning} className={css.warning}>{warning}</span>
+                                  ))}
+                                </span>
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                        <p>{task.description}</p>
-                        <div className={css.meta}>
-                          <span>{task.id}</span>
-                          {task.status === 'pending' && <span>{task.ready ? t('ready') : t('blocked')}</span>}
-                          {task.blockedBy.length > 0 && <span>{t('blockedBy')}: {task.blockedBy.join(', ')}</span>}
-                          {task.writeScopes.length > 0 && <span>{t('writeScopes')}: {task.writeScopes.join(', ')}</span>}
-                          {task.writeScopeWarnings.map(warning => <span key={warning} className={css.warning}>{warning}</span>)}
-                        </div>
-                        <div className={css.taskActions}>
-                          <label>
-                            {t('owner')}
-                            <select
-                              value={task.ownerName ?? ''}
-                              disabled={pendingTasks.has(task.id) || task.status === 'completed'}
-                              onChange={(event: ChangeEvent<HTMLSelectElement>) => {
-                                const owner = event.target.value
-                                void settleTask(task.id, () => updateTask(sessionId, {
-                                  taskId: task.id,
-                                  expectedRevision: task.revision,
-                                  action: 'reassign',
-                                  ...owner === '' ? {} : { owner },
-                                }))
-                              }}
+                      )
+                      : (
+                        <div className={css.taskGraphFrame}>
+                          <div className={css.taskGraphControls}>
+                            <button type="button" aria-label={t('zoomIn')} onClick={() => { zoomGraph(0.2) }}>+</button>
+                            <button type="button" aria-label={t('zoomOut')} onClick={() => { zoomGraph(-0.2) }}>−</button>
+                            <button type="button" onClick={fitGraph}>{t('fitGraph')}</button>
+                          </div>
+                          <div
+                            ref={graphViewportRef}
+                            className={css.taskGraph}
+                            role="application"
+                            aria-label={t('taskGraph')}
+                            tabIndex={0}
+                            data-zoom={graphTransform.scale}
+                            data-pan-x={graphTransform.x}
+                            data-pan-y={graphTransform.y}
+                            onPointerDown={beginGraphPan}
+                            onPointerMove={moveGraphPan}
+                            onPointerUp={endGraphPan}
+                            onPointerCancel={endGraphPan}
+                          >
+                            <div
+                              className={css.taskGraphCanvas}
+                              style={{
+                                width: graphLayout.width,
+                                height: graphLayout.height,
+                                transform: `translate(${graphTransform.x}px, ${graphTransform.y}px) scale(${graphTransform.scale})`,
+                              } satisfies CSSProperties}
                             >
-                              <option value="">{t('unowned')}</option>
-                              {assignable.map(member => <option key={member.id} value={member.name}>{member.name}</option>)}
-                            </select>
-                          </label>
-                          <button type="button" onClick={() => { startEdit(task) }} disabled={pendingTasks.has(task.id)}>
-                            <IconEditOutline16 size={13} /> {t('edit')}
-                          </button>
-                          {task.status === 'in_progress' && (
-                            <button type="button" disabled={pendingTasks.has(task.id)} onClick={() => {
-                              void settleTask(task.id, () => updateTask(sessionId, {
-                                taskId: task.id, expectedRevision: task.revision, action: 'complete',
-                              }))
-                            }}><IconCheckOutline14 /> {t('complete')}</button>
-                          )}
-                          {task.status === 'completed' && (
-                            <button type="button" disabled={pendingTasks.has(task.id)} onClick={() => {
-                              void settleTask(task.id, () => updateTask(sessionId, {
-                                taskId: task.id, expectedRevision: task.revision, action: 'reopen',
-                              }))
-                            }}>{t('reopen')}</button>
-                          )}
-                          <button type="button" disabled={pendingTasks.has(task.id)} onClick={() => {
-                            void settleTask(task.id, () => updateTask(sessionId, {
-                              taskId: task.id, expectedRevision: task.revision, action: 'delete',
-                            }))
-                          }}><IconTrashOutline16 size={13} /> {t('delete')}</button>
+                              <svg
+                                className={css.taskEdges}
+                                width={graphLayout.width}
+                                height={graphLayout.height}
+                                viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
+                              >
+                                <defs>
+                                  <marker
+                                    id="agent-team-task-arrow"
+                                    markerWidth="7"
+                                    markerHeight="7"
+                                    refX="6"
+                                    refY="3.5"
+                                    orient="auto"
+                                    markerUnits="strokeWidth"
+                                  >
+                                    <path className={css.taskArrow} d="M 0 0 L 7 3.5 L 0 7 z" />
+                                  </marker>
+                                </defs>
+                                {graphLayout.nodes.flatMap(node => node.task.blockedBy.flatMap((blockerId) => {
+                                  const blocker = graphLayout.byId.get(blockerId)
+                                  if (blocker === undefined) return []
+                                  return [(
+                                    <line
+                                      key={`${blockerId}:${node.task.id}`}
+                                      className={css.taskEdge}
+                                      aria-label={`${blockerId} → ${node.task.id}`}
+                                      data-from-task-id={blockerId}
+                                      data-to-task-id={node.task.id}
+                                      markerEnd="url(#agent-team-task-arrow)"
+                                      x1={blocker.x + GRAPH_NODE_WIDTH}
+                                      y1={blocker.y + GRAPH_NODE_HEIGHT / 2}
+                                      x2={node.x}
+                                      y2={node.y + GRAPH_NODE_HEIGHT / 2}
+                                    />
+                                  )]
+                                }))}
+                              </svg>
+                              <div className={css.taskNodes}>
+                                {graphLayout.nodes.map(node => (
+                                  <button
+                                    key={node.task.id}
+                                    ref={(element) => {
+                                      if (element === null) graphNodeRefs.current.delete(node.task.id)
+                                      else graphNodeRefs.current.set(node.task.id, element)
+                                    }}
+                                    type="button"
+                                    className={css.taskNode}
+                                    style={{ left: node.x, top: node.y } satisfies CSSProperties}
+                                    data-graph-column={node.column}
+                                    data-graph-row={node.row}
+                                    aria-label={`${node.task.id} · ${node.task.subject}`}
+                                    aria-pressed={node.task.id === selectedTaskId}
+                                    aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home End"
+                                    onKeyDown={(event) => { moveGraphSelection(node.task, event) }}
+                                    onClick={() => { setSelectedTaskId(node.task.id) }}
+                                  >
+                                    <span>{node.task.id}</span>
+                                    <strong>{node.task.subject}</strong>
+                                    <small>{t(statusKey(node.task.status))}</small>
+                                    <small>{t('owner')}: {node.task.ownerName ?? t('unowned')}</small>
+                                    {node.task.status === 'pending' && (
+                                      <small>{node.task.ready ? t('ready') : t('blocked')}</small>
+                                    )}
+                                    {node.task.blockedBy.length > 0 && (
+                                      <small>{t('blockedBy')}: {node.task.blockedBy.join(', ')}</small>
+                                    )}
+                                    {hiddenBlockers(node.task).length > 0 && (
+                                      <small className={css.hiddenDependency}>
+                                        {t('hiddenDependencies')}{hiddenBlockers(node.task).join(', ')}
+                                      </small>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </article>
-                    ))}
-                </div>
+                      )}
+                    {selectedTask !== undefined && (
+                      <section className={css.taskDetail} role="region" aria-label={t('taskDetails')}>
+                        {editing === selectedTask.id
+                          ? (
+                            <TaskForm
+                              draft={editDraft}
+                              setDraft={setEditDraft}
+                              pending={pendingTasks.has(selectedTask.id)}
+                              onSave={() => { void submitEdit(selectedTask) }}
+                              onCancel={() => { setEditing(null) }}
+                              t={t}
+                            />
+                          )
+                          : (
+                            <article className={css.task}>
+                              <div className={css.taskTitle}>
+                                <strong>{selectedTask.id} · {selectedTask.subject}</strong>
+                                <span>{t(statusKey(selectedTask.status))}</span>
+                              </div>
+                              <p>{selectedTask.description}</p>
+                              <div className={css.meta}>
+                                {selectedTask.status === 'pending' && (
+                                  <span>{selectedTask.ready ? t('ready') : t('blocked')}</span>
+                                )}
+                                {selectedTask.blockedBy.length > 0 && (
+                                  <span>{t('blockedBy')}: {selectedTask.blockedBy.join(', ')}</span>
+                                )}
+                                {selectedTask.writeScopes.length > 0 && (
+                                  <span>{t('writeScopes')}: {selectedTask.writeScopes.join(', ')}</span>
+                                )}
+                                {selectedTask.writeScopeWarnings.map(warning => (
+                                  <span key={warning} className={css.warning}>{warning}</span>
+                                ))}
+                              </div>
+                              <div className={css.taskActions}>
+                                <label>
+                                  {t('owner')}
+                                  <select
+                                    value={selectedTask.ownerName ?? ''}
+                                    disabled={pendingTasks.has(selectedTask.id) || selectedTask.status === 'completed'}
+                                    onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                                      const owner = event.target.value
+                                      void settleTask(selectedTask.id, () => updateTask(sessionId, {
+                                        taskId: selectedTask.id,
+                                        expectedRevision: selectedTask.revision,
+                                        action: 'reassign',
+                                        ...owner === '' ? {} : { owner },
+                                      }))
+                                    }}
+                                  >
+                                    <option value="">{t('unowned')}</option>
+                                    {assignable.map(member => (
+                                      <option key={member.id} value={member.name}>{member.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => { startEdit(selectedTask) }}
+                                  disabled={pendingTasks.has(selectedTask.id)}
+                                >
+                                  <IconEditOutline16 size={13} /> {t('edit')}
+                                </button>
+                                {selectedTask.status === 'in_progress' && (
+                                  <button type="button" disabled={pendingTasks.has(selectedTask.id)} onClick={() => {
+                                    void settleTask(selectedTask.id, () => updateTask(sessionId, {
+                                      taskId: selectedTask.id,
+                                      expectedRevision: selectedTask.revision,
+                                      action: 'complete',
+                                    }))
+                                  }}><IconCheckOutline14 /> {t('complete')}</button>
+                                )}
+                                {selectedTask.status === 'completed' && (
+                                  <button type="button" disabled={pendingTasks.has(selectedTask.id)} onClick={() => {
+                                    void settleTask(selectedTask.id, () => updateTask(sessionId, {
+                                      taskId: selectedTask.id,
+                                      expectedRevision: selectedTask.revision,
+                                      action: 'reopen',
+                                    }))
+                                  }}>{t('reopen')}</button>
+                                )}
+                                <button type="button" disabled={pendingTasks.has(selectedTask.id)} onClick={() => {
+                                  void settleTask(selectedTask.id, () => updateTask(sessionId, {
+                                    taskId: selectedTask.id,
+                                    expectedRevision: selectedTask.revision,
+                                    action: 'delete',
+                                  }))
+                                }}><IconTrashOutline16 size={13} /> {t('delete')}</button>
+                              </div>
+                            </article>
+                          )}
+                      </section>
+                    )}
+                  </>
+                )}
               </section>
             </>
           )}

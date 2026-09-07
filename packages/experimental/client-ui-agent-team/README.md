@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package adds one Agent Teams action and dialog to the Web conversation header, where a user can inspect the current roster, manage the shared task board, navigate into a teammate's conversation, and open extension-owned Team views. It reads authoritative Team state through the generated `ctx.remote.agentTeams` contribution and keeps ordinary child-history navigation on the stable addressed-subagent path. Choose it for the experimental source-checkout Web profile; official releases exclude it. The browser projection does not extend the stable API Proxy, store Team state, or register model-facing input.
+This package adds one Agent Teams action and dialog to the Web conversation header, where a user can inspect the current roster, switch the shared task board between a list and dependency graph, navigate into a teammate's conversation, and open extension-owned Team views. It reads authoritative Team state through the generated `ctx.remote.agentTeams` contribution and keeps ordinary child-history navigation on the stable addressed-subagent path. Choose it for the experimental source-checkout Web profile; official releases exclude it. The browser projection does not extend the stable API Proxy, store Team state, or register model-facing input.
 
 ## Table of Contents
 
@@ -33,7 +33,9 @@ Opening the panel calls `agentTeams/view`. Roster rows show durable names, runti
 
 ### Manage the task board
 
-The task board shows task identity, owner, blockers, readiness, advisory write scopes, and overlap warnings. A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Every update sends the displayed revision, and create or update rejections remain explicit business results.
+The list and dependency graph derive from the same `agentTeams/view` task snapshot and share one selected task, detail panel, and mutation controls. Graph nodes use real task ids and Host-provided owner, status, readiness, and blocker facts; each directed edge runs from a prerequisite to its dependent. The graph provides deterministic automatic layout, bounded zoom and pan, fit-to-view, dependency-aware keyboard navigation, and the native-button list as an equivalent alternative. Filtering hides presentation only, identifies prerequisites omitted by the filter, and never recalculates Host readiness.
+
+A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Every update sends the displayed revision, and create or update rejections remain explicit business results.
 
 ### Extend the Team panel
 
@@ -49,7 +51,7 @@ The header action owns the only Team dialog and declares the session-scoped list
 
 The Client export mounts the generated `ctx.remote.agentTeams` contribution from [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.md), then registers its locale dictionaries and one conversation-header entry through Cordis effects. That entry declares `agent-team.panel.view`, observes its public contributions and localized labels, and renders the selected contribution inside the existing dialog. Disposing the plugin Fiber removes the Remote, locale, entry, child Slot, subscriptions, and contribution navigation.
 
-Starting a create or update invalidates older refreshes. Success reloads the complete Team view so every task's derived fields stay current. A `team-task-conflict` result displays a stale-state notice only after that reload succeeds; a reload failure remains visible instead. Editing task text or scopes and changing dependencies use two sequential compare-and-set mutations because the Team service exposes them as separate actions.
+Starting a create or update invalidates older refreshes. Success reloads the complete Team view so every task's derived fields stay current. A `team-task-conflict` result displays a stale-state notice only after that reload succeeds; a reload failure remains visible instead. Editing task text or scopes and changing dependencies use two sequential compare-and-set mutations because the Team service exposes them as separate actions. List/graph mode, selection, filtering, and viewport transform are disposable component state; neither layout nor visibility creates a task projection or changes readiness.
 
 | File | Role |
 |---|---|
