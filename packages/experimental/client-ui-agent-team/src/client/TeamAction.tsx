@@ -268,6 +268,7 @@ export function TeamAction({
   const settleTask = useCallback(async (
     taskId: string,
     operation: () => Promise<TeamTaskActionResult>,
+    conflictKey: TeamKey = 'conflict',
   ): Promise<TeamTask | undefined> => {
     const requestedSession = sessionId
     invalidateRefresh()
@@ -283,7 +284,7 @@ export function TeamAction({
         if (result.value.error.code === 'team-task-conflict') {
           const reloaded = await refresh()
           if (sessionRef.current !== requestedSession) return undefined
-          if (reloaded) setError(t('conflict'))
+          if (reloaded) setError(t(conflictKey))
         } else {
           setError(failureText(result.value.error))
         }
@@ -339,22 +340,10 @@ export function TeamAction({
       action: 'edit',
       subject: editDraft.subject.trim(),
       description: editDraft.description.trim(),
+      blockedBy: taskIds(editDraft.blockers),
       writeScopes: items(editDraft.scopes),
-    }))
+    }), 'conflictDraft')
     if (edited === undefined) return
-    const blockedBy = taskIds(editDraft.blockers)
-    if (blockedBy.length === edited.blockedBy.length
-      && blockedBy.every((blocker, index) => blocker === edited.blockedBy[index])) {
-      setEditing(null)
-      return
-    }
-    const dependencyTask = await settleTask(task.id, () => updateTask(requestedSession, {
-      taskId: task.id,
-      expectedRevision: edited.revision,
-      action: 'set_dependencies',
-      blockedBy,
-    }))
-    if (dependencyTask === undefined) return
     setEditing(null)
   }
 
@@ -539,6 +528,7 @@ export function TeamAction({
                   <TaskForm
                     draft={createDraft}
                     setDraft={setCreateDraft}
+                    dependencyOptions={view.tasks}
                     pending={pendingTasks.has('create')}
                     onSave={() => { void submitCreate() }}
                     onCancel={() => { setCreating(false) }}
@@ -720,6 +710,8 @@ export function TeamAction({
                             <TaskForm
                               draft={editDraft}
                               setDraft={setEditDraft}
+                              dependencyOptions={view.tasks}
+                              taskId={selectedTask.id}
                               pending={pendingTasks.has(selectedTask.id)}
                               onSave={() => { void submitEdit(selectedTask) }}
                               onCancel={() => { setEditing(null) }}
@@ -823,19 +815,38 @@ export function TeamAction({
 interface TaskFormProps {
   draft: Draft
   setDraft: (draft: Draft) => void
+  dependencyOptions: readonly TeamTask[]
+  taskId?: TeamTaskId
   pending: boolean
   onSave: () => void
   onCancel: () => void
   t: TeamActionProps['t']
 }
 
-function TaskForm({ draft, setDraft, pending, onSave, onCancel, t }: TaskFormProps) {
+function TaskForm({ draft, setDraft, dependencyOptions, taskId, pending, onSave, onCancel, t }: TaskFormProps) {
   const field = (key: keyof Draft, value: string): void => { setDraft({ ...draft, [key]: value }) }
+  const blockers = taskIds(draft.blockers)
+  const toggleBlocker = (id: TeamTaskId, checked: boolean): void => {
+    field('blockers', (checked ? [...blockers, id] : blockers.filter(blocker => blocker !== id)).join(', '))
+  }
   return (
     <div className={css.form}>
       <input value={draft.subject} placeholder={t('subject')} onChange={(event: ChangeEvent<HTMLInputElement>) => { field('subject', event.target.value) }} />
       <textarea value={draft.description} placeholder={t('description')} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { field('description', event.target.value) }} />
-      <input value={draft.blockers} placeholder={t('blockers')} onChange={(event: ChangeEvent<HTMLInputElement>) => { field('blockers', event.target.value) }} />
+      <fieldset className={css.dependencyPicker}>
+        <legend>{t('blockers')}</legend>
+        {dependencyOptions.filter(task => task.id !== taskId).map(task => (
+          <label key={task.id} className={css.dependencyOption}>
+            <input
+              type="checkbox"
+              checked={blockers.includes(task.id)}
+              disabled={pending}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => { toggleBlocker(task.id, event.target.checked) }}
+            />
+            <span>{task.id} · {task.subject}</span>
+          </label>
+        ))}
+      </fieldset>
       <input value={draft.scopes} placeholder={t('scopes')} onChange={(event: ChangeEvent<HTMLInputElement>) => { field('scopes', event.target.value) }} />
       <div className={css.formActions}>
         <button type="button" disabled={pending || draft.subject.trim() === '' || draft.description.trim() === ''} onClick={onSave}>{t('save')}</button>

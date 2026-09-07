@@ -69,8 +69,9 @@ export function prepareTaskUpdate(
       break
     case 'edit':
       authorizeOwner()
-      if (request.subject === undefined && request.description === undefined && request.writeScopes === undefined) {
-        throw new TeamError('task edit requires a subject, description, or write scope change', 'TEAM_INVALID_ARGUMENT')
+      if (request.subject === undefined && request.description === undefined
+        && request.blockedBy === undefined && request.writeScopes === undefined) {
+        throw new TeamError('task edit requires a subject, description, dependency, or write scope change', 'TEAM_INVALID_ARGUMENT')
       }
       next = {
         ...current,
@@ -78,6 +79,7 @@ export function prepareTaskUpdate(
         ...request.description === undefined
           ? {}
           : { description: requiredText(request.description, 'description', 16_384) },
+        ...request.blockedBy === undefined ? {} : { blockedBy: taskDependencies(request.blockedBy, state, current.id) },
         ...request.writeScopes === undefined ? {} : { writeScopes: taskWriteScopes(request.writeScopes) },
       }
       break

@@ -16,7 +16,7 @@
 
 `@deepseek-ai/dsh-experimental-client-ui-agent-team` 通过稳定 `ctx.remote` service 挂载 `@deepseek-ai/dsh-experimental-agent-team/remote` contribution，随后直接消费生成式 `ctx.remote.agentTeams` method，不增加 Client result 包装层。它为 roster status、model diagnostics、task control 与扩展视图持有唯一 Team dialog。任务列表与依赖图由同一 Team view 派生，并共用已选任务、详情面板与变更控件。图节点使用真实 task id 和 Host 给出的 owner、status、readiness 与 blocker；有向边从前置指向依赖它的任务。确定性布局、有界缩放与平移、适配视野、感知依赖的键盘移动以及原生 button 列表覆盖导航。过滤只改变可见性，并标明被省略的前置，不重新计算 readiness。该 dialog 的 header entry 声明公开的 session-scoped `agent-team.panel.view` list Slot，把本地化 contribution label 投影为 tab，并在 render site 传递精确 Lead `teamSessionId`。Contribution 只使用公开 Slot 与生成式 Remote type；释放任一 Fiber 都会移除其 UI 与权限。
 
-每次 task update 都发送当前显示的 revision。每个 create 或 update 都独立持有 pending token，在开始前使更早的 refresh 失效，并在成功后重新读取完整 Team view。Conflict 仅在其 reload 成功后要求用户检查；如果重新读取失败，则保留该错误。重叠 refresh 只发布所选 Session 的最新请求。显示模式、已选 id、过滤文本与视口变换仍是可释放的组件状态，而不是持久 task projection。
+每次 task update 都发送当前显示的 revision。Create 与 edit form 会把当前真实 task id 显示为原生依赖 checkbox，并排除正在编辑的任务。任务文本、scope 与完整 dependency 草稿通过同一个 `edit` compare-and-set mutation 提交；Host 在追加下一个 revision 前校验引用、权限、自依赖与间接环。每个 create 或 update 都独立持有 pending token，在开始前使更早的 refresh 失效，并在成功后重新读取完整 Team view。Edit conflict 会重新读取当前权威任务，同时保留旧 form 与 dependency 草稿，显式提示它们尚未保存，且不自动重试；如果重新读取失败，则保留该错误。重叠 refresh 只发布所选 Session 的最新请求。显示模式、已选 id、过滤文本与视口变换仍是可释放的组件状态，而不是持久 task projection。
 
 Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address，不带 Team tag。UI 刷新直接 child catalog、再次检查所选 Session，然后打开 addressed conversation。History 与普通 addressed-child continuation 使用稳定 Subagent 路径。[持久人类 Team 消息请求决策](../architecture/2026-09-07-durable-human-team-message-requests.zh.md)部分取代本 Note 原有的「不发送／不回复」和「只能继续 addressed-child 会话」边界：当前消息 composer 使用生成式 `agentTeams/sendMessage` Remote 发送显式人类工作与回复。本 Note 仍是消息读取、分页、任务、teammate 导航与 Client Slot 组合的当前归属。
 
@@ -46,7 +46,7 @@ Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实
 
 ## 测试
 
-Team service test 覆盖固定 window 分页、filter、消息与 task detail authorization、净化内容、participant forgery、过期身份、cursor scope 与损坏、持久化 failure、无 activity 读取和冷启动。逐文件 coverage 固定 message reader 的每条路径；生成流程与 plain-Node built-artifact smoke 校验导出的 Remote descriptor。Client typecheck 与浏览器 component test 覆盖 owner 声明的子导航、动态注册与 dispose、挂载 namespace、Lead routing、共享列表／图选择、真实边方向与 task 事实、布局控件、键盘与列表替代、过滤、task control、陈旧 async result，以及中英文状态或错误呈现。无密钥 Agent Team profile snapshot 通过真实 Host service 执行元数据与净化详情读取；Web 端到端测试则在真实 Remote composition 上固定单一可导航 panel。
+Team service test 覆盖固定 window 分页、filter、消息与 task detail authorization、净化内容、participant forgery、过期身份、cursor scope 与损坏、持久化 failure、无 activity 读取、冷启动、原子 dependency edit、DAG 校验与被拒写入的 event count。逐文件 coverage 固定 message reader 的每条路径；生成流程与 plain-Node built-artifact smoke 校验导出的 Remote descriptor。Client typecheck 与浏览器 component test 覆盖 owner 声明的子导航、动态注册与 dispose、挂载 namespace、Lead routing、共享列表／图选择、真实边方向与 task 事实、布局控件、键盘与列表替代、过滤、原生 dependency 选择、冲突草稿、task control、陈旧 async result，以及中英文状态或错误呈现。无密钥 Agent Team profile snapshot 通过真实 Host service 执行元数据与净化详情读取；Web 端到端测试则在真实 Remote composition 上固定单一可导航 panel。
 
 ## 后果
 

@@ -35,7 +35,7 @@ kind: "package-reference"
 
 列表与依赖图由同一份 `agentTeams/view` task snapshot 派生，共用一个已选任务、详情面板与变更控件。图节点使用真实 task id，并显示 Host 给出的 owner、status、readiness 与 blocker 事实；每条有向边从前置任务指向依赖它的任务。图提供确定性自动布局、有界缩放与平移、适配视野、感知依赖的键盘导航，并以原生 button 列表作为等价替代。过滤只隐藏呈现、标明被过滤掉的前置，从不重新计算 Host readiness。
 
-用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、完成、重开和删除任务。每次 update 都发送当前显示的 revision，create 或 update rejection 都保留为显式 business result。
+用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、完成、重开和删除任务。Create 与 edit form 会把当前真实 task id 显示为原生依赖 checkbox，并排除正在编辑的任务。每次 update 都发送当前显示的 revision，create 或 update rejection 都保留为显式 business result。
 
 ### 扩展 Team 面板
 
@@ -51,7 +51,7 @@ kind: "package-reference"
 
 Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.zh.md) 的生成式 `ctx.remote.agentTeams` contribution，然后通过 Cordis effect 注册 locale dictionary 与一个 conversation-header entry。该 entry 声明 `agent-team.panel.view`，观察其公开 contribution 与本地化标签，并在既有 dialog 内渲染所选 contribution。释放 plugin Fiber 会移除 Remote、locale、entry、子 Slot、subscription 与 contribution navigation。
 
-开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。`team-task-conflict` 结果仅在重新读取成功后显示状态陈旧提示；如果重新读取失败，则保留该错误。由于 Team service 把任务文本或 scope 编辑与 dependency 修改公开为独立 action，两者使用两个连续的 compare-and-set mutation。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
+开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。任务文本、scope 与完整 dependency 草稿使用同一个 `edit` compare-and-set mutation。如果发生冲突，UI 会重新读取当前权威任务，保留明确标记为未保存的旧 form 与 dependency 草稿，并且绝不自动重试；如果重新读取失败，则保留该错误。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
 
 | 文件 | 职责 |
 |---|---|

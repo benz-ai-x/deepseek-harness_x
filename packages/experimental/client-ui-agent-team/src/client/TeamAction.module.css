@@ -399,6 +399,28 @@
   resize: vertical;
 }
 
+.dependencyPicker {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 6px 8px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.dependencyOption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dependencyOption input {
+  width: auto;
+  margin: 0;
+}
+
 .notice,
 .error {
   padding: 9px;

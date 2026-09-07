@@ -875,6 +875,151 @@ describe('Team shared task DAG', () => {
     }
   })
 
+  it('atomically edits task details and dependencies through one CAS', async () => {
+    const { ctx, lead } = await setup([])
+    const first = await ctx.agentTeams.createTask(lead, { subject: 'A', description: 'first prerequisite' })
+    const second = await ctx.agentTeams.createTask(lead, { subject: 'B', description: 'second prerequisite' })
+    const dependent = await ctx.agentTeams.createTask(lead, { subject: 'C', description: 'dependent task' })
+
+    const edited = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: dependent.revision,
+      action: 'edit',
+      subject: 'C edited',
+      blockedBy: [first.id, second.id],
+    })
+    expect(edited).toMatchObject({
+      id: dependent.id,
+      revision: 2,
+      subject: 'C edited',
+      blockedBy: [first.id, second.id],
+      ready: false,
+    })
+
+    const eventCount = lead.session.snapshotEvents().length
+    const invalidDependencies = [
+      { blockedBy: [TeamTaskId('missing')], code: 'TEAM_TASK_NOT_FOUND' },
+      { blockedBy: [first.id], code: 'TEAM_TASK_DEPENDENCY_CYCLE' },
+      { blockedBy: [dependent.id], code: 'TEAM_TASK_DEPENDENCY_CYCLE' },
+    ] as const
+    for (const invalid of invalidDependencies) {
+      await expect(ctx.agentTeams.updateTask(lead, {
+        taskId: first.id,
+        expectedRevision: first.revision,
+        action: 'edit',
+        subject: 'must not commit',
+        blockedBy: invalid.blockedBy,
+      })).rejects.toMatchObject({ code: invalid.code })
+    }
+    expect(lead.session.snapshotEvents()).toHaveLength(eventCount)
+    expect(ctx.agentTeams.getTask(lead, first.id)).toMatchObject({
+      revision: first.revision,
+      subject: 'A',
+      blockedBy: [],
+    })
+
+    const claimedFirst = await ctx.agentTeams.updateTask(lead, {
+      taskId: first.id,
+      expectedRevision: first.revision,
+      action: 'claim',
+    })
+    await ctx.agentTeams.updateTask(lead, {
+      taskId: first.id,
+      expectedRevision: claimedFirst.revision,
+      action: 'complete',
+    })
+    expect(ctx.agentTeams.getTask(lead, dependent.id).ready).toBe(false)
+    const claimedSecond = await ctx.agentTeams.updateTask(lead, {
+      taskId: second.id,
+      expectedRevision: second.revision,
+      action: 'claim',
+    })
+    await ctx.agentTeams.updateTask(lead, {
+      taskId: second.id,
+      expectedRevision: claimedSecond.revision,
+      action: 'complete',
+    })
+    expect(ctx.agentTeams.getTask(lead, dependent.id)).toMatchObject({
+      blockedBy: [first.id, second.id],
+      ready: true,
+    })
+    const claimedDependent = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: edited.revision,
+      action: 'claim',
+    })
+    expect(claimedDependent).toMatchObject({ status: 'in_progress', ownerName: 'lead' })
+    const retainedOwner = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: claimedDependent.revision,
+      action: 'edit',
+      blockedBy: [first.id],
+    })
+    expect(retainedOwner).toMatchObject({
+      status: 'in_progress',
+      ownerName: 'lead',
+      blockedBy: [first.id],
+    })
+    const completedDependent = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: retainedOwner.revision,
+      action: 'complete',
+    })
+    const reopened = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: completedDependent.revision,
+      action: 'reopen',
+    })
+    expect(reopened).toMatchObject({ status: 'pending', blockedBy: [first.id], ready: true })
+    expect(reopened).not.toHaveProperty('ownerName')
+    const deleted = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: reopened.revision,
+      action: 'delete',
+    })
+    expect(ctx.agentTeams.getTask(lead, dependent.id)).toMatchObject({
+      revision: deleted.revision,
+      status: 'deleted',
+      blockedBy: [first.id],
+    })
+    expect(ctx.agentTeams.listTasks(lead).map(task => task.id)).not.toContain(dependent.id)
+  })
+
+  it('rejects stale Lead, cross-Team, and non-owner dependency drafts without events', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'non-owner')
+    const nonOwner = await waitRunning(ctx, started.member.id)
+    const blocker = await ctx.agentTeams.createTask(lead, { subject: 'blocker', description: 'blocker' })
+    const target = await ctx.agentTeams.createTask(lead, { subject: 'target', description: 'target' })
+    const otherLead = await ctx.agentLoop.create(SessionId('other-lead'), { provider: 'mock', model: 'mock' })
+    const request = {
+      taskId: target.id,
+      expectedRevision: target.revision,
+      action: 'edit' as const,
+      subject: 'must not commit',
+      blockedBy: [blocker.id],
+    }
+    const leadEvents = lead.session.snapshotEvents().length
+    const otherEvents = otherLead.session.snapshotEvents().length
+
+    await expect(ctx.agentTeams.updateTask({ ...lead } as Agent, request))
+      .rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
+    await expect(ctx.agentTeams.updateTask(otherLead, request))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_NOT_FOUND' })
+    await expect(ctx.agentTeams.updateTask(nonOwner, request))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_UNAUTHORIZED' })
+
+    expect(lead.session.snapshotEvents()).toHaveLength(leadEvents)
+    expect(otherLead.session.snapshotEvents()).toHaveLength(otherEvents)
+    expect(ctx.agentTeams.getTask(lead, target.id)).toMatchObject({
+      revision: target.revision,
+      subject: 'target',
+      blockedBy: [],
+    })
+    ctx.agentTeams.interrupt(lead, 'non-owner')
+    await waitNoAgent(ctx, nonOwner.id)
+  })
+
   it('rejects incomplete mutations, invalid transitions, and deletion of a live blocker', async () => {
     const { ctx, lead } = await setup([])
     await expect(ctx.agentTeams.createTask(lead, { subject: ' ', description: 'invalid' }))
