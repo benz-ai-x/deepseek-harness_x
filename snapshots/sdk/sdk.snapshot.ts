@@ -820,6 +820,27 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
               id: 'snapshot-native-task-1', revision: 2, status: 'in_progress', ownerName: 'external-worker', ready: false,
             } } } },
         } })
+        const requests = notifications.filter(notification => notification.method === 'session.event')
+          .map(notification => notification.params.event as JsonObject)
+          .filter(event => event.type === 'team/message/request-committed')
+        expect(requests).toHaveLength(1)
+        expect(requests[0]).toMatchObject({ data: {
+          version: 1,
+          teamId: 'fixture-root-session',
+          message: {
+            id: 'snapshot-human-message-1', senderId: 'fixture-root-session',
+            senderName: 'lead', targetId: 'snapshot-external-member-1',
+            content: [{ type: 'text', text: 'Please apply the review.' }],
+          },
+          receipt: {
+            requestId: 'snapshot-human-request-1', senderId: 'fixture-root-session',
+            inputFingerprint: 'f512e2b73071e50c4bc30ce91ac9944af22989e3965e9ba7a281d624303a81c0',
+            replyTo: 'snapshot-native-message-1',
+            result: {
+              requestId: 'snapshot-human-request-1', messageId: 'snapshot-human-message-1', status: 'accepted',
+            },
+          },
+        } })
       }
 
       // Genuine SDK protocol cases retain their secondary wire projections.

@@ -18,6 +18,8 @@ One required `team/message/request-committed` payload-version-1 event stores the
 
 Caller cancellation owns a new request only until the durable append begins. After acceptance, Team lifecycle cancellation owns delivery, so a disconnected caller cannot erase queued work. Submission acceptance and the current `pending` or `delivered` delivery fact remain separate. Provider absence retains the same queued message; provider return and Host recovery dispatch that identity, while target-side Session de-duplication prevents another delivery fact.
 
+This decision partially supersedes the no-send/no-reply and addressed-child-only human continuation boundaries in [Experimental Agent Teams Web controls](../feature/2026-08-06-agent-teams-web.md). That note remains the current owner of message reads, pagination, tasks, teammate navigation, and Client Slot composition; this note owns the generated human submission Remote, reply correlation, and durable retry semantics.
+
 ## Alternatives considered
 
 **Reuse ordinary `sendMessage()` and let the Client infer success.** A retry would allocate a fresh message id, so double-clicks and unknown transport outcomes could duplicate work.

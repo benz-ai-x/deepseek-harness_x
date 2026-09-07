@@ -18,6 +18,8 @@ request identity 是最多 200 UTF-8 字节的非空 opaque 字符串。在 Team
 
 caller cancellation 只在持久 append 开始前拥有新请求。接受之后，Team lifecycle cancellation 拥有投递，因此调用方断开不能擦除已排队工作。submission acceptance 与当前 `pending` 或 `delivered` delivery fact 保持分离。provider 缺失会保留同一 queued message；provider 回归与 Host recovery 投递该身份，target-side Session 去重则阻止另一条 delivery fact。
 
+本决策部分取代[实验性 Agent Teams Web 控件](../feature/2026-08-06-agent-teams-web.zh.md)中「不发送／不回复」和「人类只能继续 addressed-child 会话」的边界。该 Note 仍是消息读取、分页、任务、teammate 导航与 Client Slot 组合的当前归属；本 Note 则负责生成式人类提交 Remote、reply 关联和持久重试语义。
+
 ## 考虑过的替代方案
 
 **复用普通 `sendMessage()` 并让 Client 推断成功。** 重试会分配新 message id，因此双击与未知 transport outcome 可能复制工作。

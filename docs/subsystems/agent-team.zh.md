@@ -103,7 +103,7 @@ provider 注册归调用方 Fiber 所有。移除操作会关闭准入、取消�
 
 Team 所有者只在持久成员接受或验证恢复后，向当前 provider 交付 `NativeMemberGrant`。捕获的身份绝不来自模型参数。注册、handle 或精确 Lead 释放、原生进程离线时永久撤销该 grant；评测不会获得生产 grant。[授权决策](../../.agents/notes/implemented/architecture/2026-09-05-native-team-member-grants.zh.md)记录理由，[包契约](../../packages/experimental/agent-team/README.zh.md#teammates)定义查询上限和 cursor 语义。
 
-原生消息、任务变化和终态结果共享[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。必需的 payload-4 消息／任务事件将变更与其 `TeamNativeOperationId` 回执一起记录；projection version 6 重建两者和精简消息索引，并明确保留 payload-3 消息和 payload-2 读取分支。任务回执保留已校验输入和精简的原始接受结果。[原生任务规则](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.zh.md)说明先于 CAS 的重放及只观察变化的等待。
+原生消息、任务变化和终态结果共享[原子回执决策](../../.agents/notes/implemented/architecture/2026-09-06-durable-native-team-operations.zh.md)。必需的 payload-4 消息／任务事件将变更与其 `TeamNativeOperationId` 回执一起记录；projection version 7 重建两者和精简消息索引，并明确保留 payload-3 消息和 payload-2 读取分支。任务回执保留已校验输入和精简的原始接受结果。[原生任务规则](../../.agents/notes/implemented/architecture/2026-09-06-native-task-operation-receipts.zh.md)说明先于 CAS 的重放及只观察变化的等待。
 
 `turns.recover` 是 Host-only grant reader，不是发布给模型的操作。当前 grant 校验通过后，它与 Team journal 串行执行、flush Lead Session，并返回分离的当前视图，其中只包含获授权成员的 launch 关联、入站 delivery id，以及已提交结算的结果和有意文本。它排除入站消息文本与所有同级成员或其他 Team 的事实，也不发布 Team 活动。页面使用数字 offset，默认包含 10 项，允许 1 至 100 项，并保留稳定身份，以便并发追加移动后续页面时由适配器对条目去重。
 

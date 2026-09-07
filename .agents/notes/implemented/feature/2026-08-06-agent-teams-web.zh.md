@@ -18,7 +18,7 @@
 
 每次 task update 都发送当前显示的 revision。每个 create 或 update 都独立持有 pending token，在开始前使更早的 refresh 失效，并在成功后重新读取完整 Team view。Conflict 仅在其 reload 成功后要求用户检查；如果重新读取失败，则保留该错误。重叠 refresh 只发布所选 Session 的最新请求。
 
-Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address，不带 Team tag。UI 刷新直接 child catalog、再次检查所选 Session，然后打开 addressed conversation。History 与后续人类 prompt 使用稳定 Subagent 路径；Team mailbox 只用于 Team 工具发起的 Team peer delivery。
+Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address，不带 Team tag。UI 刷新直接 child catalog、再次检查所选 Session，然后打开 addressed conversation。History 与普通 addressed-child continuation 使用稳定 Subagent 路径。[持久人类 Team 消息请求决策](../architecture/2026-09-07-durable-human-team-message-requests.zh.md)部分取代本 Note 原有的「不发送／不回复」和「只能继续 addressed-child 会话」边界：当前消息 composer 使用生成式 `agentTeams/sendMessage` Remote 发送显式人类工作与回复。本 Note 仍是消息读取、分页、任务、teammate 导航与 Client Slot 组合的当前归属。
 
 `@deepseek-ai/dsh-experimental-agent-team-web-profile` 在稳定 Web bundle 之后只插入 UI。它与 Host 侧 `@deepseek-ai/dsh-experimental-agent-team-profile` 一起应用，后者已经插入 `ctx.agentTeams` 与模型工具。两个稳定 bundle 都不包含禁用的 Team row 或依赖。
 
@@ -26,7 +26,7 @@ Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'cont
 
 ## 边界
 
-Web 消息 reader 不提供 send、reply、read receipt 或实时 subscription operation。它绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的人类 continuation 是普通 addressed-child prompt，不是 Team mailbox message。
+Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实时 subscription operation。独立的仅限 Lead 生成式 `agentTeams/sendMessage` Remote 与消息 composer 提供显式发送和回复，不会把读取变成变更，也不推断工作已完成。Reader 绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的普通 continuation 仍是 addressed-child prompt；只有显式的消息 composer 提交才是 Team mailbox message。
 
 ## 考虑过的替代方案
 

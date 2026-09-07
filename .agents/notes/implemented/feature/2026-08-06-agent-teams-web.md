@@ -18,7 +18,7 @@ Only the exact live Lead can read the Team message index. Each read serializes w
 
 Every task update sends the displayed revision. Each create or update owns an independent pending token, invalidates older refreshes before starting, and reloads the complete Team view after success. A conflict asks the user to review only after its reload succeeds; a reload failure remains visible. Overlapping refreshes publish only the latest request for the selected Session.
 
-Teammate navigation uses the existing `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address without a Team tag. The UI refreshes the direct-child catalog, rechecks the selected Session, and opens the addressed conversation. History and later human prompts follow the stable Subagent path; the Team mailbox remains reserved for Team peer delivery from Team tools.
+Teammate navigation uses the existing `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address without a Team tag. The UI refreshes the direct-child catalog, rechecks the selected Session, and opens the addressed conversation. History and ordinary addressed-child continuations follow the stable Subagent path. The [durable human Team message request decision](../architecture/2026-09-07-durable-human-team-message-requests.md) partially supersedes this note's original no-send/no-reply and addressed-child-only boundary: the current message composer uses the generated `agentTeams/sendMessage` Remote for explicit human work and replies. This note remains the current owner of message reads, pagination, tasks, teammate navigation, and Client Slot composition.
 
 `@deepseek-ai/dsh-experimental-agent-team-web-profile` inserts only the UI after the stable Web bundle. It is applied alongside the Host-side `@deepseek-ai/dsh-experimental-agent-team-profile`, which already inserts `ctx.agentTeams` and the model tools. Neither stable bundle contains disabled Team rows or dependencies.
 
@@ -26,7 +26,7 @@ Stable Web presets still register continuable Subagent controls inside their pre
 
 ## Boundaries
 
-The Web message reader has no send, reply, read-receipt, or live-subscription operation. It never copies message bodies into the Team view, a global Client store, or a run index. The Web UI has no worktree or Git controls, teammate creation, rename, deletion, interruption, or automatic merge behavior. It does not infer filesystem authority from task ownership or write scopes. A human continuation after teammate navigation is an ordinary addressed-child prompt, not a Team mailbox message.
+The Web message read methods remain list/detail-only and have no read-receipt or live-subscription operation. A separate Lead-only generated `agentTeams/sendMessage` Remote and message composer provide explicit sends and replies without turning a read into a mutation or inferring completion. The reader never copies message bodies into the Team view, a global Client store, or a run index. The Web UI has no worktree or Git controls, teammate creation, rename, deletion, interruption, or automatic merge behavior. It does not infer filesystem authority from task ownership or write scopes. An ordinary continuation after teammate navigation remains an addressed-child prompt; only an explicit message-composer submission is a Team mailbox message.
 
 ## Alternatives considered
 

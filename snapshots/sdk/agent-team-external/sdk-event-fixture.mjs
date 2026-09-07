@@ -87,6 +87,31 @@ export function apply(ctx) {
           result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }
         }
       })
+      const requestId = 'snapshot-human-request-1'
+      const humanMessageId = 'snapshot-human-message-1'
+      const humanText = 'Please apply the review.'
+      exec.agent.session.append('team/message/request-committed', {
+        version: 1,
+        teamId: exec.agent.id,
+        message: {
+          id: humanMessageId,
+          senderId: exec.agent.id,
+          senderName: 'lead',
+          targetId: member.id,
+          content: [{ type: 'text', text: humanText }]
+        },
+        receipt: {
+          requestId,
+          senderId: exec.agent.id,
+          inputFingerprint: createHash('sha256').update(JSON.stringify({
+            recipientId: member.id,
+            text: humanText,
+            replyTo: messageId
+          })).digest('hex'),
+          replyTo: messageId,
+          result: { requestId, messageId: humanMessageId, status: 'accepted' }
+        }
+      })
       const task = { id: 'snapshot-native-task-1', revision: 1, subject: 'Review', description: 'Review shared tasks.',
         status: 'pending', blockedBy: [], writeScopes: [] }
       exec.agent.session.append('team/task', { version: 2, teamId: exec.agent.id, task })

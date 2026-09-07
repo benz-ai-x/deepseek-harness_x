@@ -164,6 +164,23 @@ return (ctx) => {
           result: { ok: true, operation: 'messages.send', value: { messageId, status: 'queued' } }
         }
       })
+      const requestId = 'snapshot-human-request-1'
+      const humanMessageId = 'snapshot-human-message-1'
+      const humanText = 'Please apply the review.'
+      exec.agent.session.append('team/message/request-committed', {
+        version: 1,
+        teamId: exec.agent.id,
+        message: {
+          id: humanMessageId, senderId: exec.agent.id, senderName: 'lead', targetId: member.id,
+          content: [{ type: 'text', text: humanText }]
+        },
+        receipt: {
+          requestId, senderId: exec.agent.id,
+          inputFingerprint: 'f512e2b73071e50c4bc30ce91ac9944af22989e3965e9ba7a281d624303a81c0',
+          replyTo: messageId,
+          result: { requestId, messageId: humanMessageId, status: 'accepted' }
+        }
+      })
       const task = { id: 'snapshot-native-task-1', revision: 1, subject: 'Review', description: 'Review shared tasks.',
         status: 'pending', blockedBy: [], writeScopes: [] }
       exec.agent.session.append('team/task', { version: 2, teamId: exec.agent.id, task })
@@ -1377,6 +1394,34 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
         assert accepted["receipt"]["result"]["value"] == {"messageId": "snapshot-native-message-1", "status": "queued"}
         assert accepted["receipt"]["source"] == {
             "kind": "tool", "turnId": "snapshot-native-turn-1", "callId": "snapshot-native-call-1",
+        }
+
+        requests = [
+            event
+            for event in result.events
+            if event.get("type") == "team/message/request-committed"
+        ]
+        assert len(requests) == 1, requests
+        request = requests[0]["data"]
+        assert request["version"] == 1
+        assert request["teamId"] == SNAPSHOT_SESSION_ID
+        assert request["message"] == {
+            "id": "snapshot-human-message-1",
+            "senderId": SNAPSHOT_SESSION_ID,
+            "senderName": "lead",
+            "targetId": "snapshot-external-member-1",
+            "content": [{"type": "text", "text": "Please apply the review."}],
+        }
+        assert request["receipt"] == {
+            "requestId": "snapshot-human-request-1",
+            "senderId": SNAPSHOT_SESSION_ID,
+            "inputFingerprint": "f512e2b73071e50c4bc30ce91ac9944af22989e3965e9ba7a281d624303a81c0",
+            "replyTo": "snapshot-native-message-1",
+            "result": {
+                "requestId": "snapshot-human-request-1",
+                "messageId": "snapshot-human-message-1",
+                "status": "accepted",
+            },
         }
 
         task_acceptance = receipts[1]["data"]
