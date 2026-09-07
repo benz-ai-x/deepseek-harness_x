@@ -7,6 +7,7 @@ import type {
   TeamId,
   TeamMessageCursor,
   TeamMessageId,
+  TeamMessageRequestId,
   TeamNativeOperationId,
   TeamTaskId,
   TeammateLaunchRequestId,
@@ -19,6 +20,7 @@ export type {
   TeamId,
   TeamMessageCursor,
   TeamMessageId,
+  TeamMessageRequestId,
   TeamNativeOperationId,
   TeamTaskId,
   TeammateEvaluationHandle,
@@ -220,6 +222,10 @@ export interface TeamMessageParticipant {
 /** Metadata-only row for one persisted Team message. */
 export interface TeamMessageSummary {
   readonly id: TeamMessageId
+  /** Human submission identity when this message originated in the Team message center. */
+  readonly requestId?: TeamMessageRequestId
+  /** Earlier message explicitly associated with this reply. */
+  readonly replyTo?: TeamMessageId
   readonly sender: TeamMessageParticipant
   readonly recipient: TeamMessageParticipant
   /** Unix epoch milliseconds from the durable queue event. */
@@ -392,6 +398,47 @@ export interface SendTeamMessageResult {
   readonly status: 'accepted' | 'queued'
 }
 
+/** Browser-authored Team message input; Host authority supplies the sender. */
+export interface SubmitTeamMessageRequest {
+  readonly requestId: TeamMessageRequestId
+  readonly recipientId: SessionId
+  readonly text: string
+  readonly replyTo?: TeamMessageId
+}
+
+/** Durable acceptance returned for every replay of one matching request. */
+export interface TeamMessageSubmission {
+  readonly requestId: TeamMessageRequestId
+  readonly messageId: TeamMessageId
+  readonly status: 'accepted'
+}
+
+/** Request correlation retained atomically with one human-authored message. */
+export interface TeamMessageRequestReceipt {
+  readonly requestId: TeamMessageRequestId
+  readonly senderId: SessionId
+  readonly inputFingerprint: string
+  readonly replyTo?: TeamMessageId
+  readonly result: TeamMessageSubmission
+}
+
+/** Accepted submission and current Host-proven delivery stage. */
+export interface SubmitTeamMessageValue {
+  readonly submission: TeamMessageSubmission
+  readonly delivery: TeamMessageDelivery
+}
+
+/** Browser message mutation result with request conflicts kept distinct from other Team rejections. */
+export type SubmitTeamMessageResult =
+  | { readonly ok: true; readonly value: SubmitTeamMessageValue }
+  | {
+    readonly ok: false
+    readonly error: {
+      readonly code: 'team-message-request-conflict' | 'team-rejected'
+      readonly message: string
+    }
+  }
+
 /** Input for creating one shared task. */
 export interface CreateTeamTaskRequest {
   readonly subject: string
@@ -447,6 +494,13 @@ declare module '@deepseek-ai/dsh-session/types' {
     'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }
+    /** Atomic human request acceptance, reply correlation, and mailbox enqueue. */
+    'team/message/request-committed': {
+      version: 1
+      teamId: TeamId
+      receipt: TeamMessageRequestReceipt
+      message: TeamMessageSnapshot
+    }
     /** Atomic native mutation and original receipt, required for recovery. */
     'team/native-operation/committed':
       | { version: 3; teamId: TeamId; receipt: TeamNativeMessageReceipt; message: TeamMessageSnapshot }

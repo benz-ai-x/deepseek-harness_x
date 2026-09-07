@@ -55,6 +55,7 @@ const LINK_MAP: Record<string, string> = {
   TeamId: 'subsystems/agent-team.md',
   TeamMemberSnapshot: 'subsystems/agent-team.md',
   TeamMessageId: 'subsystems/agent-team.md',
+  TeamMessageRequestReceipt: 'subsystems/agent-team.md',
   TeamMessageSnapshot: 'subsystems/agent-team.md',
   TeamTaskSnapshot: 'subsystems/agent-team.md',
 }

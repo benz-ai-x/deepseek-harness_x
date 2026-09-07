@@ -256,8 +256,11 @@ export class TeamMessageReader {
     rootId: SessionId,
     through: number,
   ): TeamMessageSummary {
+    const request = state.messageRequests.find(receipt => receipt.result.messageId === candidate.message.id)
     return {
       id: candidate.message.id,
+      ...(request === undefined ? {} : { requestId: request.requestId }),
+      ...(request?.replyTo === undefined ? {} : { replyTo: request.replyTo }),
       sender: this.participant(state, candidate.message.senderId, rootId, candidate.message.senderName),
       recipient: this.participant(state, candidate.message.targetId, rootId),
       sentAt: candidate.index.queuedAt,

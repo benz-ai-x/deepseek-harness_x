@@ -13,6 +13,9 @@ export type TeamTaskId = Branded<'TeamTaskId'>
 /** Stable identifier for one durable peer message. */
 export type TeamMessageId = Branded<'TeamMessageId'>
 
+/** Caller-owned identity for one durable Team message submission. */
+export type TeamMessageRequestId = Branded<'TeamMessageRequestId'>
+
 /** Opaque continuation for one committed Team-message query window. */
 export type TeamMessageCursor = Branded<'TeamMessageCursor'>
 
@@ -80,6 +83,16 @@ export function TeamTaskId(id: string): TeamTaskId {
  */
 export function TeamMessageId(id: string): TeamMessageId {
   return id as TeamMessageId
+}
+
+/**
+ * Admit one caller-owned Team message request identity.
+ * @param id - Non-empty opaque identity of at most 200 UTF-8 bytes.
+ * @returns the same string branded as a Team message request identity.
+ * @throws {TypeError} when the durable identity is empty or exceeds 200 UTF-8 bytes.
+ */
+export function TeamMessageRequestId(id: string): TeamMessageRequestId {
+  return brandString<TeamMessageRequestId>(boundedDurableOpaqueId(id, 'TeamMessageRequestId'))
 }
 
 /**

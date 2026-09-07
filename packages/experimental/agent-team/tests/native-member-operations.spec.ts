@@ -13,6 +13,7 @@ import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { MockAdapter } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import TeamService, {
   TeamId,
+  TeamMessageRequestId,
   TeammateEvaluationHandle,
   TeammateEvaluationId,
   TeammateLaunchRequestId,
@@ -108,6 +109,134 @@ async function setup(provider = new NativeProduct()) {
 }
 
 describe('native Team member queries', () => {
+  it('returns durable acceptance before delivery and keeps accepted human work under Team ownership', async () => {
+    class DelayedProduct extends NativeProduct {
+      readonly entered = Promise.withResolvers<TeammateRuntimeDeliverRequest>()
+      readonly release = Promise.withResolvers<undefined>()
+
+      override async deliver(request: TeammateRuntimeDeliverRequest) {
+        this.entered.resolve(request)
+        await this.release.promise
+        request.signal.throwIfAborted()
+        return { turnId: TeammateRuntimeTurnId(`accepted-${request.deliveryId}`), presence: 'idle' as const }
+      }
+    }
+    const provider = new DelayedProduct()
+    const { ctx, lead, launched } = await setup(provider)
+    const controller = new AbortController()
+    const request = {
+      requestId: TeamMessageRequestId('cancel-after-acceptance'),
+      recipientId: launched.member.id,
+      text: 'The Team owns this after its durable commit.',
+    }
+    const sending = ctx.agentTeams.remoteSendMessage(lead.agent, request, controller.signal)
+
+    const delivery = await provider.entered.promise
+    expect(lead.agent.session.ownEvents().filter(event =>
+      event.type === 'team/message/request-committed')).toHaveLength(1)
+    const outcome = await Promise.race([
+      sending.then(value => ({ kind: 'settled' as const, value })),
+      new Promise<{ readonly kind: 'blocked' }>((resolve) => {
+        setImmediate(() => { resolve({ kind: 'blocked' }) })
+      }),
+    ])
+    let accepted: Awaited<typeof sending> | undefined
+    try {
+      expect(outcome.kind).toBe('settled')
+      if (outcome.kind !== 'settled') throw new Error('submission remained coupled to provider delivery')
+      accepted = outcome.value
+      expect(accepted).toMatchObject({
+        ok: true,
+        value: {
+          submission: { requestId: 'cancel-after-acceptance', status: 'accepted' },
+          delivery: { stage: 'pending' },
+        },
+      })
+      controller.abort(new Error('transport disconnected after acceptance'))
+      expect(delivery.signal.aborted).toBe(false)
+      await expect(ctx.agentTeams.remoteSendMessage(
+        lead.agent,
+        request,
+        new AbortController().signal,
+      )).resolves.toEqual(accepted)
+    } finally {
+      provider.release.resolve(undefined)
+    }
+
+    await vi.waitFor(() => {
+      expect(lead.agent.session.ownEvents().filter(event =>
+        event.type === 'team/message/delivered')).toHaveLength(1)
+    })
+    const delivered = await ctx.agentTeams.remoteSendMessage(
+      lead.agent,
+      request,
+      new AbortController().signal,
+    )
+    expect(delivered).toMatchObject({
+      ok: true,
+      value: {
+        submission: accepted?.ok ? accepted.value.submission : undefined,
+        delivery: { stage: 'delivered' },
+      },
+    })
+    expect(lead.agent.session.ownEvents().filter(event =>
+      event.type === 'team/message/request-committed')).toHaveLength(1)
+  })
+
+  it('keeps one human message pending while its provider is absent and delivers the original after return', async () => {
+    class ReceivingProduct extends NativeProduct {
+      readonly deliveries: TeammateRuntimeDeliverRequest[] = []
+      override async deliver(request: TeammateRuntimeDeliverRequest) {
+        this.deliveries.push(request)
+        return { turnId: TeammateRuntimeTurnId(`human-${request.deliveryId}`), presence: 'idle' as const }
+      }
+    }
+    const first = new ReceivingProduct()
+    const { ctx, lead, registration, launched } = await setup(first)
+    await registration()
+    const request = {
+      requestId: TeamMessageRequestId('provider-absence-request'),
+      recipientId: launched.member.id,
+      text: 'Continue the original native review.',
+    }
+
+    const pending = await ctx.agentTeams.remoteSendMessage(
+      lead.agent,
+      request,
+      new AbortController().signal,
+    )
+    expect(pending).toMatchObject({
+      ok: true,
+      value: { submission: { status: 'accepted' }, delivery: { stage: 'pending' } },
+    })
+    if (!pending.ok) throw new Error('Provider-absent Team message was not accepted')
+    expect(first.deliveries).toEqual([])
+
+    const replacement = new ReceivingProduct(first.handles)
+    ctx.agentTeams.registerTeammateRuntimeProvider(replacement)
+    await vi.waitFor(() => { expect(replacement.deliveries).toHaveLength(1) })
+    expect(replacement.deliveries[0]).toMatchObject({
+      deliveryId: pending.value.submission.messageId,
+      nativeHandle: launched.member.externalRuntime?.nativeHandle,
+      senderId: lead.agent.id,
+    })
+    const recovered = await ctx.agentTeams.remoteSendMessage(
+      lead.agent,
+      request,
+      new AbortController().signal,
+    )
+    expect(recovered).toMatchObject({
+      ok: true,
+      value: {
+        submission: pending.value.submission,
+        delivery: { stage: 'delivered' },
+      },
+    })
+    expect(replacement.deliveries).toHaveLength(1)
+    expect(lead.agent.session.ownEvents().filter(event =>
+      event.type === 'team/message/request-committed')).toHaveLength(1)
+  })
+
   it('reports a cancelled queued recovery read as a query cancellation', async () => {
     const { provider, handle } = await setup()
     const controller = new AbortController()

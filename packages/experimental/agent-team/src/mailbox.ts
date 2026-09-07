@@ -10,7 +10,11 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
-import { TeamId, TeamMessageId as toTeamMessageId } from './brand.ts'
+import {
+  TeamId,
+  TeamMessageId as toTeamMessageId,
+  TeamMessageRequestId as toTeamMessageRequestId,
+} from './brand.ts'
 import type { TeammateRuntimeTurnId } from './brand.ts'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
@@ -20,11 +24,16 @@ import type { TeamMembership, TeamRoster } from './roster.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { nativeOperationFingerprint, nativeOperationId } from './native-operation.ts'
+import { teamMessageRequestFingerprint } from './message-request.ts'
 import type { NativeMemberGrant, NativeMemberMailboxRequest, NativeMemberRecoveryItem, TeammateRuntimeRegistry } from './service-types.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
+  SubmitTeamMessageRequest,
+  SubmitTeamMessageValue,
   TeamMessageId,
+  TeamMessageDelivery,
+  TeamMessageRequestReceipt,
   TeamMessageSnapshot,
   NativeMemberMessageResult,
   NativeMemberOperationSource,
@@ -35,6 +44,7 @@ import type {
 export class TeamMailbox {
   private readonly dispatchTails = new Map<SessionId, Promise<void>>()
   private readonly inFlightMessages = new Set<TeamMessageId>()
+  private readonly inFlightMessageResults = new Map<TeamMessageId, Promise<boolean>>()
   private readonly inFlightDispatches = new Set<Promise<unknown>>()
 
   /**
@@ -68,6 +78,22 @@ export class TeamMailbox {
       signal: AbortSignal.any([request.signal, this.lifecycle.signal]),
     })
     return await this.trackDispatch(operation)
+  }
+
+  /**
+   * Commit or replay one Lead-authored message request, then observe its current delivery stage.
+   * @param caller - exact live Team Lead; the request cannot assert a sender.
+   * @param request - stable request identity, explicit recipient, literal text, and optional prior message.
+   * @param signal - caller cancellation that owns work only until a new request is durably accepted.
+   * @returns original durable acceptance and current Host-proven delivery stage.
+   */
+  async submit(
+    caller: Agent,
+    request: SubmitTeamMessageRequest,
+    signal: AbortSignal,
+  ): Promise<SubmitTeamMessageValue> {
+    if (this.lifecycle.disposed) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
+    return await this.trackDispatch(this.submitAdmitted(caller, request, signal))
   }
 
   /**
@@ -238,6 +264,131 @@ export class TeamMailbox {
     return { messageId: queued.message.id, status: accepted ? 'accepted' : 'queued' }
   }
 
+  /** Commit a new request or recover its original receipt inside the Team write queue. */
+  private async submitAdmitted(
+    caller: Agent,
+    request: SubmitTeamMessageRequest,
+    signal: AbortSignal,
+  ): Promise<SubmitTeamMessageValue> {
+    const initial = this.lead(caller)
+    const root = initial.root
+    let requestId: SubmitTeamMessageRequest['requestId']
+    try {
+      requestId = toTeamMessageRequestId(request.requestId)
+    } catch (error) {
+      throw new TeamError(
+        'Team message request ID must be non-empty and at most 200 UTF-8 bytes.',
+        'TEAM_INVALID_ARGUMENT',
+        { cause: error },
+      )
+    }
+    if (typeof request.text !== 'string' || request.text.trim().length === 0) {
+      throw new TeamError('Team message text must contain a non-whitespace character.', 'TEAM_INVALID_ARGUMENT')
+    }
+    const normalized = {
+      requestId,
+      recipientId: request.recipientId,
+      text: request.text,
+      ...(request.replyTo === undefined ? {} : { replyTo: request.replyTo }),
+    }
+    const inputFingerprint = teamMessageRequestFingerprint(normalized)
+    const accepted = await this.journal.transact(root.id, async () => {
+      const current = this.lead(caller)
+      const state = this.journal.state(current.root)
+      const prior = state.messageRequests.find(candidate =>
+        candidate.senderId === caller.id && candidate.requestId === normalized.requestId)
+      if (prior !== undefined) {
+        if (prior.inputFingerprint !== inputFingerprint) {
+          throw new TeamError(
+            'The Team message request already accepted different input.',
+            'TEAM_MESSAGE_REQUEST_CONFLICT',
+          )
+        }
+        await this.journal.flush(current.root)
+        const message = this.messageForReceipt(current.root, prior)
+        return {
+          receipt: prior,
+          message,
+          dispatch: this.tryDispatch(current.root, message, this.lifecycle.signal),
+        }
+      }
+
+      signal.throwIfAborted()
+      const target = this.activeRecipient(current, normalized.recipientId)
+      if (normalized.replyTo !== undefined
+        && !state.messages.some(candidate => candidate.id === normalized.replyTo)) {
+        throw new TeamError('The reply message does not belong to this Team.', 'TEAM_MESSAGE_NOT_FOUND')
+      }
+      const message = this.prepareMessageForTarget(current, caller.id, target, [
+        { type: 'text', text: normalized.text },
+      ], normalized.replyTo)
+      const receipt: TeamMessageRequestReceipt = {
+        requestId: normalized.requestId,
+        senderId: caller.id,
+        inputFingerprint,
+        ...(normalized.replyTo === undefined ? {} : { replyTo: normalized.replyTo }),
+        result: { requestId: normalized.requestId, messageId: message.id, status: 'accepted' },
+      }
+      await this.journal.appendAndFlush(current.root, 'team/message/request-committed', {
+        version: 1,
+        teamId: TeamId(current.root.id),
+        receipt,
+        message,
+      })
+      return {
+        receipt,
+        message,
+        dispatch: this.tryDispatch(current.root, message, this.lifecycle.signal),
+      }
+    })
+    // Delivery is already tracked by the Team lifecycle; the caller owns only the
+    // durable submission acknowledgement and may disconnect after this point.
+    void accepted.dispatch
+    return {
+      submission: structuredClone(accepted.receipt.result),
+      delivery: this.delivery(root, accepted.message.id),
+    }
+  }
+
+  /** Resolve the exact current Lead at both Remote admission and serialized write time. */
+  private lead(caller: Agent): TeamMembership & { readonly role: 'lead' } {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') {
+      throw new TeamError('only the Team Lead can submit human-authored messages', 'TEAM_LEAD_REQUIRED')
+    }
+    return { ...membership, role: 'lead' }
+  }
+
+  /** Resolve an explicit durable recipient without accepting a caller-supplied name. */
+  private activeRecipient(
+    membership: TeamMembership,
+    recipientId: SessionId,
+  ): { readonly id: SessionId; readonly name: string } {
+    const member = this.journal.state(membership.root).members.find(candidate =>
+      candidate.id === recipientId && candidate.phase === 'active')
+    if (member === undefined) {
+      throw new TeamError('The message recipient is not an active member of this Team.', 'TEAM_MEMBER_NOT_FOUND')
+    }
+    return { id: member.id, name: member.name }
+  }
+
+  /** Recover the message retained by one already accepted request receipt. */
+  private messageForReceipt(root: Agent, receipt: TeamMessageRequestReceipt): TeamMessageSnapshot {
+    const message = this.journal.state(root).messages.find(candidate => candidate.id === receipt.result.messageId)
+    assert(message !== undefined, 'A Team message request receipt must retain its queued message')
+    return message
+  }
+
+  /** Read delivery only from the authoritative acknowledgement projection. */
+  private delivery(root: Agent, messageId: TeamMessageId): TeamMessageDelivery {
+    const state = this.journal.state(root)
+    const index = state.messageIndex.find(candidate => candidate.messageId === messageId)
+    assert(index !== undefined, 'An accepted Team message must retain its queue index')
+    if (!state.delivered.includes(messageId)) return { stage: 'pending' }
+    assert(index.deliveredAt !== undefined, 'A delivered Team message must retain its delivery time')
+    return { stage: 'delivered', deliveredAt: index.deliveredAt }
+  }
+
   /** Apply the same target, capacity and delivered-content limits for DSH and native senders. */
   private prepareMessage(
     membership: TeamMembership,
@@ -246,6 +397,18 @@ export class TeamMailbox {
   ): TeamMessageSnapshot {
     const state = this.journal.state(membership.root)
     const target = resolveActiveMember(membership.root.id, state, request.target)
+    return this.prepareMessageForTarget(membership, senderId, target, request.content)
+  }
+
+  /** Apply shared capacity and delivered-content limits after resolving one exact target. */
+  private prepareMessageForTarget(
+    membership: TeamMembership,
+    senderId: SessionId,
+    target: { readonly id: SessionId; readonly name: string },
+    content: readonly ContentBlock[],
+    replyTo?: TeamMessageId,
+  ): TeamMessageSnapshot {
+    const state = this.journal.state(membership.root)
     if (target.id === senderId) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
     const pending = state.messages.filter(candidate =>
       candidate.targetId === target.id && !state.delivered.includes(candidate.id)).length
@@ -254,9 +417,9 @@ export class TeamMailbox {
     }
     const message: TeamMessageSnapshot = {
       id: toTeamMessageId(`team-message-${randomUUID()}`), senderId, senderName: membership.name,
-      targetId: target.id, content: structuredClone(request.content),
+      targetId: target.id, content: structuredClone([...content]),
     }
-    if (Buffer.byteLength(JSON.stringify(this.deliveryContent(message)), 'utf8') > this.maxMessageBytes) {
+    if (Buffer.byteLength(JSON.stringify(this.deliveryContent(message, replyTo)), 'utf8') > this.maxMessageBytes) {
       throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
     }
     return message
@@ -265,7 +428,8 @@ export class TeamMailbox {
   /** Attempt one queued message exactly once in this process at a time. */
   private tryDispatch(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     if (this.lifecycle.disposed) return Promise.resolve(false)
-    if (this.inFlightMessages.has(message.id)) return Promise.resolve(false)
+    const existing = this.inFlightMessageResults.get(message.id)
+    if (existing !== undefined) return existing
     this.inFlightMessages.add(message.id)
     const operation = this.trackDispatch(
       this.tryDispatchAdmitted(
@@ -274,8 +438,10 @@ export class TeamMailbox {
         AbortSignal.any([signal, this.lifecycle.signal]),
       ),
     )
+    this.inFlightMessageResults.set(message.id, operation)
     const forget = (): void => {
       this.inFlightMessages.delete(message.id)
+      this.inFlightMessageResults.delete(message.id)
     }
     void operation.then(forget, forget)
     return operation
@@ -346,6 +512,7 @@ export class TeamMailbox {
   /** Attempt one queued delivery after target-local ordering admits it. */
   private async dispatchOnce(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     try {
+      const replyTo = this.replyTo(root, message.id)
       const externalMember = this.journal.state(root).members.find(member =>
         member.id === message.targetId
         && member.phase === 'active'
@@ -359,7 +526,7 @@ export class TeamMailbox {
           deliveryId: message.id,
           senderId: message.senderId,
           senderName: message.senderName,
-          content: this.deliveryContent(message),
+          content: this.deliveryContent(message, replyTo),
           signal,
         })
         await this.markDelivered(root, message.id, message.targetId, delivered.turnId)
@@ -376,7 +543,7 @@ export class TeamMailbox {
         senderId: message.senderId,
         senderName: message.senderName,
       }
-      const content = this.deliveryContent(message)
+      const content = this.deliveryContent(message, replyTo)
       if (message.targetId === root.id) {
         const input = createUserMessage({ content, source })
         root.steer(input)
@@ -442,11 +609,22 @@ export class TeamMailbox {
   }
 
   /** Frame peer content with stable sender and message identity for the receiving model. */
-  private deliveryContent(message: TeamMessageSnapshot): ContentBlock[] {
+  private deliveryContent(message: TeamMessageSnapshot, replyTo?: TeamMessageId): ContentBlock[] {
     return [
-      { type: 'text', text: `Team message ${message.id} from ${message.senderName}:` },
+      {
+        type: 'text',
+        text: replyTo === undefined
+          ? `Team message ${message.id} from ${message.senderName}:`
+          : `Team message ${message.id} in reply to ${replyTo} from ${message.senderName}:`,
+      },
       ...structuredClone(message.content),
     ]
+  }
+
+  /** Find the optional reply correlation stored with one human-authored message. */
+  private replyTo(root: Agent, messageId: TeamMessageId): TeamMessageId | undefined {
+    return this.journal.state(root).messageRequests.find(receipt =>
+      receipt.result.messageId === messageId)?.replyTo
   }
 
   /** Read an inactive target's durable log before cold resume; uncertainty keeps the mailbox queued. */

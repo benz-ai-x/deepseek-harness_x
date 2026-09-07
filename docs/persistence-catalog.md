@@ -781,7 +781,7 @@ Source: [`packages/subagent/tool-subagent/src/model-selection-state.ts:17`](../p
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMemberSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:445`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:492`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -801,7 +801,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:445`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:456`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:510`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -814,7 +814,25 @@ Source: [`packages/experimental/agent-team/src/types.ts:456`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:449`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:496`](../packages/experimental/agent-team/src/types.ts)
+
+<a id="teammessagerequest-committed--log-only"></a>
+
+#### `team/message/request-committed` — log-only
+
+```ts persistence-catalog
+/** Atomic human request acceptance, reply correlation, and mailbox enqueue. */
+'team/message/request-committed': {
+  version: 1
+  teamId: TeamId
+  receipt: TeamMessageRequestReceipt
+  message: TeamMessageSnapshot
+}
+```
+
+Types: [TeamId](subsystems/agent-team.md) · [TeamMessageRequestReceipt](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:498`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamnative-operationcommitted--log-only"></a>
 
@@ -830,7 +848,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:449`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md) · [TeamTaskSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:451`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:505`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -843,7 +861,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:451`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamTaskSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:447`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:494`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 

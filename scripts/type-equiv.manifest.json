@@ -374,6 +374,31 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "SubmitTeamMessageRequest",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMessageSubmission",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMessageRequestReceipt",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "SubmitTeamMessageValue",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "SubmitTeamMessageResult",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamMessageDirection",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

@@ -97,6 +97,8 @@ roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`
 
 原生消息调用在模型参数之外携带可信工作轮次和工具调用身份。Team 在一个必需事件中共同保存消息与可重放的接受回执，然后才确认或投递。相同调用以相同规范化输入重试时返回原 queued 回执；改变输入则冲突。queued 记录表达持久接受，不表示已投递或工作完成。provider 的终止结算为每个工作轮次使用独立身份，并通过同一 mailbox 将有意回传的最终文本或失败／中断通知发给 Lead。恢复在验证当前 grant 后重放回执。
 
+人类操作者使用独立的生成式 `agentTeams/sendMessage` Remote。Host 解析提供精确的当前 Lead 作为发送者；请求只包含有界的调用方 request id、明确的 active 接收者 id、字面正文，以及可选的同 Team 真实消息 id。持久 key 以 Team 与 sender 为作用域。输入相同的重试返回原消息，输入变化返回 `team-message-request-conflict`，无效或跨 Team 回复不会追加任何内容。接受先于投递提交，并独立返回 `accepted` 与当前 `pending`／`delivered` 阶段。消息一经接受，即使浏览器断开也由 Team 生命周期拥有原 dispatch；provider 缺失会让它保持 pending，等待精确 handle 恢复。
+
 ### 浏览持久消息
 
 精确的 live Lead 可以通过 `listMessages()` 与 `getMessage()` 读取持久 Team 消息。Metadata page 按新到旧排序，默认返回 20 行，允许 1 至 100 行，并可按保留成员、相对该成员的方向和投递阶段筛选。第一页固定已提交 event cutoff；所有 continuation 都保留该 cutoff、Team 身份与规范化 filter。畸形、未来、跨 Team 或改变查询的 cursor 会被拒绝。Detail request 必须使用稳定 message id，以及公开该消息的 list window 所返回的 committed cursor。
@@ -149,6 +151,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、服务注册、恢复调度 |
 | [`src/roster.ts`](src/roster.ts) | Team 身份、路由对账、provisioning、恢复与 roster 拆除 |
 | [`src/mailbox.ts`](src/mailbox.ts) | 持久队列、目标本地投递、确认与恢复 |
+| [`src/message-request.ts`](src/message-request.ts) | 人类请求输入的规范指纹 |
 | [`src/message-reader.ts`](src/message-reader.ts) | Lead 授权的已提交分页与按需净化内容 |
 | [`src/task-board.ts`](src/task-board.ts) | 任务命令与原生原子回执；共用转换和视图位于 [`task-state.ts`](src/task-state.ts) |
 | [`src/journal.ts`](src/journal.ts) | 串行化的 Lead 日志事务与提交通知 |
@@ -171,7 +174,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 DSH teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。对于外部 teammate，同一持久队列会用精确 provider/native handle 与稳定 Team message id 调用 `deliver()`。provider 返回稳定 native turn id 后，Agent Teams 才记录 delivered。provider 缺失时消息继续排队；重新注册并恢复精确 handle 后会重试，且不会回退到一次性调用。
 
-Projection 会保留与消息位置对齐的 index，其中包含 queue event 的 sequence 与 time，以及可选的 delivery event sequence 与 time。Committed reader 使用这些 event-owned 事实，不会把正文内容或可变 runtime 状态复制到第二个 store。Projection state version 6 会在冷启动后从 Lead 日志重建该 index。
+人类提交使用必需的 `team/message/request-committed@1`，原子保留请求回执、可选回复 id、原始 accepted 结果和 queued 消息。回复投递会把原消息 id 加入稳定发送者前缀，但不会复制原正文。Projection 会保留不可变请求回执和与消息位置对齐的 index，其中包含 queue event 的 sequence 与 time，以及可选的 delivery event sequence 与 time。Committed reader 使用这些 event-owned 事实，不会把正文内容或可变 runtime 状态复制到第二个 store。Projection state version 7 会在冷启动后从 Lead 日志重建两者；旧 queue event 仍可在没有请求元数据时读取，不支持的未来 payload version 会安全失败。
 
 ### 共享任务板
 
@@ -183,7 +186,7 @@ Projection 会保留与消息位置对齐的 index，其中包含 queue event �
 
 ### 持久性模型
 
-Team 事件追加到精确的 live Lead Session，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/task`、`team/message/queued`、`team/message/delivered` 与 `team/native-operation/committed` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由 Session event 的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team event 对照已提交前缀回放，并在 append 前拒绝非法转换。
+Team 事件追加到精确的 live Lead Session，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/task`、`team/message/queued`、`team/message/request-committed`、`team/message/delivered` 与 `team/native-operation/committed` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由 Session event 的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team event 对照已提交前缀回放，并在 append 前拒绝非法转换。
 
 ### Dispose
 
@@ -201,6 +204,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 - [Agent Teams 子系统](../../../docs/subsystems/agent-team.zh.md)——持久 Team 类型与 `ctx.agentTeams` 服务 API。
 - [tool-agent-team 包](../tool-agent-team/README.zh.md)——让模型创建、消息与协调 teammate 的工具。
 - [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-05-agent-teams.zh.md)——身份、mailbox、任务与共享 checkout 决策。
+- [持久人类 Team 消息请求](../../../.agents/notes/implemented/architecture/2026-09-07-durable-human-team-message-requests.zh.md)——精确 Lead 权限、幂等接受、回复关联与投递所有权。
 - [实验包决策](../../../.agents/notes/implemented/architecture/2026-08-18-experimental-agent-teams-packages.zh.md)——位置、发布排除与依赖隔离。
 
 -----
@@ -209,7 +213,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 ### 浏览器 Remote
 
-`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还直接负责生成式 `agentTeams/view`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出浏览器安全的 view、消息查询、净化内容与 task mutation type。消息 list 和 detail failure 保留为普通外层 `RemoteResult` failure。Create 与 update rejection 则作为 transport 成功响应中的显式 domain result，其中过期的 update revision 会区分为 task conflict。
+`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还直接负责生成式 `agentTeams/view`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/sendMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出浏览器安全的 view、消息查询／提交、净化内容与 task mutation type。消息 list 和 detail failure 保留为普通外层 `RemoteResult` failure。人类发送、task create 与 task update rejection 则作为 transport 成功响应中的显式 domain result，其中 message request conflict 与过期 task revision 都能同其他 Team rejection 区分。
 
 ## 模型体验
 

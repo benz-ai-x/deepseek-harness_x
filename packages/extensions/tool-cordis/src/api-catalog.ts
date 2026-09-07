@@ -380,6 +380,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable message identity and immediate-delivery observation.',
       },
       {
+        signature: 'async submitMessage( caller: Agent, request: SubmitTeamMessageRequest, signal: AbortSignal, ): Promise<SubmitTeamMessageValue>',
+        description: 'Submit one idempotent human-authored message as the exact live Team Lead.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead that Host resolved from the request session.' }, { name: 'request', description: 'caller-owned request identity, explicit recipient, text, and optional reply.' }, { name: 'signal', description: 'cancellation owned by the caller until a new request is durably accepted.' }],
+        returns: 'original acceptance and current delivery stage.',
+      },
+      {
         signature: 'async listMessages(caller: Agent, request: ListTeamMessagesRequest): Promise<TeamMessagePage>',
         description: 'Read one bounded metadata page from a fixed committed Team-message window.',
         parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'request', description: 'filters, page size, and optional stable continuation.' }],
@@ -462,6 +468,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read one sanitized persisted message through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team Lead used as the authority credential.' }, { name: 'request', description: 'stable message identity and committed query cursor.' }],
         returns: 'safe intentional content with explicit completeness.',
+      },
+      {
+        signature: '@Remote(\'sendMessage\') remoteSendMessage( agent: Agent, request: SubmitTeamMessageRequest, signal: AbortSignal, ): Promise<SubmitTeamMessageResult>',
+        description: 'Submit or replay one Lead-authored message through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team Lead resolved by Host rather than supplied as message data.' }, { name: 'request', description: 'stable human request and explicit Team recipient.' }, { name: 'signal', description: 'transport cancellation before durable acceptance.' }],
+        returns: 'accepted submission with current delivery, or a stable Team rejection.',
       },
       {
         signature: '@Remote(\'createTask\') remoteCreateTask(agent: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskMutationResult>',
@@ -5571,6 +5583,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SubagentStopReasonMap {\n    completed: \'completed\';\n    aborted: \'aborted\';\n    error: \'error\';\n    \'max-tokens\': \'max-tokens\';\n    refusal: \'refusal\';\n}',
   },
   {
+    name: 'SubmitTeamMessageRequest',
+    declaration: 'export interface SubmitTeamMessageRequest {\n    readonly requestId: TeamMessageRequestId;\n    readonly recipientId: SessionId;\n    readonly text: string;\n    readonly replyTo?: TeamMessageId;\n}',
+  },
+  {
+    name: 'SubmitTeamMessageResult',
+    declaration: 'export type SubmitTeamMessageResult = {\n    readonly ok: true;\n    readonly value: SubmitTeamMessageValue;\n} | {\n    readonly ok: false;\n    readonly error: {\n        readonly code: \'team-message-request-conflict\' | \'team-rejected\';\n        readonly message: string;\n    };\n};',
+  },
+  {
+    name: 'SubmitTeamMessageValue',
+    declaration: 'export interface SubmitTeamMessageValue {\n    readonly submission: TeamMessageSubmission;\n    readonly delivery: TeamMessageDelivery;\n}',
+  },
+  {
     name: 'SubprocessCollect',
     declaration: 'export interface SubprocessCollect {\n    maxBytes: number;\n    spill?: {\n        maxBytes: number;\n    };\n}',
   },
@@ -5871,8 +5895,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamMessageParticipant {\n    readonly id: SessionId;\n    readonly name: string;\n}',
   },
   {
+    name: 'TeamMessageRequestId',
+    declaration: 'export type TeamMessageRequestId = Branded<\'TeamMessageRequestId\'>;',
+  },
+  {
+    name: 'TeamMessageSubmission',
+    declaration: 'export interface TeamMessageSubmission {\n    readonly requestId: TeamMessageRequestId;\n    readonly messageId: TeamMessageId;\n    readonly status: \'accepted\';\n}',
+  },
+  {
     name: 'TeamMessageSummary',
-    declaration: 'export interface TeamMessageSummary {\n    readonly id: TeamMessageId;\n    readonly sender: TeamMessageParticipant;\n    readonly recipient: TeamMessageParticipant;\n    readonly sentAt: number;\n    readonly delivery: TeamMessageDelivery;\n}',
+    declaration: 'export interface TeamMessageSummary {\n    readonly id: TeamMessageId;\n    readonly requestId?: TeamMessageRequestId;\n    readonly replyTo?: TeamMessageId;\n    readonly sender: TeamMessageParticipant;\n    readonly recipient: TeamMessageParticipant;\n    readonly sentAt: number;\n    readonly delivery: TeamMessageDelivery;\n}',
   },
   {
     name: 'TeamTaskAction',

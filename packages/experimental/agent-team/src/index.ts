@@ -26,6 +26,9 @@ import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
   SpawnTeammateResult,
+  SubmitTeamMessageRequest,
+  SubmitTeamMessageResult,
+  SubmitTeamMessageValue,
   TeamMemberView,
   TeamMemberSnapshot,
   TeamMessageDetail,
@@ -83,6 +86,7 @@ export {
   TeamId,
   TeamMessageCursor,
   TeamMessageId,
+  TeamMessageRequestId,
   TeamNativeOperationId,
   TeamTaskId,
   TeammateEvaluationId,
@@ -298,6 +302,21 @@ export class TeamService extends TypertRemoteService {
   }
 
   /**
+   * Submit one idempotent human-authored message as the exact live Team Lead.
+   * @param caller - exact live Team Lead that Host resolved from the request session.
+   * @param request - caller-owned request identity, explicit recipient, text, and optional reply.
+   * @param signal - cancellation owned by the caller until a new request is durably accepted.
+   * @returns original acceptance and current delivery stage.
+   */
+  async submitMessage(
+    caller: Agent,
+    request: SubmitTeamMessageRequest,
+    signal: AbortSignal,
+  ): Promise<SubmitTeamMessageValue> {
+    return await this.mailbox.submit(caller, request, signal)
+  }
+
+  /**
    * Read one bounded metadata page from a fixed committed Team-message window.
    * @param caller - exact live Team Lead.
    * @param request - filters, page size, and optional stable continuation.
@@ -488,6 +507,22 @@ export class TeamService extends TypertRemoteService {
   }
 
   /**
+   * Submit or replay one Lead-authored message through the generated Remote API.
+   * @param agent - exact live Team Lead resolved by Host rather than supplied as message data.
+   * @param request - stable human request and explicit Team recipient.
+   * @param signal - transport cancellation before durable acceptance.
+   * @returns accepted submission with current delivery, or a stable Team rejection.
+   */
+  @Remote('sendMessage')
+  remoteSendMessage(
+    agent: Agent,
+    request: SubmitTeamMessageRequest,
+    signal: AbortSignal,
+  ): Promise<SubmitTeamMessageResult> {
+    return this.messageMutationResult(this.submitMessage(agent, request, signal))
+  }
+
+  /**
    * Create one shared task through the generated Remote API.
    * @param agent - exact live Team member creating the task.
    * @param request - task text, blockers, and advisory write scopes.
@@ -519,6 +554,24 @@ export class TeamService extends TypertRemoteService {
         ok: false,
         error: {
           code: error.code === 'TEAM_TASK_STALE_REVISION' ? 'team-task-conflict' : 'team-rejected',
+          message: error.message,
+        },
+      }
+    }
+  }
+
+  /** Preserve expected Team message rejections while propagating transport and internal failures. */
+  private async messageMutationResult(operation: Promise<SubmitTeamMessageValue>): Promise<SubmitTeamMessageResult> {
+    try {
+      return { ok: true, value: await operation }
+    } catch (error) {
+      if (!(error instanceof TeamError)) throw error
+      return {
+        ok: false,
+        error: {
+          code: error.code === 'TEAM_MESSAGE_REQUEST_CONFLICT'
+            ? 'team-message-request-conflict'
+            : 'team-rejected',
           message: error.message,
         },
       }

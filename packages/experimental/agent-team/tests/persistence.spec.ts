@@ -15,7 +15,7 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService, { seedDescriptorTurn, snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService, { TeamId, TeamMessageId } from '../src/index.ts'
+import TeamService, { TeamId, TeamMessageId, TeamMessageRequestId } from '../src/index.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
@@ -472,6 +472,75 @@ for (const backend of backends) {
           && message.source.messageId === messageId)
         : [])
       expect(pendingCopies).toHaveLength(1)
+
+      await rootHandle.dispose()
+      await second.dispose()
+    })
+
+    it('recovers the original human message receipt after a full Host restart', {
+      timeout: PERSISTENCE_TEST_TIMEOUT_MS,
+    }, async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), `dsh-team-request-${backend.name.toLowerCase()}-`))
+      roots.push(storageRoot)
+      const rootId = SessionId(`${backend.name.toLowerCase()}-request-root`)
+      const requestId = TeamMessageRequestId(`${backend.name.toLowerCase()}-request-id`)
+      const first = await stack(backend, storageRoot, [
+        textResponse('initial teammate answer'),
+        textResponse('accepted human work'),
+      ])
+      const firstLead = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const started = await first.ctx.agentTeams.spawnTeammate(firstLead, {
+        name: 'request-worker',
+        description: 'human request recovery worker',
+        prompt: [{ type: 'text', text: 'finish before the Host restart' }],
+        context: 'fresh',
+        provider: 'spawn',
+        signal: SIGNAL,
+      })
+      await vi.waitFor(() => { expect(first.ctx.agents.get(started.member.id)).toBeUndefined() }, { timeout: 5_000 })
+      const request = {
+        requestId,
+        recipientId: started.member.id,
+        text: 'Review the recovered request.',
+      }
+      const accepted = await first.ctx.agentTeams.remoteSendMessage(firstLead, request, SIGNAL)
+      expect(accepted).toMatchObject({ ok: true, value: { delivery: { stage: 'pending' } } })
+      if (!accepted.ok) throw new Error('Human Team message was not accepted')
+      await vi.waitFor(() => {
+        expect(firstLead.session.ownEvents().some(event => event.type === 'team/message/delivered'
+          && event.data.messageId === accepted.value.submission.messageId)).toBe(true)
+      }, { timeout: 5_000 })
+      await first.dispose()
+
+      const second = await stack(backend, storageRoot, [textResponse('resumed human work')])
+      const rootHandle = await second.ctx.agents.resume({
+        resumeSessionId: rootId,
+        agentOptions: { provider: 'mock', model: 'mock' },
+      })
+      await vi.waitFor(() => { expect(durable(rootHandle.agent).pendingMessages).toEqual([]) })
+      const recovered = await second.ctx.agentTeams.remoteSendMessage(rootHandle.agent, request, SIGNAL)
+      expect(recovered).toMatchObject({
+        ok: true,
+        value: {
+          submission: accepted.value.submission,
+          delivery: { stage: 'delivered' },
+        },
+      })
+      await expect(second.ctx.agentTeams.remoteSendMessage(rootHandle.agent, {
+        ...request,
+        text: 'Changed work after restart.',
+      }, SIGNAL)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'team-message-request-conflict' },
+      })
+
+      const rootEvents = await storedEvents(second.ctx, rootId)
+      expect(rootEvents.filter(event => event.type === 'team/message/request-committed')).toHaveLength(1)
+      const childEvents = await storedEvents(second.ctx, started.member.id)
+      expect(childEvents.filter(event => event.type === 'user/message'
+        && event.data.source.kind === 'team-message'
+        && event.data.source.messageId === accepted.value.submission.messageId)).toHaveLength(1)
+      expect(second.adapter.requests).toEqual([])
 
       await rootHandle.dispose()
       await second.dispose()

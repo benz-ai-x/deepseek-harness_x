@@ -2,7 +2,7 @@
 
 English | [中文](agent-team.zh.md)
 
-Types shared by the experimental implicit-root Team domain, model tools, and host adapters. The [Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) owns identity, runtime placement, mailbox, task, and shared-checkout decisions; the [Team Steer messaging Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.md) owns message scheduling; this page records the literal durable forms from [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts).
+Types shared by the experimental implicit-root Team domain, model tools, and host adapters. The [Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) owns identity, runtime placement, mailbox, task, and shared-checkout decisions; the [Team Steer messaging Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.md) owns message scheduling; the [durable human message request Agent Note](../../.agents/notes/implemented/architecture/2026-09-07-durable-human-team-message-requests.md) owns Lead-authored idempotency and reply correlation. This page records the literal durable forms from [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts).
 
 ## Identity and roster
 
@@ -231,6 +231,8 @@ interface TeammateRuntimeMemberOperationsRequest {
 
 The Lead Session first stores the complete queued message. A DSH target receipt is acknowledged only after its pending inbox item or recorded user message is durable; an external receipt is acknowledged after its provider returns the stable native turn identity. Either way, queued-minus-delivered is the recovery mailbox.
 
+The exact live Lead can additionally submit a human-authored message with a caller-owned request id, explicit active recipient, literal text, and optional prior message from the same Team. The sender and Team never come from request data. `(Team, sender Session, request id)` identifies one immutable input: matching retries replay the original submission, while changed recipient, text, or reply correlation conflicts without appending a fact. A new request atomically stores its message and receipt in required `team/message/request-committed@1` before Team-owned delivery begins. Caller cancellation owns only pre-acceptance work; the returned submission is separate from the current `pending` or `delivered` stage.
+
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
 interface TeamMessageSnapshot {
@@ -242,7 +244,58 @@ interface TeamMessageSnapshot {
 }
 ```
 
-Raw mailbox snapshots remain Host-only. Projection version 6 also retains each message identity, queue sequence and time, and optional delivery sequence and time. The exact live Lead can read that index as bounded newest-first metadata after a Session flush. A request accepts 1 through 100 rows and defaults to 20. Optional member, direction, and delivery filters are normalized into an opaque committed cursor. That cursor fixes the Team, filters, and upper sequence bound; a continuation stays inside the same committed window even when newer messages arrive. Malformed, future, cross-Team, mismatched-query, stale-caller, forged-caller, and forged-participant inputs are rejected.
+```ts type-equiv
+/** Browser-authored Team message input; Host authority supplies the sender. */
+interface SubmitTeamMessageRequest {
+  readonly requestId: TeamMessageRequestId
+  readonly recipientId: SessionId
+  readonly text: string
+  readonly replyTo?: TeamMessageId
+}
+```
+
+```ts type-equiv
+/** Durable acceptance returned for every replay of one matching request. */
+interface TeamMessageSubmission {
+  readonly requestId: TeamMessageRequestId
+  readonly messageId: TeamMessageId
+  readonly status: 'accepted'
+}
+```
+
+```ts type-equiv
+/** Request correlation retained atomically with one human-authored message. */
+interface TeamMessageRequestReceipt {
+  readonly requestId: TeamMessageRequestId
+  readonly senderId: SessionId
+  readonly inputFingerprint: string
+  readonly replyTo?: TeamMessageId
+  readonly result: TeamMessageSubmission
+}
+```
+
+```ts type-equiv
+/** Accepted submission and current Host-proven delivery stage. */
+interface SubmitTeamMessageValue {
+  readonly submission: TeamMessageSubmission
+  readonly delivery: TeamMessageDelivery
+}
+```
+
+```ts type-equiv
+/** Browser message mutation result with request conflicts kept distinct from other Team rejections. */
+type SubmitTeamMessageResult =
+  | { readonly ok: true; readonly value: SubmitTeamMessageValue }
+  | {
+    readonly ok: false
+    readonly error: {
+      readonly code: 'team-message-request-conflict' | 'team-rejected'
+      readonly message: string
+    }
+  }
+```
+
+Raw mailbox snapshots remain Host-only. Projection version 7 also retains request receipts and each message identity, queue sequence and time, and optional delivery sequence and time. Older version-6 checkpoints rebuild from their logs; old queued messages remain readable without request or reply metadata, while unsupported future event versions fail closed. The exact live Lead can read that index as bounded newest-first metadata after a Session flush. A request accepts 1 through 100 rows and defaults to 20. Optional member, direction, and delivery filters are normalized into an opaque committed cursor. That cursor fixes the Team, filters, and upper sequence bound; a continuation stays inside the same committed window even when newer messages arrive. Malformed, future, cross-Team, mismatched-query, stale-caller, forged-caller, and forged-participant inputs are rejected.
 
 ```ts type-equiv
 /** Direction of a persisted message relative to the selected Team member. */
@@ -269,6 +322,10 @@ interface TeamMessageParticipant {
 /** Metadata-only row for one persisted Team message. */
 interface TeamMessageSummary {
   readonly id: TeamMessageId
+  /** Human submission identity when this message originated in the Team message center. */
+  readonly requestId?: TeamMessageRequestId
+  /** Earlier message explicitly associated with this reply. */
+  readonly replyTo?: TeamMessageId
   readonly sender: TeamMessageParticipant
   readonly recipient: TeamMessageParticipant
   /** Unix epoch milliseconds from the durable queue event. */
@@ -348,7 +405,7 @@ interface TeamMessageDetail extends TeamMessageSummary {
 }
 ```
 
-Every message attempts Steer delivery. A running DSH target receives it at the nearest step boundary, an idle target starts a turn, and an inactive teammate cold-resumes. Its Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. An external target receives the same durable mailbox item through its provider-native handle and returns an idempotent native turn correlation before Agent Teams records delivery. Scheduling is not stored in the durable record because callers cannot select another mode.
+Every message attempts Steer delivery. A human-authored reply adds only the durable original message id to the delivery prefix; it does not duplicate the original content. A running DSH target receives it at the nearest step boundary, an idle target starts a turn, and an inactive teammate cold-resumes. Its Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. An external target receives the same durable mailbox item through its provider-native handle and returns an idempotent native turn correlation before Agent Teams records delivery. Scheduling is not stored in the durable record because callers cannot select another mode.
 
 ```ts type-equiv
 /** Source retained by the target Session for durable mailbox de-duplication. */
@@ -383,7 +440,7 @@ interface TeamTaskSnapshot {
 
 ## Replay
 
-`foldTeam()` replays one root Session into the roster, task board, queued-minus-delivered mailbox, and compact message index that Team operations read. It selects records by `TeamId`, so events inherited by an ordinary fork retain the ancestor id and never enter the new root's state. Session event `seq` and `time` remain the ordering and timing record; Team snapshots do not duplicate them. Roster and task reads reach callers as views. Raw mailbox snapshots remain internal to delivery and recovery, while the Lead reader returns detached metadata and explicitly sanitized on-demand detail. The package [README](../../packages/experimental/agent-team/README.md) owns operation, authorization, recovery, and limit behavior.
+`foldTeam()` replays one root Session into the roster, task board, queued-minus-delivered mailbox, immutable human request receipts, and compact message index that Team operations read. It selects records by `TeamId`, so events inherited by an ordinary fork retain the ancestor id and never enter the new root's state. Session event `seq` and `time` remain the ordering and timing record; Team snapshots do not duplicate them. Roster and task reads reach callers as views. Raw mailbox snapshots remain internal to delivery and recovery, while the Lead reader returns detached metadata and explicitly sanitized on-demand detail. The package [README](../../packages/experimental/agent-team/README.md) owns operation, authorization, recovery, and limit behavior.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -436,6 +493,15 @@ registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRunt
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Submit one idempotent human-authored message as the exact live Team Lead.
+ * @param caller - exact live Team Lead that Host resolved from the request session.
+ * @param request - caller-owned request identity, explicit recipient, text, and optional reply.
+ * @param signal - cancellation owned by the caller until a new request is durably accepted.
+ * @returns original acceptance and current delivery stage.
+ */
+async submitMessage( caller: Agent, request: SubmitTeamMessageRequest, signal: AbortSignal, ): Promise<SubmitTeamMessageValue>
 
 /**
  * Read one bounded metadata page from a fixed committed Team-message window.
@@ -549,6 +615,15 @@ tryMembership(agent: Agent): TeamMembership | undefined
  * @returns safe intentional content with explicit completeness.
  */
 @Remote('getMessage') remoteGetMessage(agent: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>
+
+/**
+ * Submit or replay one Lead-authored message through the generated Remote API.
+ * @param agent - exact live Team Lead resolved by Host rather than supplied as message data.
+ * @param request - stable human request and explicit Team recipient.
+ * @param signal - transport cancellation before durable acceptance.
+ * @returns accepted submission with current delivery, or a stable Team rejection.
+ */
+@Remote('sendMessage') remoteSendMessage( agent: Agent, request: SubmitTeamMessageRequest, signal: AbortSignal, ): Promise<SubmitTeamMessageResult>
 
 /**
  * Create one shared task through the generated Remote API.

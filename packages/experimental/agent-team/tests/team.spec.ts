@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -15,7 +15,13 @@ import { deliverSubagentPrompt, type HostPromptDeliverer } from '@deepseek-ai/ds
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService, { TeamError, TeamId, TeamMessageId, TeamTaskId } from '../src/index.ts'
+import TeamService, {
+  TeamError,
+  TeamId,
+  TeamMessageId,
+  TeamMessageRequestId,
+  TeamTaskId,
+} from '../src/index.ts'
 import { TeamRuntimeLifecycle } from '../src/lifecycle.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
@@ -1100,6 +1106,260 @@ describe('Team Remote API', () => {
       error: { code: 'team-rejected', message: 'denied' },
     })
     await expect(ctx.agentTeams.remoteUpdateTask(lead, request)).rejects.toThrow('unexpected mutation failure')
+  })
+
+  it('commits one Lead message for concurrent retries and conflicts on changed input', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'remote-recipient')
+    const recipient = await waitRunning(ctx, started.member.id)
+    const request = {
+      requestId: TeamMessageRequestId('remote-send-request'),
+      recipientId: recipient.id,
+      text: 'Review the durable mailbox change.',
+    }
+
+    const [first, duplicate] = await Promise.all([
+      ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL),
+      ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL),
+    ])
+
+    expect(first).toEqual(duplicate)
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        submission: { requestId: request.requestId, status: 'accepted' },
+        delivery: { stage: 'pending' },
+      },
+    })
+    if (!first.ok) throw new Error('Remote Team message was not accepted')
+    expect(lead.session.snapshotEvents().filter(event =>
+      event.type === 'team/message/request-committed')).toHaveLength(1)
+    await vi.waitFor(() => {
+      expect(recipient.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced'
+        ? event.data.inserted.filter(message => message.source.kind === 'team-message'
+          && message.source.messageId === first.value.submission.messageId)
+        : [])).toHaveLength(1)
+      expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
+        && event.data.messageId === first.value.submission.messageId)).toBe(true)
+    })
+    await expect(ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)).resolves.toEqual({
+      ok: true,
+      value: {
+        submission: first.value.submission,
+        delivery: expect.objectContaining({ stage: 'delivered' }),
+      },
+    })
+
+    const eventCount = lead.session.snapshotEvents().length
+    await expect(ctx.agentTeams.remoteSendMessage(lead, {
+      ...request,
+      text: 'Changed work under the same request identity.',
+    }, SIGNAL)).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'team-message-request-conflict',
+        message: 'The Team message request already accepted different input.',
+      },
+    })
+    expect(lead.session.snapshotEvents()).toHaveLength(eventCount)
+    for (const invalid of [
+      { requestId: '' as ReturnType<typeof TeamMessageRequestId>, text: 'missing request identity' },
+      { requestId: TeamMessageRequestId('blank-message-request'), text: '   ' },
+    ]) {
+      await expect(ctx.agentTeams.remoteSendMessage(lead, {
+        ...request,
+        ...invalid,
+      }, SIGNAL)).resolves.toMatchObject({ ok: false, error: { code: 'team-rejected' } })
+    }
+    expect(lead.session.snapshotEvents()).toHaveLength(eventCount)
+
+    ctx.agentTeams.interrupt(lead, 'remote-recipient')
+    recipient.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, recipient.id)
+  })
+
+  it('persists a same-Team reply and rejects teammate and cross-Team submissions without side effects', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reply-recipient')
+    const recipient = await waitRunning(ctx, started.member.id)
+    const original: TeamMessageSnapshot = {
+      id: TeamMessageId('original-reply-message'),
+      senderId: recipient.id,
+      senderName: 'reply-recipient',
+      targetId: lead.id,
+      content: content('Can you clarify the acceptance rule?'),
+    }
+    lead.session.append('team/message/queued', {
+      version: 2,
+      teamId: TeamId(lead.id),
+      message: original,
+    })
+    await ctx.sessions.flush(lead.session)
+
+    const replyRequest = {
+      requestId: TeamMessageRequestId('reply-request'),
+      recipientId: recipient.id,
+      replyTo: original.id,
+      text: 'Reuse the request identity after an unknown response.',
+    }
+    const reply = await ctx.agentTeams.remoteSendMessage(lead, replyRequest, SIGNAL)
+    expect(reply).toMatchObject({
+      ok: true,
+      value: {
+        submission: { requestId: 'reply-request', status: 'accepted' },
+        delivery: { stage: 'pending' },
+      },
+    })
+    if (!reply.ok) throw new Error('Remote Team reply was not accepted')
+    await vi.waitFor(() => {
+      expect(recipient.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced'
+        ? event.data.inserted.filter(message => message.source.kind === 'team-message'
+          && message.source.messageId === reply.value.submission.messageId)
+        : [])).toHaveLength(1)
+      expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
+        && event.data.messageId === reply.value.submission.messageId)).toBe(true)
+    })
+    await expect(ctx.agentTeams.remoteSendMessage(lead, replyRequest, SIGNAL)).resolves.toEqual({
+      ok: true,
+      value: {
+        submission: reply.value.submission,
+        delivery: expect.objectContaining({ stage: 'delivered' }),
+      },
+    })
+    const page = await ctx.agentTeams.listMessages(lead, { limit: 20 })
+    expect(page.items.find(item => item.id === reply.value.submission.messageId))
+      .toMatchObject({ replyTo: original.id, sender: { id: lead.id }, recipient: { id: recipient.id } })
+    expect(recipient.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced'
+      ? event.data.inserted.filter(message => message.source.kind === 'team-message'
+        && message.source.messageId === reply.value.submission.messageId)
+      : [])[0]?.content[0]).toEqual({
+      type: 'text',
+      text: `Team message ${reply.value.submission.messageId} in reply to ${original.id} from lead:`,
+    })
+
+    const otherLead = await ctx.agentLoop.create(SessionId('other-team-lead'), { provider: 'mock', model: 'mock' })
+    const foreignRecipient = SessionId('foreign-recipient')
+    const foreignProvisioning: TeamMemberSnapshot = {
+      id: foreignRecipient,
+      name: 'foreign-worker',
+      description: 'another Team member',
+      provider: 'spawn',
+      context: 'fresh',
+      phase: 'provisioning',
+    }
+    otherLead.session.append('team/member', {
+      version: 2,
+      teamId: TeamId(otherLead.id),
+      member: foreignProvisioning,
+    })
+    otherLead.session.append('team/member', {
+      version: 2,
+      teamId: TeamId(otherLead.id),
+      member: { ...foreignProvisioning, phase: 'active' },
+    })
+    const foreign = {
+      ...original,
+      id: TeamMessageId('foreign-original-message'),
+      senderId: otherLead.id,
+      senderName: 'lead',
+      targetId: foreignRecipient,
+    }
+    otherLead.session.append('team/message/queued', {
+      version: 2,
+      teamId: TeamId(otherLead.id),
+      message: foreign,
+    })
+    await ctx.sessions.flush(otherLead.session)
+    const before = lead.session.snapshotEvents().length
+
+    await expect(ctx.agentTeams.remoteSendMessage(recipient, {
+      requestId: TeamMessageRequestId('teammate-forgery'),
+      recipientId: lead.id,
+      text: 'Pretend this came from the Lead.',
+    }, SIGNAL)).resolves.toMatchObject({ ok: false, error: { code: 'team-rejected' } })
+    await expect(ctx.agentTeams.remoteSendMessage(lead, {
+      requestId: TeamMessageRequestId('cross-team-reply'),
+      recipientId: recipient.id,
+      replyTo: foreign.id,
+      text: 'This reply must be rejected.',
+    }, SIGNAL)).resolves.toMatchObject({ ok: false, error: { code: 'team-rejected' } })
+    expect(lead.session.snapshotEvents()).toHaveLength(before)
+    await expect(ctx.agentTeams.remoteSendMessage(otherLead, {
+      requestId: TeamMessageRequestId('reply-request'),
+      recipientId: foreignRecipient,
+      text: 'The same request token is independent in another Team.',
+    }, SIGNAL)).resolves.toMatchObject({ ok: true })
+    expect(otherLead.session.snapshotEvents().filter(event =>
+      event.type === 'team/message/request-committed')).toHaveLength(1)
+
+    otherLead.cancel({ kind: 'parent' })
+    await otherLead.whenIdle()
+    ctx.agentTeams.interrupt(lead, 'reply-recipient')
+    recipient.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, recipient.id)
+  })
+
+  it('reflushes an accepted human request after a real persistence failure without creating new work', async () => {
+    const { ctx, lead, storageRoot } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'flush-recipient')
+    const recipient = await waitRunning(ctx, started.member.id)
+    await ctx.sessions.flush(lead.session)
+    const relative = readdirSync(storageRoot, { recursive: true }).find(path =>
+      typeof path === 'string' && path.includes(lead.id) && path.endsWith('session.jsonl.zstd'))
+    if (typeof relative !== 'string') throw new Error('Lead has no durable Session log')
+    const path = join(storageRoot, relative)
+    const backup = `${path}.before-message-request-flush-failure`
+    const request = {
+      requestId: TeamMessageRequestId('failed-flush-request'),
+      recipientId: recipient.id,
+      text: 'Persist this exactly once.',
+    }
+
+    renameSync(path, backup)
+    try {
+      mkdirSync(path)
+      await expect(ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)).rejects.toThrow()
+      expect(recipient.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced'
+        ? event.data.inserted.filter(message => message.source.kind === 'team-message')
+        : [])).toHaveLength(0)
+    } finally {
+      rmSync(path, { recursive: true, force: true })
+      renameSync(backup, path)
+    }
+
+    const recovered = await ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)
+    expect(recovered).toMatchObject({ ok: true, value: { submission: { requestId: request.requestId } } })
+    const committed = lead.session.snapshotEvents().filter(event => event.type === 'team/message/request-committed')
+    expect(committed).toHaveLength(1)
+    expect(recipient.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced'
+      ? event.data.inserted.filter(message => message.source.kind === 'team-message'
+        && message.source.messageId === (recovered.ok ? recovered.value.submission.messageId : ''))
+      : [])).toHaveLength(1)
+    const stored = await storedEvents(ctx, lead.id)
+    expect(stored.filter(event => event.type === 'team/message/request-committed')).toHaveLength(1)
+
+    ctx.agentTeams.interrupt(lead, 'flush-recipient')
+    recipient.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, recipient.id)
+  })
+
+  it('rejects cancellation before human message acceptance without durable side effects', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'cancellation-recipient')
+    const recipient = await waitRunning(ctx, started.member.id)
+    const beforeAcceptance = new AbortController()
+    beforeAcceptance.abort(new Error('caller left before acceptance'))
+    await expect(ctx.agentTeams.remoteSendMessage(lead, {
+      requestId: TeamMessageRequestId('cancel-before-acceptance'),
+      recipientId: recipient.id,
+      text: 'This must never be accepted.',
+    }, beforeAcceptance.signal)).rejects.toThrow('caller left before acceptance')
+    expect(lead.session.snapshotEvents().filter(event =>
+      event.type === 'team/message/request-committed')).toHaveLength(0)
+
+    ctx.agentTeams.interrupt(lead, 'cancellation-recipient')
+    recipient.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, recipient.id)
   })
 })
 

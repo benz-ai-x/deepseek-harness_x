@@ -6,6 +6,7 @@ import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 import {
   TeamId,
   TeamMessageId,
+  TeamMessageRequestId,
   TeamNativeOperationId,
   TeamTaskId,
   TeammateLaunchRequestId,
@@ -13,6 +14,7 @@ import {
   TeammateRuntimeTurnId,
   TeammateRuntimeToolCallId,
 } from '../src/brand.ts'
+import { teamMessageRequestFingerprint } from '../src/message-request.ts'
 import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
 
 const ROOT = SessionId('team-root')
@@ -47,6 +49,7 @@ function pending(state: TeamState): TeamMessageSnapshot[] {
 function isEmptyState(state: TeamState): boolean {
   return state.members.length === 0 && state.tasks.length === 0
     && state.messages.length === 0 && state.messageIndex.length === 0 && state.delivered.length === 0
+    && state.messageRequests.length === 0 && state.nativeOperations.length === 0
 }
 
 function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
@@ -502,6 +505,69 @@ describe('Agent Teams projection events', () => {
     expect(() => projectTeam(ROOT, [queued, delivered, { ...delivered, seq: SessionSeq(2) }])).toThrow(/delivered twice/)
   })
 
+  it('projects and validates an atomic human message request with a same-Team reply', () => {
+    const active = member({ phase: 'active' })
+    const original = message({
+      id: TeamMessageId('original-message'),
+      senderId: CHILD,
+      senderName: 'worker-a',
+      targetId: ROOT,
+    })
+    const reply = message({ id: TeamMessageId('reply-message') })
+    const requestId = TeamMessageRequestId('request/请求-1')
+    const receipt = {
+      requestId,
+      senderId: ROOT,
+      inputFingerprint: teamMessageRequestFingerprint({
+        recipientId: CHILD,
+        text: 'hello',
+        replyTo: original.id,
+      }),
+      replyTo: original.id,
+      result: { requestId, messageId: reply.id, status: 'accepted' as const },
+    }
+    const prefix = [
+      event('team/member', { version: 2, teamId: TEAM, member: member() }, SessionSeq(0)),
+      event('team/member', { version: 2, teamId: TEAM, member: active }, SessionSeq(1)),
+      event('team/message/queued', { version: 2, teamId: TEAM, message: original }, SessionSeq(2)),
+    ]
+    const committed = event('team/message/request-committed', {
+      version: 1,
+      teamId: TEAM,
+      receipt,
+      message: reply,
+    }, SessionSeq(3))
+    const state = projectTeam(ROOT, [...prefix, committed])
+
+    expect(state.messages).toEqual([original, reply])
+    expect(state.messageRequests).toEqual([receipt])
+    expect(state.messageIndex[1]).toEqual({
+      messageId: reply.id,
+      queuedSeq: SessionSeq(3),
+      queuedAt: 3,
+    })
+    expect(teamProjectionDefinition.stateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state)
+
+    const corruptions: unknown[] = [
+      { ...committed.data, receipt: { ...receipt, senderId: CHILD } },
+      { ...committed.data, receipt: { ...receipt, inputFingerprint: 'f'.repeat(64) } },
+      { ...committed.data, receipt: { ...receipt,
+        result: { ...receipt.result, requestId: TeamMessageRequestId('other-request') },
+      } },
+      { ...committed.data, receipt: { ...receipt, replyTo: TeamMessageId('unknown-message') } },
+      { ...committed.data, message: { ...reply, senderId: CHILD, senderName: 'worker-a' } },
+      { ...committed.data, message: { ...reply, targetId: SessionId('unknown-recipient') } },
+      { ...committed.data, message: { ...reply, content: [{ type: 'reasoning', text: 'private' }] } },
+    ]
+    for (const data of corruptions) {
+      expect(project(ROOT, [...prefix, { ...committed, data } as SessionEvent]).failure).toBeDefined()
+    }
+    expect(project(ROOT, [...prefix, committed, { ...committed, seq: SessionSeq(4) }]).failure)
+      .toMatch(/committed twice/)
+    expect(project(ROOT, [...prefix, { ...committed, data: { ...committed.data, version: 2 } } as SessionEvent]).failure)
+      .toMatch(/unsupported Agent Teams event version 2/)
+  })
+
   it('validates every current-version persisted payload before projecting it', () => {
     const invalidExternalMembers = [
       member({
@@ -570,6 +636,34 @@ describe('Agent Teams projection events', () => {
           version: 2,
           teamId: TEAM,
           message: { ...message(), content: [{ type: 'text', text: 42 }] },
+        },
+      },
+      {
+        ...event('team/message/request-committed', {
+          version: 1,
+          teamId: TEAM,
+          message: message(),
+          receipt: {
+            requestId: TeamMessageRequestId('malformed-request'),
+            senderId: ROOT,
+            inputFingerprint: 'a'.repeat(64),
+            result: {
+              requestId: TeamMessageRequestId('malformed-request'),
+              messageId: TeamMessageId('message-1'),
+              status: 'accepted',
+            },
+          },
+        }, SessionSeq(0)),
+        data: {
+          version: 1,
+          teamId: TEAM,
+          message: message(),
+          receipt: {
+            requestId: '',
+            senderId: ROOT,
+            inputFingerprint: 'not-a-digest',
+            result: { requestId: '', messageId: TeamMessageId('message-1'), status: 'accepted' },
+          },
         },
       },
       {
@@ -661,7 +755,7 @@ describe('Agent Teams projection events', () => {
       { messageId: TeamMessageId('ordinary-message'), queuedSeq: SessionSeq(0), queuedAt: 0 },
       { messageId: TeamMessageId('native-message'), queuedSeq: SessionSeq(12), queuedAt: 12 },
     ])
-    expect(teamProjectionDefinition.stateVersion).toBe(6)
+    expect(teamProjectionDefinition.stateVersion).toBe(7)
     expect(() => teamProjectionDefinition.stateSchema.parse({
       ...state,
       messageIndex: undefined,

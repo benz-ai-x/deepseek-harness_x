@@ -10,6 +10,7 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import {
   TeamId as toTeamId,
   TeamMessageId as toTeamMessageId,
+  TeamMessageRequestId,
   TeamNativeOperationId,
   TeamTaskId as toTeamTaskId,
   TeammateLaunchRequestId,
@@ -22,6 +23,7 @@ import type {
   TeamMemberSnapshot,
   TeamMemberRouteSnapshot,
   TeamMessageId,
+  TeamMessageRequestReceipt,
   TeamMessageSnapshot,
   TeamNativeOperationReceipt,
   TeamNativeMessageReceipt,
@@ -31,6 +33,7 @@ import type {
 import { assertTaskGraphCandidate } from './task-graph.ts'
 import { prepareTaskUpdate, nativeTaskResult } from './task-state.ts'
 import { nativeTaskRequestSchema, nativeOperationFingerprint, nativeOperationId } from './native-operation.ts'
+import { teamMessageRequestFingerprint } from './message-request.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const positiveSafeInteger = nonNegativeSafeInteger.min(1)
@@ -210,6 +213,25 @@ const teamMessageQueuedEventSchema = z.object({
   message: teamMessageSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/message/queued']>
 
+const teamMessageRequestReceiptSchema = z.object({
+  requestId: durableOpaqueIdSchema.transform(value => TeamMessageRequestId(value)),
+  senderId: sessionIdSchema,
+  inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/u),
+  replyTo: teamMessageIdSchema.optional(),
+  result: z.object({
+    requestId: durableOpaqueIdSchema.transform(value => TeamMessageRequestId(value)),
+    messageId: teamMessageIdSchema,
+    status: z.literal('accepted'),
+  }).strict(),
+}).strict() as z.ZodType<TeamMessageRequestReceipt>
+
+const teamMessageRequestEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  receipt: teamMessageRequestReceiptSchema,
+  message: teamMessageSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['team/message/request-committed']>
+
 const teamMessageDeliveredEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
@@ -282,6 +304,7 @@ export interface TeamState {
   readonly messages: TeamMessageSnapshot[]
   readonly messageIndex: TeamMessageIndexEntry[]
   readonly delivered: TeamMessageId[]
+  readonly messageRequests: TeamMessageRequestReceipt[]
   readonly nativeOperations: TeamNativeOperationReceipt[]
   nextTaskNumber: number
 }
@@ -308,6 +331,7 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     messages: [],
     messageIndex: [],
     delivered: [],
+    messageRequests: [],
     nativeOperations: [],
     nextTaskNumber: 1,
   }
@@ -337,6 +361,7 @@ const teamProjectionEntrySchema = z.object({
     deliveredAt: z.number().optional(),
   }).strict()),
   delivered: z.array(teamMessageIdSchema),
+  messageRequests: z.array(teamMessageRequestReceiptSchema),
   nativeOperations: z.array(nativeOperationReceiptSchema),
   nextTaskNumber: positiveSafeInteger,
   failure: z.string().optional(),
@@ -347,6 +372,7 @@ export type TeamEventType =
   | 'team/member'
   | 'team/task'
   | 'team/message/queued'
+  | 'team/message/request-committed'
   | 'team/message/delivered'
   | 'team/native-operation/committed'
 
@@ -362,6 +388,7 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
   return event.type === 'team/member'
     || event.type === 'team/task'
     || event.type === 'team/message/queued'
+    || event.type === 'team/message/request-committed'
     || event.type === 'team/message/delivered'
     || event.type === 'team/native-operation/committed'
 }
@@ -384,6 +411,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamTaskEventSchema, event.data) }
     case 'team/message/queued':
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
+    case 'team/message/request-committed':
+      return { ...event, data: parsePersisted(event.type, teamMessageRequestEventSchema, event.data) }
     case 'team/message/delivered':
       return { ...event, data: parsePersisted(event.type, teamMessageDeliveredEventSchema, event.data) }
     case 'team/native-operation/committed':
@@ -400,8 +429,12 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return
-    if (!(event.type === 'team/native-operation/committed'
-      ? selector.version === 3 || selector.version === 4 : selector.version === 2)) {
+    const supportedVersion = event.type === 'team/native-operation/committed'
+      ? selector.version === 3 || selector.version === 4
+      : event.type === 'team/message/request-committed'
+        ? selector.version === 1
+        : selector.version === 2
+    if (!supportedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
     }
     applyCurrentTeamEvent(state, parseCurrentTeamEvent(event))
@@ -496,6 +529,41 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       state.messageIndex.push({ messageId: message.id, queuedSeq: event.seq, queuedAt: event.time })
       break
     }
+    case 'team/message/request-committed': {
+      const { message, receipt } = event.data
+      const rootId = brandString<SessionId>(state.id)
+      const target = state.members.find(candidate => candidate.id === message.targetId)
+      const text = message.content[0]
+      const reply = receipt.replyTo === undefined
+        ? undefined
+        : state.messages.find(candidate => candidate.id === receipt.replyTo)
+      if (message.senderId !== rootId || message.senderName !== 'lead'
+        || target?.phase !== 'active' || message.targetId === message.senderId
+        || message.content.length !== 1 || text?.type !== 'text'
+        || receipt.senderId !== message.senderId
+        || receipt.result.requestId !== receipt.requestId
+        || receipt.result.messageId !== message.id
+        || (receipt.replyTo !== undefined && reply === undefined)) {
+        throw new Error('Team message request does not match its accepted sender, target, reply, and message')
+      }
+      const fingerprint = teamMessageRequestFingerprint({
+        recipientId: message.targetId,
+        text: text.text,
+        ...(receipt.replyTo === undefined ? {} : { replyTo: receipt.replyTo }),
+      })
+      if (receipt.inputFingerprint !== fingerprint) {
+        throw new Error('Team message request input fingerprint is not canonical')
+      }
+      if (state.messageRequests.some(candidate => candidate.senderId === receipt.senderId
+        && candidate.requestId === receipt.requestId)
+        || state.messages.some(candidate => candidate.id === message.id)) {
+        throw new Error('Team message request or its message was committed twice')
+      }
+      state.messages.push(message)
+      state.messageIndex.push({ messageId: message.id, queuedSeq: event.seq, queuedAt: event.time })
+      state.messageRequests.push(receipt)
+      break
+    }
     case 'team/native-operation/committed': {
       if ('task' in event.data) {
         const { receipt, task } = event.data
@@ -574,7 +642,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
 /** Host-only Team projection selected by the projected Session identity. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 6,
+  stateVersion: 7,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: (state, event) => {

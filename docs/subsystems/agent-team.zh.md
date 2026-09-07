@@ -2,7 +2,7 @@
 
 [English](agent-team.md) | 中文
 
-实验性隐式 Root Team 领域、模型工具与宿主适配器共享的类型。[Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.zh.md)负责身份、运行时放置、mailbox、task 与共享 checkout 决策；[Team Steer 消息 Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.zh.md)负责消息调度；本页记录 [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts) 中的字面持久形式。
+实验性隐式 Root Team 领域、模型工具与宿主适配器共享的类型。[Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.zh.md)负责身份、运行时放置、mailbox、task 与共享 checkout 决策；[Team Steer 消息 Agent Note](../../.agents/notes/implemented/simplification/2026-08-30-team-send-message-steer.zh.md)负责消息调度；[持久人类消息请求 Agent Note](../../.agents/notes/implemented/architecture/2026-09-07-durable-human-team-message-requests.zh.md)负责人类 Lead 发送的幂等性与回复关联。本页记录 [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts) 中的字面持久形式。
 
 ## 身份与 roster
 
@@ -231,6 +231,8 @@ interface TeammateRuntimeMemberOperationsRequest {
 
 Lead Session 首先存储完整 queued message。DSH target 只有在 pending inbox 条目或已记录用户消息完成持久化后才写入 acknowledgement；external target 则在 provider 返回稳定 native turn identity 后确认。两种情况下，queued-minus-delivered 都构成恢复 mailbox。
 
+精确的存活 Lead 还可以用调用方拥有的 request id、明确的 active 接收者、字面正文和可选的同 Team 既有消息，提交一条人类编写的消息。发送者与 Team 永远不来自请求数据。`(Team, sender Session, request id)` 标识一份不可变输入：输入相同的重试重放原 submission，接收者、正文或回复关联变化则冲突且不追加事实。新请求在 Team 所有的投递开始前，以必需的 `team/message/request-committed@1` 原子保存消息与回执。调用方取消只拥有接受前工作；返回的 submission 与当前 `pending`／`delivered` 阶段相互分离。
+
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
 interface TeamMessageSnapshot {
@@ -242,7 +244,58 @@ interface TeamMessageSnapshot {
 }
 ```
 
-原始 mailbox snapshot 仅留在 Host 内部。Projection version 6 还保留每条消息的身份、入队序号与时间，以及可选的投递序号与时间。精确的存活 Lead 可以在 Session flush 后，以有界、从新到旧的方式读取该索引的元数据。请求允许 1 到 100 行，默认为 20。可选的成员、方向与投递过滤条件会被规范化并写入不透明 committed cursor。该 cursor 固定 Team、过滤条件与序号上界；即使有新消息到达，continuation 仍停留在同一个已提交窗口内。格式错误、未来、跨 Team、查询不匹配、陈旧调用方、伪造调用方与伪造参与者输入都会被拒绝。
+```ts type-equiv
+/** Browser-authored Team message input; Host authority supplies the sender. */
+interface SubmitTeamMessageRequest {
+  readonly requestId: TeamMessageRequestId
+  readonly recipientId: SessionId
+  readonly text: string
+  readonly replyTo?: TeamMessageId
+}
+```
+
+```ts type-equiv
+/** Durable acceptance returned for every replay of one matching request. */
+interface TeamMessageSubmission {
+  readonly requestId: TeamMessageRequestId
+  readonly messageId: TeamMessageId
+  readonly status: 'accepted'
+}
+```
+
+```ts type-equiv
+/** Request correlation retained atomically with one human-authored message. */
+interface TeamMessageRequestReceipt {
+  readonly requestId: TeamMessageRequestId
+  readonly senderId: SessionId
+  readonly inputFingerprint: string
+  readonly replyTo?: TeamMessageId
+  readonly result: TeamMessageSubmission
+}
+```
+
+```ts type-equiv
+/** Accepted submission and current Host-proven delivery stage. */
+interface SubmitTeamMessageValue {
+  readonly submission: TeamMessageSubmission
+  readonly delivery: TeamMessageDelivery
+}
+```
+
+```ts type-equiv
+/** Browser message mutation result with request conflicts kept distinct from other Team rejections. */
+type SubmitTeamMessageResult =
+  | { readonly ok: true; readonly value: SubmitTeamMessageValue }
+  | {
+    readonly ok: false
+    readonly error: {
+      readonly code: 'team-message-request-conflict' | 'team-rejected'
+      readonly message: string
+    }
+  }
+```
+
+原始 mailbox snapshot 仅留在 Host 内部。Projection version 7 还保留请求回执、每条消息的身份、入队序号与时间，以及可选的投递序号与时间。旧 version-6 checkpoint 会从原日志重建；旧 queued 消息仍可在没有 request／reply 元数据时读取，不支持的未来事件版本则安全失败。精确的存活 Lead 可以在 Session flush 后，以有界、从新到旧的方式读取该索引的元数据。请求允许 1 到 100 行，默认为 20。可选的成员、方向与投递过滤条件会被规范化并写入不透明 committed cursor。该 cursor 固定 Team、过滤条件与序号上界；即使有新消息到达，continuation 仍停留在同一个已提交窗口内。格式错误、未来、跨 Team、查询不匹配、陈旧调用方、伪造调用方与伪造参与者输入都会被拒绝。
 
 ```ts type-equiv
 /** Direction of a persisted message relative to the selected Team member. */
@@ -269,6 +322,10 @@ interface TeamMessageParticipant {
 /** Metadata-only row for one persisted Team message. */
 interface TeamMessageSummary {
   readonly id: TeamMessageId
+  /** Human submission identity when this message originated in the Team message center. */
+  readonly requestId?: TeamMessageRequestId
+  /** Earlier message explicitly associated with this reply. */
+  readonly replyTo?: TeamMessageId
   readonly sender: TeamMessageParticipant
   readonly recipient: TeamMessageParticipant
   /** Unix epoch milliseconds from the durable queue event. */
@@ -348,7 +405,7 @@ interface TeamMessageDetail extends TeamMessageSummary {
 }
 ```
 
-每条消息都会尝试 Steer 投递。running DSH target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。其 Session 会在 pending inbox 条目和最终用户消息上保留消息身份与发送者归因。external target 通过 provider-native handle 接收同一持久 mailbox item，并在 Agent Teams 记录 delivery 前返回幂等 native turn correlation。调用方不能选择其他模式，因此持久记录不存储调度方式。
+每条消息都会尝试 Steer 投递。人类编写的回复只会把原消息的持久 id 加入投递前缀，不复制原消息正文。running DSH target 在最近的步骤边界收到消息，idle target 启动一个轮次，inactive teammate 则冷恢复。其 Session 会在 pending inbox 条目和最终用户消息上保留消息身份与发送者归因。external target 通过 provider-native handle 接收同一持久 mailbox item，并在 Agent Teams 记录 delivery 前返回幂等 native turn correlation。调用方不能选择其他模式，因此持久记录不存储调度方式。
 
 ```ts type-equiv
 /** Source retained by the target Session for durable mailbox de-duplication. */
@@ -383,7 +440,7 @@ interface TeamTaskSnapshot {
 
 ## 回放
 
-`foldTeam()` 把一个 Root Session 回放成 Team 操作所读取的 roster、任务板、queued-minus-delivered mailbox 与精简消息索引。它按 `TeamId` 选取记录，因此普通 fork 继承的 event 保留 ancestor id，绝不会进入新 Root 的状态。Session event 的 `seq` 与 `time` 继续负责顺序和时间记录，Team snapshot 不再重复保存它们。roster 与 task 读取以 view 形式到达调用方。原始 mailbox snapshot 仍只供投递与恢复内部使用，而 Lead reader 返回脱离原对象的元数据及经过明确净化的按需详情。包 [README](../../packages/experimental/agent-team/README.zh.md)负责 operation、authorization、recovery 和限制行为。
+`foldTeam()` 把一个 Root Session 回放成 Team 操作所读取的 roster、任务板、queued-minus-delivered mailbox、不可变人类请求回执与精简消息索引。它按 `TeamId` 选取记录，因此普通 fork 继承的 event 保留 ancestor id，绝不会进入新 Root 的状态。Session event 的 `seq` 与 `time` 继续负责顺序和时间记录，Team snapshot 不再重复保存它们。roster 与 task 读取以 view 形式到达调用方。原始 mailbox snapshot 仍只供投递与恢复内部使用，而 Lead reader 返回脱离原对象的元数据及经过明确净化的按需详情。包 [README](../../packages/experimental/agent-team/README.zh.md)负责 operation、authorization、recovery 和限制行为。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -436,6 +493,15 @@ registerTeammateRuntimeProvider(provider: TeammateRuntimeProvider): TeammateRunt
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Submit one idempotent human-authored message as the exact live Team Lead.
+ * @param caller - exact live Team Lead that Host resolved from the request session.
+ * @param request - caller-owned request identity, explicit recipient, text, and optional reply.
+ * @param signal - cancellation owned by the caller until a new request is durably accepted.
+ * @returns original acceptance and current delivery stage.
+ */
+async submitMessage( caller: Agent, request: SubmitTeamMessageRequest, signal: AbortSignal, ): Promise<SubmitTeamMessageValue>
 
 /**
  * Read one bounded metadata page from a fixed committed Team-message window.
@@ -549,6 +615,15 @@ tryMembership(agent: Agent): TeamMembership | undefined
  * @returns safe intentional content with explicit completeness.
  */
 @Remote('getMessage') remoteGetMessage(agent: Agent, request: GetTeamMessageRequest): Promise<TeamMessageDetail>
+
+/**
+ * Submit or replay one Lead-authored message through the generated Remote API.
+ * @param agent - exact live Team Lead resolved by Host rather than supplied as message data.
+ * @param request - stable human request and explicit Team recipient.
+ * @param signal - transport cancellation before durable acceptance.
+ * @returns accepted submission with current delivery, or a stable Team rejection.
+ */
+@Remote('sendMessage') remoteSendMessage( agent: Agent, request: SubmitTeamMessageRequest, signal: AbortSignal, ): Promise<SubmitTeamMessageResult>
 
 /**
  * Create one shared task through the generated Remote API.

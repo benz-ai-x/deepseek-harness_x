@@ -97,6 +97,8 @@ Every message uses Steer: a running target receives it at the nearest step bound
 
 Native message calls carry a trusted work-turn and tool-call identity outside model arguments. The Team stores one message and its replayable acceptance receipt in a single required event before acknowledging or delivering it. Retrying the same call with normalized identical input returns the original queued receipt; changing input conflicts. Queued records express durable acceptance, not delivery or completed work. Provider terminal settlement uses one separate identity per work turn and publishes intentional final text or a failure/interruption notification to the Lead through the same mailbox. Recovery replays the receipt after verifying the current grant.
 
+Human operators use the separate generated `agentTeams/sendMessage` Remote. Host resolution supplies the exact current Lead as sender; the request contains only a bounded caller-owned request id, an explicit active recipient id, literal text, and an optional real message id from the same Team. The durable key is scoped by Team and sender. Matching retries return the original message, changed input returns `team-message-request-conflict`, and invalid or cross-Team replies append nothing. Acceptance commits before delivery and returns independently as `accepted` plus the current `pending` or `delivered` stage. Once accepted, Team lifecycle owns the original dispatch even if the browser disconnects; provider absence leaves it pending for exact-handle recovery.
+
 ### Browse persisted messages
 
 The exact live Lead can read persisted Team messages through `listMessages()` and `getMessage()`. Metadata pages are newest-first, default to 20 rows, accept limits from 1 through 100, and filter by retained member, direction relative to that member, and delivery stage. The first page fixes a committed event cutoff; every continuation retains that cutoff, Team identity, and normalized filters. Malformed, future, cross-Team, or changed-query cursors are rejected. A detail request must use the stable message id and the committed cursor from the list window that exposed it.
@@ -149,6 +151,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, service registration, recovery scheduling |
 | [`src/roster.ts`](src/roster.ts) | Team identity, route correlation, provisioning, recovery, and roster teardown |
 | [`src/mailbox.ts`](src/mailbox.ts) | Durable queue, target-local dispatch, acknowledgement, and recovery |
+| [`src/message-request.ts`](src/message-request.ts) | Canonical human-request input fingerprint |
 | [`src/message-reader.ts`](src/message-reader.ts) | Lead-authorized committed pagination and sanitized on-demand content |
 | [`src/task-board.ts`](src/task-board.ts) | Task commands and atomic native receipts; shared transitions and views live in [`task-state.ts`](src/task-state.ts) |
 | [`src/journal.ts`](src/journal.ts) | Serialized Lead-log transactions and commit notification |
@@ -171,7 +174,7 @@ The external branch validates the requested context, Profile-policy, approval, s
 
 Lead delivery calls `Agent.steer()` directly. DSH teammate delivery uses the continuation owner's host-only Steer path, which preserves the Team sender source while authorizing the Lead-to-child edge and cold-resuming inactive targets. Sibling messages never impersonate the Lead through the public adjacent-Agent messaging operation. For an external teammate, the same durable queue routes through `deliver()` with its exact provider/native handle and stable Team message id. The provider returns a stable native turn id before Agent Teams records delivery. Provider absence keeps the item queued; re-registration and exact-handle resume retry it without a one-shot fallback.
 
-The projection retains a position-aligned message index containing the queue event's sequence and time plus an optional delivery event sequence and time. The committed reader uses those event-owned facts rather than copying body content or mutable runtime status into a second store. Projection state version 6 rebuilds the index from the Lead log after a cold restart.
+Human submissions use required `team/message/request-committed@1` to atomically retain their request receipt, optional reply id, original accepted result, and queued message. Reply delivery adds the original id to the stable sender prefix without copying the original body. The projection retains immutable request receipts and a position-aligned message index containing the queue event's sequence and time plus an optional delivery event sequence and time. The committed reader uses those event-owned facts rather than copying body content or mutable runtime status into a second store. Projection state version 7 rebuilds both from the Lead log after a cold restart; older queue events remain readable without request metadata and unsupported future payload versions fail closed.
 
 ### Shared task board
 
@@ -183,7 +186,7 @@ Tasks are complete versioned snapshots; every mutation carries `expectedRevision
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/task`, `team/message/queued`, `team/message/delivered`, and `team/native-operation/committed` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/task`, `team/message/queued`, `team/message/request-committed`, `team/message/delivered`, and `team/native-operation/committed` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 ### Disposal
 
@@ -201,6 +204,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [Agent Teams subsystem](../../../docs/subsystems/agent-team.md) — durable Team types and the `ctx.agentTeams` service API.
 - [tool-agent-team package](../tool-agent-team/README.md) — the tools that let the model create, message, and coordinate teammates.
 - [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) — identity, mailbox, task, and shared-checkout decisions.
+- [Durable human Team message requests](../../../.agents/notes/implemented/architecture/2026-09-07-durable-human-team-message-requests.md) — exact-Lead authority, idempotent acceptance, reply correlation, and delivery ownership.
 - [Experimental package decision](../../../.agents/notes/implemented/architecture/2026-08-18-experimental-agent-teams-packages.md) — placement, release exclusion, and dependency isolation.
 
 -----
@@ -209,7 +213,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 ### Browser Remote
 
-`TeamService` owns the generated `agentTeams/view`, `agentTeams/listMessages`, `agentTeams/getMessage`, `agentTeams/createTask`, and `agentTeams/updateTask` Remote methods beside the roster, mailbox, task, and lifecycle operations. The `./remote` export supplies the Client contribution mounted by the Web UI, while `./client` re-exports browser-safe view, message-query, sanitized-content, and task-mutation types. Message list and detail failures remain ordinary outer `RemoteResult` failures. Create and update rejections remain explicit domain results inside a successful transport response, with stale update revisions distinguished as task conflicts.
+`TeamService` owns the generated `agentTeams/view`, `agentTeams/listMessages`, `agentTeams/getMessage`, `agentTeams/sendMessage`, `agentTeams/createTask`, and `agentTeams/updateTask` Remote methods beside the roster, mailbox, task, and lifecycle operations. The `./remote` export supplies the Client contribution mounted by the Web UI, while `./client` re-exports browser-safe view, message-query/submission, sanitized-content, and task-mutation types. Message list and detail failures remain ordinary outer `RemoteResult` failures. Human send, task create, and task update rejections are explicit domain results inside a successful transport response; message request conflicts and stale task revisions remain distinguishable from other Team rejections.
 
 ## Model Experience
 
