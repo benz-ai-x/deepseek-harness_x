@@ -85,6 +85,7 @@ async function bench(options: {
       calls.push({ method: 'agentTeams/watch', args })
       return { [Symbol.asyncIterator]: async function * () {} }
     },
+    getTask: answer('agentTeams/getTask', task),
     createTask: answer('agentTeams/createTask', task),
     updateTask: (...args: unknown[]) => {
       calls.push({ method: 'agentTeams/updateTask', args })
@@ -182,6 +183,7 @@ describe('ui-team browser plugin', () => {
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
     const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
     expect((await actions.load(SESSION)).ok).toBe(true)
+    expect((await actions.getTask(SESSION, TASK_ID)).ok).toBe(true)
     const sink = { replace: vi.fn(), invalidated: vi.fn(), stale: vi.fn(), failed: vi.fn() }
     const watch = actions.watch(SESSION, sink)
     expect(b.remote.createStream).toHaveBeenCalledOnce()
@@ -206,7 +208,8 @@ describe('ui-team browser plugin', () => {
       taskId: TASK_ID, expectedRevision: 2, action: 'reassign', owner: 'worker',
     })).ok).toBe(true)
     expect(b.calls.map(call => call.method)).toEqual([
-      'agentTeams/view', 'agentTeams/watch', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
+      'agentTeams/view', 'agentTeams/getTask', 'agentTeams/watch', 'agentTeams/createTask',
+      'agentTeams/updateTask', 'agentTeams/updateTask',
     ])
     expect(b.calls.at(-1)?.args[1]).toMatchObject({ owner: 'worker' })
 

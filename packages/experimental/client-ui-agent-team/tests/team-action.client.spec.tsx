@@ -102,6 +102,7 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
     },
     resolveTeamSessionId: sessionId => sessionId,
     load: () => Promise.resolve({ ok: true, value: view }),
+    getTask: () => Promise.resolve({ ok: true, value: task }),
     watch: () => ({ start() {}, dispose: () => Promise.resolve() }),
     createTask: () => Promise.resolve(taskSuccess({ ...task, id: TASK_2, subject: 'New task' })),
     updateTask: () => Promise.resolve({
@@ -957,6 +958,68 @@ describe('TeamAction', () => {
         ['reopen', 4],
         ['delete', 5],
       ])
+  })
+
+  it('retains a deleted selection and reads its authoritative tombstone through getTask', async () => {
+    const remaining = {
+      ...dependencyOption,
+      id: 'task-0' as TeamTaskId,
+      subject: 'Remaining task',
+    }
+    const tombstone = { ...task, revision: 2, status: 'deleted' as const }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [task, remaining] } })
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [remaining] } })
+    const updateTask = vi.fn<TeamActionInjected['updateTask']>(() => Promise.resolve(taskSuccess(tombstone)))
+    const getTask = vi.fn(() => Promise.resolve({ ok: true as const, value: tombstone }))
+    const injected = { ...actions({ load, updateTask }), getTask } as TeamActionInjected
+
+    render(<TeamAction {...props(injected)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: /删除/u }))
+
+    await waitFor(() => {
+      expect(getTask).toHaveBeenCalledWith(SESSION, TASK_1)
+      expect(screen.getByRole('region', { name: zh.taskDetails }).textContent)
+        .toContain('task-1 · Implement runtime')
+    })
+    expect(screen.getByRole('region', { name: zh.taskDetails }).textContent).toContain('已删除')
+    expect(screen.queryByRole('button', { name: /编辑/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /删除/u })).toBeNull()
+    expect(updateTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('fences a late tombstone read after switching Team sessions', async () => {
+    const oldTombstone = Promise.withResolvers<TeamActionResult<TeamTask>>()
+    const oldView = { ...view, tasks: [] }
+    const newSession = 'new-lead' as SessionId
+    const newTask = { ...task, id: TASK_2, subject: 'New Team task' }
+    const getTask = vi.fn(() => oldTombstone.promise)
+    const firstLoad = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: view })
+      .mockResolvedValueOnce({ ok: true, value: oldView })
+    const firstActions = actions({
+      load: firstLoad,
+      getTask,
+    })
+    const rendered = render(<TeamAction {...props(firstActions)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: zh.refresh }))
+    await waitFor(() => { expect(getTask).toHaveBeenCalledWith(SESSION, TASK_1) })
+
+    rendered.rerender(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [newTask] } }),
+      getTask,
+    }), newSession)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('New Team task')
+    oldTombstone.resolve({ ok: true, value: { ...task, status: 'deleted' } })
+    await Promise.resolve()
+
+    expect(screen.queryByText('task-1 · Implement runtime')).toBeNull()
+    expect(screen.queryByText(zh['status.deleted'])).toBeNull()
   })
 
   it('reloads and warns instead of retrying a stale task mutation', async () => {

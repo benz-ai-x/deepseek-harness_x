@@ -80,6 +80,9 @@ function registerUi(ctx: ClientContext): void {
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
     },
+    async getTask(sessionId, taskId) {
+      return await ctx.remote.agentTeams.getTask(leadSessionId(sessionId), taskId)
+    },
     watch(sessionId, sink) {
       return createTeamActionWatch(ctx, leadSessionId(sessionId), sink)
     },

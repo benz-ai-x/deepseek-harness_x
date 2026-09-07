@@ -51,6 +51,7 @@ export interface TeamActionInjected {
   }
   resolveTeamSessionId: (sessionId: SessionId) => SessionId
   load: (sessionId: SessionId) => Promise<TeamActionResult<TeamView>>
+  getTask: (sessionId: SessionId, taskId: TeamTaskId) => Promise<TeamActionResult<TeamTask>>
   watch: (sessionId: SessionId, sink: TeamActionWatchSink) => TeamActionWatchControl
   createTask: (sessionId: SessionId, input: {
     subject: string
@@ -185,8 +186,7 @@ function statusKey(status: TeamTask['status']): TeamKey {
     case 'pending': return 'status.pending'
     case 'in_progress': return 'status.in_progress'
     case 'completed': return 'status.completed'
-    /* v8 ignore next -- Team views omit deleted task tombstones. */
-    case 'deleted': return 'status.completed'
+    case 'deleted': return 'status.deleted'
   }
 }
 
@@ -202,7 +202,8 @@ function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
 
 /** Render the live Team roster and compare-and-set task board. */
 export function TeamAction({
-  sessionId, load, watch, createTask, updateTask, openTeammate, usePanelViews, resolveTeamSessionId, renderSlot, t,
+  sessionId, load, getTask, watch, createTask, updateTask, openTeammate, usePanelViews,
+  resolveTeamSessionId, renderSlot, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -217,6 +218,7 @@ export function TeamAction({
   const [activeView, setActiveView] = useState('overview')
   const [taskViewMode, setTaskViewMode] = useState<'list' | 'graph'>('list')
   const [selectedTaskId, setSelectedTaskId] = useState<TeamTaskId | null>(null)
+  const [selectedTaskDetail, setSelectedTaskDetail] = useState<TeamTask | null>(null)
   const [taskFilter, setTaskFilter] = useState('')
   const [graphTransform, setGraphTransform] = useState<GraphTransform>(DEFAULT_GRAPH_TRANSFORM)
   const [watchPhase, setWatchPhase] = useState<TeamWatchPhase>('connecting')
@@ -231,6 +233,7 @@ export function TeamAction({
     reject(error: unknown): void
   }>>([])
   const watchGeneration = useRef(0)
+  const detailGeneration = useRef(0)
   const graphViewportRef = useRef<HTMLDivElement>(null)
   const graphNodeRefs = useRef(new Map<TeamTaskId, HTMLButtonElement>())
   const graphDragRef = useRef<{
@@ -247,6 +250,7 @@ export function TeamAction({
     refreshInFlightRef.current = null
     refreshQueueRef.current.splice(0).forEach((waiter) => { waiter.resolve(false) })
     watchGeneration.current += 1
+    detailGeneration.current += 1
     viewRef.current = null
     conflictDraftRef.current = null
     setOpen(false)
@@ -262,6 +266,7 @@ export function TeamAction({
     setActiveView('overview')
     setTaskViewMode('list')
     setSelectedTaskId(null)
+    setSelectedTaskDetail(null)
     setTaskFilter('')
     setGraphTransform(DEFAULT_GRAPH_TRANSFORM)
     setWatchPhase('connecting')
@@ -277,10 +282,28 @@ export function TeamAction({
   const replaceView = useCallback((next: TeamView): void => {
     viewRef.current = next
     setView(next)
-    setSelectedTaskId(current => next.tasks.some(task => task.id === current)
-      ? current
-      : next.tasks[0]?.id ?? null)
+    setSelectedTaskId(current => current ?? next.tasks[0]?.id ?? null)
   }, [])
+
+  useEffect(() => {
+    const selected = view?.tasks.find(task => task.id === selectedTaskId)
+    const generation = ++detailGeneration.current
+    if (selectedTaskId === null || view === null || selected !== undefined) {
+      setSelectedTaskDetail(null)
+      return
+    }
+    const requestedSession = sessionId
+    const requestedTaskId = selectedTaskId
+    void getTask(requestedSession, requestedTaskId).then((result) => {
+      if (sessionRef.current !== requestedSession || detailGeneration.current !== generation) return
+      if (result.ok) {
+        setSelectedTaskDetail(result.value.id === requestedTaskId ? result.value : null)
+      } else {
+        setSelectedTaskDetail(null)
+        setError(failureText(result.error))
+      }
+    })
+  }, [getTask, selectedTaskId, sessionId, view])
 
   const refreshOnce = useCallback(async (): Promise<boolean> => {
     const requestedSession = sessionId
@@ -464,6 +487,7 @@ export function TeamAction({
   const teammates = view?.members.filter(member => member.role === 'teammate') ?? []
   const assignable = view?.members.filter(member => member.status !== 'failed' && member.status !== 'provisioning') ?? []
   const selectedTask = view?.tasks.find(task => task.id === selectedTaskId)
+    ?? (selectedTaskDetail?.id === selectedTaskId ? selectedTaskDetail : undefined)
   const visibleTasks = useMemo(() => {
     const tasks = view?.tasks ?? []
     const query = taskFilter.trim().toLocaleLowerCase()
@@ -830,7 +854,7 @@ export function TeamAction({
                       )}
                     {selectedTask !== undefined && (
                       <section className={css.taskDetail} role="region" aria-label={t('taskDetails')}>
-                        {editing === selectedTask.id
+                        {editing === selectedTask.id && selectedTask.status !== 'deleted'
                           ? (
                             <TaskForm
                               draft={editDraft}
@@ -869,7 +893,7 @@ export function TeamAction({
                                   <span key={warning} className={css.warning}>{warning}</span>
                                 ))}
                               </div>
-                              <div className={css.taskActions}>
+                              {selectedTask.status !== 'deleted' && <div className={css.taskActions}>
                                 <label>
                                   {t('owner')}
                                   <select
@@ -923,7 +947,7 @@ export function TeamAction({
                                     action: 'delete',
                                   }))
                                 }}><IconTrashOutline16 size={13} /> {t('delete')}</button>
-                              </div>
+                              </div>}
                             </article>
                           )}
                       </section>
