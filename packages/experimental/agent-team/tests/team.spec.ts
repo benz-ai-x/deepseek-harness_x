@@ -1223,6 +1223,101 @@ describe('Team Remote API', () => {
     expect(ctx.agentTeams.remoteView(lead).tasks).toHaveLength(1)
   })
 
+  it('streams a complete Team baseline before coalesced committed invalidations', async () => {
+    const { ctx, lead, teamFiber } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'watch-recipient')
+    const recipient = await waitRunning(ctx, started.member.id)
+    const controller = new AbortController()
+    const iterator = ctx.agentTeams.watch(lead, controller.signal)[Symbol.asyncIterator]()
+
+    const opening = iterator.next()
+    const firstCommit = ctx.agentTeams.createTask(lead, {
+      subject: 'Concurrent baseline task',
+      description: 'Must be visible through either the baseline or its queued invalidation.',
+    })
+    const baseline = await opening
+    expect(baseline).toMatchObject({ done: false, value: { type: 'baseline' } })
+    if (baseline.done || baseline.value.type !== 'baseline') throw new Error('Team watch did not open')
+    expect(baseline.value.value.members).toContainEqual(expect.objectContaining({ name: 'lead', role: 'lead' }))
+    await firstCommit
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    expect(ctx.agentTeams.remoteView(lead).tasks).toHaveLength(1)
+
+    const message = await ctx.agentTeams.remoteSendMessage(lead, {
+      requestId: TeamMessageRequestId('watch-message-commit'),
+      recipientId: recipient.id,
+      text: 'Refresh the same committed message window used by the public panel.',
+    }, SIGNAL)
+    expect(message).toMatchObject({ ok: true, value: { submission: { status: 'accepted' } } })
+    if (!message.ok) throw new Error('watch message was not accepted')
+    await vi.waitFor(() => {
+      expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
+        && event.data.messageId === message.value.submission.messageId)).toBe(true)
+    })
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    await expect(ctx.agentTeams.listMessages(lead, { limit: 20 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        id: message.value.submission.messageId,
+        delivery: expect.objectContaining({ stage: 'delivered' }),
+      })],
+    })
+
+    await ctx.agentTeams.createTask(lead, { subject: 'Burst task one', description: 'First burst commit.' })
+    await ctx.agentTeams.createTask(lead, { subject: 'Burst task two', description: 'Second burst commit.' })
+    await ctx.agentTeams.createTask(lead, { subject: 'Burst task three', description: 'Third burst commit.' })
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    const noUnboundedQueue = iterator.next()
+    controller.abort(new Error('watch caller closed'))
+    await expect(noUnboundedQueue).resolves.toEqual({ done: true, value: undefined })
+    ctx.agentTeams.interrupt(lead, 'watch-recipient')
+    recipient.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, recipient.id)
+
+    const disposalIterator = ctx.agentTeams.watch(lead, SIGNAL)[Symbol.asyncIterator]()
+    await expect(disposalIterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: 'baseline' },
+    })
+    const disposed = disposalIterator.next()
+    await teamFiber.dispose()
+    await expect(disposed).resolves.toEqual({ done: true, value: undefined })
+  })
+
+  it('authorizes Team watch generations to the exact live Lead and Team', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'watch-worker')
+    const worker = await waitRunning(ctx, started.member.id)
+    expect(() => ctx.agentTeams.watch({ ...lead } as Agent, SIGNAL))
+      .toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    expect(() => ctx.agentTeams.watch(worker, SIGNAL))
+      .toThrow(expect.objectContaining({ code: 'TEAM_LEAD_REQUIRED' }))
+
+    const otherLead = await ctx.agentLoop.create(SessionId('watch-other-lead'), {
+      provider: 'mock', model: 'mock',
+    })
+    const leadController = new AbortController()
+    const otherController = new AbortController()
+    const leadWatch = ctx.agentTeams.watch(lead, leadController.signal)[Symbol.asyncIterator]()
+    const otherWatch = ctx.agentTeams.watch(otherLead, otherController.signal)[Symbol.asyncIterator]()
+    const leadBaseline = await leadWatch.next()
+    expect(leadBaseline).toMatchObject({ done: false, value: { type: 'baseline' } })
+    if (leadBaseline.done || leadBaseline.value.type !== 'baseline') throw new Error('Lead watch did not open')
+    expect(leadBaseline.value.value.members).toContainEqual(expect.objectContaining({ id: lead.id }))
+    const otherBaseline = await otherWatch.next()
+    expect(otherBaseline).toMatchObject({ done: false, value: { type: 'baseline' } })
+    if (otherBaseline.done || otherBaseline.value.type !== 'baseline') throw new Error('other Team watch did not open')
+    expect(otherBaseline.value.value.members).toContainEqual(expect.objectContaining({ id: otherLead.id }))
+
+    const otherPending = otherWatch.next()
+    await ctx.agentTeams.createTask(lead, { subject: 'Lead-only change', description: 'Do not wake another Team.' })
+    await expect(leadWatch.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    otherController.abort(new Error('other Team watch complete'))
+    await expect(otherPending).resolves.toEqual({ done: true, value: undefined })
+    leadController.abort(new Error('Lead watch complete'))
+    ctx.agentTeams.interrupt(lead, 'watch-worker')
+    await waitNoAgent(ctx, worker.id)
+  })
+
   it('preserves Team task rejections and propagates unexpected failures', async () => {
     const { ctx, lead } = await setup([])
     const createRequest = {

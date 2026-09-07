@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 检查并导航 roster
 
-打开 panel 会调用 `agentTeams/view`。Roster row 展示持久 name、运行时 status、model 与 diagnostics。选择健康 teammate 时，系统刷新既有直接 child catalog，并打开普通的 `{ parentSessionId, childSessionId, mode: 'continuable' }` address。History 与后续人类 prompt 继续使用稳定 addressed-subagent 会话路径；本包不会添加 Team 专用 address 字段。
+打开 panel 会启动 `agentTeams/watch` 并读取 `agentTeams/view`。Roster row 展示持久 name、运行时 status、model 与 diagnostics。选择健康 teammate 时，系统刷新既有直接 child catalog，并打开普通的 `{ parentSessionId, childSessionId, mode: 'continuable' }` address。History 与后续人类 prompt 继续使用稳定 addressed-subagent 会话路径；本包不会添加 Team 专用 address 字段。
 
 ### 管理任务板
 
@@ -50,6 +50,8 @@ kind: "package-reference"
 <summary>实现细节——点击展开</summary>
 
 Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.zh.md) 的生成式 `ctx.remote.agentTeams` contribution，然后通过 Cordis effect 注册 locale dictionary 与一个 conversation-header entry。该 entry 声明 `agent-team.panel.view`，观察其公开 contribution 与本地化标签，并在既有 dialog 内渲染所选 contribution。释放 plugin Fiber 会移除 Remote、locale、entry、子 Slot、subscription 与 contribution navigation。
+
+打开的面板把每个重连 watch generation 作为一份完整 baseline 加后续有界 invalidation 消费。Baseline 会原子替换更早的 unary read；invalidation 只调用既有权威 view reader，不携带 task state。Carrier 丢失会保留最后已发布 view，并显示明确的 disconnected 或 stale 状态；重连只读取新 baseline。Session 变化与 service replacement 会隔离迟到 generation，而关闭面板或释放 Client Fiber 会释放 stream control。
 
 开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。任务文本、scope 与完整 dependency 草稿使用同一个 `edit` compare-and-set mutation。如果发生冲突，UI 会重新读取当前权威任务，保留明确标记为未保存的旧 form 与 dependency 草稿，并且绝不自动重试；如果重新读取失败，则保留该错误。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
 
@@ -87,7 +89,7 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh**——“概览”会在打开、显式 refresh 与 mutation 后刷新；它没有实时 event subscription。
+- **失效粒度**——实时变更会刷新完整权威 Team view；stream 有意不携带 task delta 或 Client-owned projection。
 - **仅提供概览**——本基础包提供 roster 与 task control；消息或其他 Team 视图需要单独的 `agent-team.panel.view` contribution。
 - **普通 child continuation**——导航后发送的人类消息使用稳定 addressed-subagent prompt 路径，而不是 Team peer mailbox。
 - **没有 lifecycle 或 workspace control**——panel 不能 spawn、rename、delete 或 interrupt teammate，write scope 仍只是提示性 metadata。
@@ -102,4 +104,4 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 </details>
 
-**运行时不变式：** 不发布伴生入口。RPC 是权威来源，本包持有一个可释放的 header entry，由它声明并渲染公开 Team 子 Slot。
+**运行时不变式：** 不发布伴生入口。RPC 是权威来源，本包持有一个可释放的 header entry、子 Slot 与可重连 Team stream control。

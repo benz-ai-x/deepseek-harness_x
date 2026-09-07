@@ -1,6 +1,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { TeamMemberView as TeamRosterMember, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team/client'
@@ -40,6 +41,10 @@ async function bench(options: {
   class RemoteService extends Service {
     readonly disposeMount = vi.fn(() => Promise.resolve())
     readonly mount = vi.fn((_contribution: unknown) => Promise.resolve(this.disposeMount))
+    readonly createStream = vi.fn()
+    readonly restartStream = vi.fn()
+    readonly disposeStream = vi.fn(() => Promise.resolve())
+    streamOptions: RemoteStreamOptions<unknown> | undefined
 
     constructor(serviceCtx: Context) {
       super(serviceCtx, 'remote')
@@ -47,6 +52,16 @@ async function bench(options: {
 
     $mount(contribution: unknown): Promise<() => Promise<void>> {
       return this.mount(contribution)
+    }
+
+    $stream<Item>(options: RemoteStreamOptions<Item>): never {
+      this.streamOptions = options as RemoteStreamOptions<unknown>
+      this.createStream(options)
+      return {
+        restart: this.restartStream,
+        dispose: this.disposeStream,
+        [Symbol.asyncIterator]: async function * () {},
+      } as never
     }
   }
   const remote = new RemoteService(ctx)
@@ -65,6 +80,10 @@ async function bench(options: {
       return Promise.resolve(options.remoteFailure === 'view'
         ? failure
         : { ok: true as const, value: view })
+    },
+    watch: (...args: unknown[]) => {
+      calls.push({ method: 'agentTeams/watch', args })
+      return { [Symbol.asyncIterator]: async function * () {} }
     },
     createTask: answer('agentTeams/createTask', task),
     updateTask: (...args: unknown[]) => {
@@ -163,6 +182,22 @@ describe('ui-team browser plugin', () => {
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
     const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
     expect((await actions.load(SESSION)).ok).toBe(true)
+    const sink = { replace: vi.fn(), invalidated: vi.fn(), stale: vi.fn(), failed: vi.fn() }
+    const watch = actions.watch(SESSION, sink)
+    expect(b.remote.createStream).toHaveBeenCalledOnce()
+    expect(b.remote.streamOptions).toMatchObject({
+      name: 'Agent Teams change stream',
+      open: expect.any(Function),
+      ended: expect.any(Function),
+      carrierFailed: expect.any(Function),
+    })
+    b.remote.streamOptions?.carrierFailed?.(new Error('connection lost') as never)
+    expect(sink.stale).toHaveBeenCalledOnce()
+    b.remote.streamOptions?.open(new AbortController().signal)
+    expect(b.calls.at(-1)?.method).toBe('agentTeams/watch')
+    watch.start()
+    await watch.dispose()
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
     expect((await actions.createTask(SESSION, {
       subject: 'Task', description: 'Description', blockedBy: [], writeScopes: [],
     })).ok).toBe(true)
@@ -173,7 +208,7 @@ describe('ui-team browser plugin', () => {
       taskId: TASK_ID, expectedRevision: 2, action: 'reassign', owner: 'worker',
     })).ok).toBe(true)
     expect(b.calls.map(call => call.method)).toEqual([
-      'agentTeams/view', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
+      'agentTeams/view', 'agentTeams/watch', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
     ])
     expect(b.calls.at(-1)?.args[1]).toMatchObject({ owner: 'worker' })
 

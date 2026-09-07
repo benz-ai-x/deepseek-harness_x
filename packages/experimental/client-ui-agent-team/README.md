@@ -29,7 +29,7 @@ Install the package through [`@deepseek-ai/dsh-experimental-agent-team-web-profi
 
 ### Inspect and navigate the roster
 
-Opening the panel calls `agentTeams/view`. Roster rows show durable names, runtime status, model, and diagnostics. Selecting a healthy teammate refreshes the existing direct-child catalog and opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
+Opening the panel starts `agentTeams/watch` and reads `agentTeams/view`. Roster rows show durable names, runtime status, model, and diagnostics. Selecting a healthy teammate refreshes the existing direct-child catalog and opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
 
 ### Manage the task board
 
@@ -50,6 +50,8 @@ The header action owns the only Team dialog and declares the session-scoped list
 <summary>Implementation internals — click to expand</summary>
 
 The Client export mounts the generated `ctx.remote.agentTeams` contribution from [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.md), then registers its locale dictionaries and one conversation-header entry through Cordis effects. That entry declares `agent-team.panel.view`, observes its public contributions and localized labels, and renders the selected contribution inside the existing dialog. Disposing the plugin Fiber removes the Remote, locale, entry, child Slot, subscriptions, and contribution navigation.
+
+The open panel consumes each reconnecting watch generation as one complete baseline followed by bounded invalidations. A baseline atomically replaces an older unary read; an invalidation calls the existing authoritative view reader instead of carrying task state. Carrier loss retains the last published view with an explicit disconnected or stale status, and reconnect only reads the new baseline. Session changes and service replacement fence late generations, while closing the panel or disposing the Client Fiber releases the stream control.
 
 Starting a create or update invalidates older refreshes. Success reloads the complete Team view so every task's derived fields stay current. Task text, scopes, and the complete dependency draft use one `edit` compare-and-set mutation. If it conflicts, the UI reloads the current authoritative task, keeps the old form and dependency draft visibly unsaved, and never retries automatically; a reload failure remains visible instead. List/graph mode, selection, filtering, and viewport transform are disposable component state; neither layout nor visibility creates a task projection or changes readiness.
 
@@ -87,7 +89,7 @@ No direct effect; the Team tools and ordinary conversation submission own any la
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh** — the Overview refreshes on open, explicit refresh, and mutations; it has no live event subscription.
+- **Invalidation granularity** — live changes refresh the complete authoritative Team view; the stream intentionally carries no task delta or Client-owned projection.
 - **Overview only** — this base package contributes roster and task controls; message and other Team views require a separate `agent-team.panel.view` contribution.
 - **Ordinary child continuation** — a human message sent after navigation uses the stable addressed-subagent prompt path, not the Team peer mailbox.
 - **No lifecycle or workspace controls** — the panel cannot spawn, rename, delete, or interrupt teammates, and write scopes remain advisory metadata.
@@ -102,4 +104,4 @@ None.
 
 </details>
 
-**Runtime invariant:** No companion is published. RPC is authoritative, and the package owns one disposable header entry that declares and renders the public Team child Slot.
+**Runtime invariant:** No companion is published. RPC is authoritative, and the package owns one disposable header entry, child Slot, and reconnecting Team stream control.

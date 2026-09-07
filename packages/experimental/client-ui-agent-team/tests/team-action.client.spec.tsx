@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamTaskId, TeamTaskView as TeamTask, TeamView,
@@ -102,6 +102,7 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
     },
     resolveTeamSessionId: sessionId => sessionId,
     load: () => Promise.resolve({ ok: true, value: view }),
+    watch: () => ({ start() {}, dispose: () => Promise.resolve() }),
     createTask: () => Promise.resolve(taskSuccess({ ...task, id: TASK_2, subject: 'New task' })),
     updateTask: () => Promise.resolve({
       ok: true,
@@ -113,6 +114,150 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
 }
 
 describe('TeamAction', () => {
+  it('starts from the Team watch baseline and rereads authority after invalidation', async () => {
+    const openingLoad = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const baselineTask = { ...task, subject: 'Watch baseline task' }
+    const committedTask = { ...task, revision: 2, subject: 'Committed live task' }
+    const load = vi.fn()
+      .mockImplementationOnce(() => openingLoad.promise)
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [committedTask] } })
+    let sink: {
+      replace(value: TeamView): void
+      invalidated(): void
+      stale(): void
+      failed(error: unknown): void
+    } | undefined
+    const start = vi.fn()
+    const dispose = vi.fn(() => Promise.resolve())
+    const watch = vi.fn((_sessionId: SessionId, nextSink: typeof sink) => {
+      sink = nextSink
+      return { start, dispose }
+    })
+    const injected = { ...actions({ load }), watch } as unknown as TeamActionInjected
+
+    render(<TeamAction {...props(injected)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await waitFor(() => { expect(watch).toHaveBeenCalledWith(SESSION, expect.any(Object)) })
+    expect(start).toHaveBeenCalledOnce()
+    act(() => { sink?.replace({ ...view, tasks: [baselineTask] }) })
+    expect(await screen.findByText('Watch baseline task')).toBeTruthy()
+
+    act(() => { sink?.invalidated() })
+    expect(await screen.findByText('Committed live task')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(2)
+    openingLoad.resolve({ ok: true, value: view })
+    await Promise.resolve()
+    expect(screen.queryByText('Implement runtime')).toBeNull()
+  })
+
+  it('retains stale data and disposes replaced or closed watch generations', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const load = vi.fn(() => Promise.resolve({ ok: true as const, value: view }))
+    let firstSink: WatchSink | undefined
+    let secondSink: WatchSink | undefined
+    const firstControl = { start: vi.fn(), dispose: vi.fn(() => Promise.resolve()) }
+    const secondControl = { start: vi.fn(), dispose: vi.fn(() => Promise.resolve()) }
+    const firstWatch = vi.fn((_sessionId: SessionId, sink: WatchSink) => {
+      firstSink = sink
+      return firstControl
+    })
+    const secondWatch = vi.fn((_sessionId: SessionId, sink: WatchSink) => {
+      secondSink = sink
+      return secondControl
+    })
+    const rendered = render(<TeamAction {...props(actions({ load, watch: firstWatch }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await waitFor(() => { expect(firstWatch).toHaveBeenCalledOnce() })
+    act(() => {
+      firstSink?.replace({ ...view, tasks: [{ ...task, subject: 'Retained task' }] })
+      firstSink?.stale()
+    })
+    expect(await screen.findByText('连接已断开，正在显示可能过期的 Team 数据。')).toBeTruthy()
+    expect(screen.getByText('Retained task')).toBeTruthy()
+
+    rendered.rerender(<TeamAction {...props(actions({ load, watch: secondWatch }))} />)
+    await waitFor(() => {
+      expect(firstControl.dispose).toHaveBeenCalledOnce()
+      expect(secondWatch).toHaveBeenCalledOnce()
+      expect(secondControl.start).toHaveBeenCalledOnce()
+    })
+    act(() => {
+      firstSink?.failed(new Error('late old generation failure'))
+      secondSink?.replace({ ...view, tasks: [{ ...task, revision: 2, subject: 'Replacement task' }] })
+    })
+    expect(screen.queryByText('连接已断开，正在显示可能过期的 Team 数据。')).toBeNull()
+    expect(screen.getByText('Replacement task')).toBeTruthy()
+    act(() => { secondSink?.failed(new Error('watch unavailable')) })
+    expect(screen.getByText('Team 实时更新不可用；已保留最后一次权威读取。')).toBeTruthy()
+    expect(screen.getByText('Replacement task')).toBeTruthy()
+
+    const callsBeforeClose = load.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => { expect(secondControl.dispose).toHaveBeenCalledOnce() })
+    act(() => { secondSink?.invalidated() })
+    expect(load).toHaveBeenCalledTimes(callsBeforeClose)
+  })
+
+  it('renders disconnected, stale, unavailable, and conflict feedback in both locales', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    for (const translated of [
+      {
+        locale: en,
+        common: commonEn,
+        disconnected: en.watchDisconnected,
+        stale: en.watchStale,
+        unavailable: en.watchUnavailable,
+        conflict: en.conflict,
+        action: /Agent Team/u,
+        complete: /Complete/u,
+      },
+      {
+        locale: zh,
+        common: commonZh,
+        disconnected: zh.watchDisconnected,
+        stale: zh.watchStale,
+        unavailable: zh.watchUnavailable,
+        conflict: zh.conflict,
+        action: /Agent Team/u,
+        complete: /完成/u,
+      },
+    ]) {
+      const opening = Promise.withResolvers<TeamActionResult<TeamView>>()
+      const load = vi.fn()
+        .mockImplementationOnce(() => opening.promise)
+        .mockResolvedValue({ ok: true, value: { ...view, tasks: [{ ...task, revision: 2 }] } })
+      let sink: WatchSink | undefined
+      const control = { start: vi.fn(), dispose: vi.fn(() => Promise.resolve()) }
+      const watch = vi.fn((_sessionId: SessionId, nextSink: WatchSink) => {
+        sink = nextSink
+        return control
+      })
+      const updateTask = vi.fn(() => Promise.resolve(taskConflict('stale revision')))
+      render(<TeamAction {...{
+        ...props(actions({ load, updateTask, watch })),
+        t: makeTranslate(translated.locale, translated.common),
+      }} />)
+      fireEvent.click(screen.getByRole('button', { name: translated.action }))
+      await waitFor(() => { expect(watch).toHaveBeenCalledOnce() })
+
+      act(() => { sink?.stale() })
+      expect(screen.getByText(translated.disconnected)).toBeTruthy()
+      act(() => { sink?.replace(view) })
+      expect(await screen.findByText('Implement runtime')).toBeTruthy()
+      expect(screen.queryByText(translated.disconnected)).toBeNull()
+      act(() => { sink?.stale() })
+      expect(screen.getByText(translated.stale)).toBeTruthy()
+      act(() => { sink?.failed(new Error('watch unavailable')) })
+      expect(screen.getByText(translated.unavailable)).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('button', { name: translated.complete }))
+      expect(await screen.findByText(translated.conflict)).toBeTruthy()
+      expect(updateTask).toHaveBeenCalledOnce()
+      cleanup()
+      await waitFor(() => { expect(control.dispose).toHaveBeenCalledOnce() })
+    }
+  })
+
   it('shares real task selection and detail between the list and dependency graph', async () => {
     const dependent: TeamTask = {
       id: TASK_2,

@@ -6,7 +6,8 @@ import { mountAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
 export type {
-  TeamActionInjected, TeamActionProps, TeamActionResult, TeamPanelView,
+  TeamActionInjected, TeamActionProps, TeamActionResult, TeamActionWatchControl,
+  TeamActionWatchSink, TeamPanelView,
 } from './TeamAction.tsx'
 export type { TeamKey } from './locales.ts'
 

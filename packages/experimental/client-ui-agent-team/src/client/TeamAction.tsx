@@ -30,6 +30,20 @@ export type TeamActionResult<T> = RemoteResult<T>
 /** Generated Remote result whose business value preserves Team task rejections. */
 export type TeamTaskActionResult = RemoteResult<TeamTaskMutationResult>
 
+/** Generation-fenced Team watch destinations owned by one mounted panel. */
+export interface TeamActionWatchSink {
+  replace(value: TeamView): void
+  invalidated(): void
+  stale(): void
+  failed(error: unknown): void
+}
+
+/** Minimal lifecycle exposed by the reconnecting Team stream. */
+export interface TeamActionWatchControl {
+  start(): void
+  dispose(): Promise<void>
+}
+
 /** Business actions injected by the browser plugin. */
 export interface TeamActionInjected {
   readonly hooks: {
@@ -37,6 +51,7 @@ export interface TeamActionInjected {
   }
   resolveTeamSessionId: (sessionId: SessionId) => SessionId
   load: (sessionId: SessionId) => Promise<TeamActionResult<TeamView>>
+  watch: (sessionId: SessionId, sink: TeamActionWatchSink) => TeamActionWatchControl
   createTask: (sessionId: SessionId, input: {
     subject: string
     description: string
@@ -102,6 +117,8 @@ interface GraphTransform {
   readonly y: number
   readonly scale: number
 }
+
+type TeamWatchPhase = 'connecting' | 'connected' | 'stale' | 'disconnected' | 'unavailable'
 
 const DEFAULT_GRAPH_TRANSFORM: GraphTransform = { x: 0, y: 0, scale: 1 }
 
@@ -185,7 +202,7 @@ function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
 
 /** Render the live Team roster and compare-and-set task board. */
 export function TeamAction({
-  sessionId, load, createTask, updateTask, openTeammate, usePanelViews, resolveTeamSessionId, renderSlot, t,
+  sessionId, load, watch, createTask, updateTask, openTeammate, usePanelViews, resolveTeamSessionId, renderSlot, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -201,9 +218,12 @@ export function TeamAction({
   const [selectedTaskId, setSelectedTaskId] = useState<TeamTaskId | null>(null)
   const [taskFilter, setTaskFilter] = useState('')
   const [graphTransform, setGraphTransform] = useState<GraphTransform>(DEFAULT_GRAPH_TRANSFORM)
+  const [watchPhase, setWatchPhase] = useState<TeamWatchPhase>('connecting')
   const childViews = usePanelViews(views => views)
   const sessionRef = useRef(sessionId)
+  const viewRef = useRef<TeamView | null>(null)
   const refreshGeneration = useRef(0)
+  const watchGeneration = useRef(0)
   const graphViewportRef = useRef<HTMLDivElement>(null)
   const graphNodeRefs = useRef(new Map<TeamTaskId, HTMLButtonElement>())
   const graphDragRef = useRef<{
@@ -217,6 +237,8 @@ export function TeamAction({
 
   useEffect(() => {
     refreshGeneration.current += 1
+    watchGeneration.current += 1
+    viewRef.current = null
     setOpen(false)
     setLoading(false)
     setView(null)
@@ -231,6 +253,7 @@ export function TeamAction({
     setSelectedTaskId(null)
     setTaskFilter('')
     setGraphTransform(DEFAULT_GRAPH_TRANSFORM)
+    setWatchPhase('connecting')
     graphDragRef.current = null
   }, [sessionId])
 
@@ -240,6 +263,14 @@ export function TeamAction({
     }
   }, [activeView, childViews])
 
+  const replaceView = useCallback((next: TeamView): void => {
+    viewRef.current = next
+    setView(next)
+    setSelectedTaskId(current => next.tasks.some(task => task.id === current)
+      ? current
+      : next.tasks[0]?.id ?? null)
+  }, [])
+
   const refresh = useCallback(async (): Promise<boolean> => {
     const requestedSession = sessionId
     const generation = ++refreshGeneration.current
@@ -248,17 +279,47 @@ export function TeamAction({
     if (sessionRef.current !== requestedSession || refreshGeneration.current !== generation) return false
     setLoading(false)
     if (result.ok) {
-      setView(result.value)
-      setSelectedTaskId(current => result.value.tasks.some(task => task.id === current)
-        ? current
-        : result.value.tasks[0]?.id ?? null)
+      replaceView(result.value)
       setError(null)
       return true
     } else {
       setError(failureText(result.error))
       return false
     }
-  }, [load, sessionId])
+  }, [load, replaceView, sessionId])
+
+  useEffect(() => {
+    if (!open) return
+    const requestedSession = sessionId
+    const generation = ++watchGeneration.current
+    const current = (): boolean => sessionRef.current === requestedSession
+      && watchGeneration.current === generation
+    setWatchPhase('connecting')
+    const control = watch(requestedSession, {
+      replace(next) {
+        if (!current()) return
+        refreshGeneration.current += 1
+        setLoading(false)
+        replaceView(next)
+        setError(null)
+        setWatchPhase('connected')
+      },
+      invalidated() {
+        if (current()) void refresh()
+      },
+      stale() {
+        if (current()) setWatchPhase(viewRef.current === null ? 'disconnected' : 'stale')
+      },
+      failed() {
+        if (current()) setWatchPhase('unavailable')
+      },
+    })
+    control.start()
+    return () => {
+      if (watchGeneration.current === generation) watchGeneration.current += 1
+      void control.dispose()
+    }
+  }, [open, refresh, replaceView, sessionId, watch])
 
   const invalidateRefresh = useCallback((): void => {
     refreshGeneration.current += 1
@@ -490,6 +551,15 @@ export function TeamAction({
             ))}
           </div>
           {activeView === 'overview' && error !== null && <div className={css.error} role="alert">{error}</div>}
+          {activeView === 'overview' && watchPhase === 'stale' && (
+            <div className={css.notice} role="status">{t('watchStale')}</div>
+          )}
+          {activeView === 'overview' && watchPhase === 'disconnected' && (
+            <div className={css.notice} role="status">{t('watchDisconnected')}</div>
+          )}
+          {activeView === 'overview' && watchPhase === 'unavailable' && (
+            <div className={css.notice} role="status">{t('watchUnavailable')}</div>
+          )}
           {activeView === 'overview' && loading && view === null && <div className={css.notice}>{t('loading')}</div>}
           {activeView === 'overview' && view !== null && (
             <>

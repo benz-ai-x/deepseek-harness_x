@@ -38,6 +38,7 @@ import type {
   TeamTaskView,
   TeamView,
   TeamWaitResult,
+  TeamWatchFrame,
   UpdateTeamTaskRequest,
 } from './types.ts'
 import type {
@@ -482,6 +483,21 @@ export class TeamService extends TypertRemoteService {
       members: this.listMembers(agent),
       tasks: this.listTasks(agent),
     }
+  }
+
+  /**
+   * Stream one complete Team projection followed by bounded change invalidations.
+   * @param agent - exact live Team member used as the authority credential.
+   * @param signal - generation cancellation owned by the Remote carrier.
+   * @returns one current baseline followed by invalidations that require authoritative rereads.
+   */
+  @Remote({ mode: 'stream' })
+  watch(agent: Agent, signal: AbortSignal): AsyncIterable<TeamWatchFrame> {
+    const membership = this.roster.membership(agent)
+    if (membership.role !== 'lead') {
+      throw new TeamError('only the Team Lead can watch Team changes', 'TEAM_LEAD_REQUIRED')
+    }
+    return this.activity.follow(membership.id, () => this.remoteView(agent), signal)
   }
 
   /**

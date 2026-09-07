@@ -24,5 +24,6 @@ export type {
   TeamTaskStatus,
   TeamTaskView,
   TeamView,
+  TeamWatchFrame,
   UpdateTeamTaskRequest,
 } from './types.ts'
