@@ -45,6 +45,10 @@ export type TeammateProfileCapability =
 
 /** Operational guarantees a durable external teammate runtime can prove. */
 export type TeammateRuntimeCapability =
+  /** Complete durable Team messaging, task, wait, interrupt, resume, and terminal-result participation. */
+  | 'full-collaboration'
+  /** The runtime can mutate its assigned workspace subject to the separately enforced sandbox and tool policy. */
+  | 'workspace-write'
   | 'exact-call-approval'
   | 'sandbox'
   | 'evaluation'

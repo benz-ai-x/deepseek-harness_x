@@ -39,6 +39,8 @@ Every member starts in `provisioning` and reaches exactly one terminal roster ph
 
 An external provider declares only context modes and capabilities it can enforce. Agent Teams validates the complete demand before it reserves a roster identity or sends work to that provider; one-shot subagent providers are not a fallback. Exact-call approval requires both Hook enforcement and normalized evidence, and each ask Hook carries a stable Profile-owned policy id that must correlate to the same immutable native call and approval identities.
 
+Runtime capabilities are independent attestations. `full-collaboration` means the provider implements the complete durable Team contract: bidirectional mailbox delivery, every bounded native member operation (`members.list`, `tasks.list`, `tasks.get`, `messages.send`, `tasks.update`, and `wait`), terminal-result settlement, exact interruption, exact-handle resume, and disposal. Registration rejects that claim unless all six native operations and their grant binder are present. `workspace-write` separately states that the runtime can mutate its assigned workspace; it grants no authority and remains constrained by the effective sandbox and Profile tool policy. A read-only runtime can therefore support full collaboration without claiming workspace writes.
+
 ```ts type-equiv
 /** Exact capability demand checked before a provider receives work. */
 interface TeammateRuntimeRequirements {

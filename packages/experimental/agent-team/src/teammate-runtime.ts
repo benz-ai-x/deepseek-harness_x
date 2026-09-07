@@ -32,6 +32,7 @@ import {
   TeammateRuntimeTurnId as toTeammateRuntimeTurnId,
 } from './brand.ts'
 import type {
+  NativeMemberOperationName,
   TeammateEvaluationHandle,
   TeammateProfileCapability,
   TeammateRuntimeCapability,
@@ -164,12 +165,17 @@ const PROFILE_CAPABILITIES = Object.freeze([
   'hooks',
 ] as const satisfies readonly TeammateProfileCapability[])
 const RUNTIME_CAPABILITIES = Object.freeze([
+  'full-collaboration',
+  'workspace-write',
   'exact-call-approval',
   'sandbox',
   'evaluation',
   'evidence',
   'usage',
 ] as const satisfies readonly TeammateRuntimeCapability[])
+const NATIVE_MEMBER_OPERATIONS = Object.freeze([
+  'members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait',
+] as const satisfies readonly NativeMemberOperationName[])
 const MAX_EVALUATION_TOOLS = 256
 const MAX_EVALUATION_TOOL_ID_BYTES = 128
 
@@ -308,8 +314,16 @@ function normalizeProvider(provider: TeammateRuntimeProvider): TeammateRuntimeMe
     )
   }
   const memberOperations = provider.memberOperations === undefined ? undefined : uniqueCanonical(
-    providerId, 'member operations', provider.memberOperations, ['members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait'],
+    providerId, 'member operations', provider.memberOperations, NATIVE_MEMBER_OPERATIONS,
   )
+  if (runtimeCapabilities.includes('full-collaboration')
+    && (memberOperations === undefined
+      || NATIVE_MEMBER_OPERATIONS.some(operation => !memberOperations.includes(operation)))) {
+    throw new TeammateRuntimeError(
+      `teammate runtime provider "${providerId}" advertises full collaboration without every member operation`,
+      'TEAM_RUNTIME_INVALID_PROVIDER',
+    )
+  }
   return Object.freeze({
     id: providerId,
     displayName,

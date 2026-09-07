@@ -902,6 +902,21 @@ describe('durable teammate runtime registry', () => {
       createEvaluationHandle: undefined,
     }))).toThrow(expect.objectContaining({ code: 'TEAM_RUNTIME_INVALID_PROVIDER' }))
 
+    const incompleteCollaboration = new FakeDurableRuntime(fakeStore(), 'incomplete-collaboration')
+    expect(() => ctx.agentTeams.registerTeammateRuntimeProvider(providerWith(incompleteCollaboration, {
+      runtimeCapabilities: ['full-collaboration'],
+    }))).toThrow(expect.objectContaining({ code: 'TEAM_RUNTIME_INVALID_PROVIDER' }))
+
+    const collaborationBase = new FakeDurableRuntime(fakeStore(), 'collaboration-contract')
+    const collaborationRegistration = ctx.agentTeams.registerTeammateRuntimeProvider(providerWith(collaborationBase, {
+      runtimeCapabilities: ['full-collaboration', 'workspace-write'],
+      memberOperations: ['members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait'],
+      bindMemberOperations: vi.fn(),
+    }))
+    expect(collaborationRegistration.metadata().runtimeCapabilities)
+      .toEqual(['full-collaboration', 'workspace-write'])
+    await collaborationRegistration()
+
     const minimalBase = new FakeDurableRuntime(fakeStore(), 'minimal-contract')
     const minimalRegistration = ctx.agentTeams.registerTeammateRuntimeProvider(providerWith(minimalBase, {
       runtimeCapabilities: [],

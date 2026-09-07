@@ -5724,7 +5724,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeCapability',
-    declaration: 'export type TeammateRuntimeCapability = \'exact-call-approval\' | \'sandbox\' | \'evaluation\' | \'evidence\' | \'usage\';',
+    declaration: 'export type TeammateRuntimeCapability = \'full-collaboration\' | \'workspace-write\' | \'exact-call-approval\' | \'sandbox\' | \'evaluation\' | \'evidence\' | \'usage\';',
   },
   {
     name: 'TeammateRuntimeCreateRequest',

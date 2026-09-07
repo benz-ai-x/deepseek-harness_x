@@ -69,6 +69,8 @@ kind: "package-reference"
 
 宿主也可以通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 注册耐久外部 teammate provider。provider 只公开分离的上下文、Profile 策略与运行能力元数据；凭据、进程对象和原生载荷始终留在 Host。外部启动携带调用方生成的 launch id 与 Team 已预留的 member id。持久 launch id 与 native handle 是非空、最多 200 UTF-8 字节的 opaque 字符串，不施加词法 identifier 语法。provider 必须先持久接受初始工作并返回一个稳定、不透明的 native handle，roster 才能进入 active；若可观察，其稳定 initial turn id 会与 active member 一起保留。同一启动或 mailbox 重试保持相同原生 runtime 与 turn identity；Agent Teams 绝不替换成一次性 subagent。provider 只有同时提供 Hook 强制执行能力，以及使用稳定 Profile 策略 id、相同不可变原生 call id 与 approval id 的 evidence，才能声明精确调用审批。provider 移除后成员变为 inactive；后续 provider generation 会恢复精确 handle，而不是创建替代品。
 
+能力标记描述可以独立执行的行为。`full-collaboration` 覆盖耐久双向消息、全部成员查询与变更、等待、终态结果、精确中断、恢复与释放；只有六项原生成员操作及其 grant binder 全部存在时，注册才接受该声明。`workspace-write` 与它分离：该标记表示 runtime 可以修改分配给它的 workspace，但不会授予权限，也不会越过 sandbox 或 Profile tool policy。只读 provider 可以声明完整协作而不声明 workspace 写入。
+
 支持可选目录属主的 provider 适配器使用 `mountTeammateRuntimeProvider()`，让这个 Host-only 包统一拥有共享属主契约、动态服务世代、注册的恰好一次清理以及 provider 析构顺序。
 
 原生 provider 可以通过自己的工具通道查询成员和任务、变更获授权任务、等待活动，并以成员身份发送消息。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份使用现有 roster、task board 或 mailbox；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。
