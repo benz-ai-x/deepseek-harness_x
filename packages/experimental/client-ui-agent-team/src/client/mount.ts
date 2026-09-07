@@ -161,7 +161,7 @@ export function createTeamActionWatch(
     isSnapshot: (frame): frame is TeamWatchBaselineFrame => frame.type === 'baseline',
     replace: (frame) => { sink.replace(frame.value) },
     update: () => { sink.invalidated() },
-    failed: sink.failed,
+    failed: (error) => { sink.failed(error) },
   })
 }
 

@@ -9,7 +9,7 @@ export const zh = {
   refresh: '刷新 Team',
   close: '关闭',
   loading: '正在加载 Team…',
-  watchStale: '连接已断开，正在显示可能过期的 Team 数据。',
+  watchStale: '连接已断开，正在显示可能陈旧的 Team 数据。',
   watchDisconnected: 'Team 实时连接已断开，正在等待重连。',
   watchUnavailable: 'Team 实时更新不可用；已保留最后一次权威读取。',
   navigation: 'Agent Team 视图',

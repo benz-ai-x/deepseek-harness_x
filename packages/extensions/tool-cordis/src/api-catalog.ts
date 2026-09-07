@@ -458,6 +458,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'detached current roster and task views.',
       },
       {
+        signature: '@Remote({ mode: \'stream\' }) watch(agent: Agent, signal: AbortSignal): AsyncIterable<TeamWatchFrame>',
+        description: 'Stream one complete Team projection followed by bounded change invalidations.',
+        parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }, { name: 'signal', description: 'generation cancellation owned by the Remote carrier.' }],
+        returns: 'one current baseline followed by invalidations that require authoritative rereads.',
+      },
+      {
         signature: '@Remote(\'getTask\') remoteGetTask(agent: Agent, taskId: TeamTaskId): TeamTaskView',
         description: 'Read one authoritative task detail, including a retained deletion tombstone.',
         parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }, { name: 'taskId', description: 'Team-local task identity selected from a view or graph.' }],
@@ -5939,6 +5945,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamWaitResult',
     declaration: 'export interface TeamWaitResult {\n    readonly timedOut: boolean;\n}',
+  },
+  {
+    name: 'TeamWatchFrame',
+    declaration: 'export type TeamWatchFrame = {\n    readonly type: \'baseline\';\n    readonly value: TeamView;\n} | {\n    readonly type: \'invalidated\';\n};',
   },
   {
     name: 'TerminalBackend',

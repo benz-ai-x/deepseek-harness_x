@@ -601,6 +601,14 @@ tryMembership(agent: Agent): TeamMembership | undefined
 @Remote('view') remoteView(agent: Agent): TeamView
 
 /**
+ * Stream one complete Team projection followed by bounded change invalidations.
+ * @param agent - exact live Team member used as the authority credential.
+ * @param signal - generation cancellation owned by the Remote carrier.
+ * @returns one current baseline followed by invalidations that require authoritative rereads.
+ */
+@Remote({ mode: 'stream' }) watch(agent: Agent, signal: AbortSignal): AsyncIterable<TeamWatchFrame>
+
+/**
  * Read one authoritative task detail, including a retained deletion tombstone.
  * @param agent - exact live Team member used as the authority credential.
  * @param taskId - Team-local task identity selected from a view or graph.

@@ -55,7 +55,7 @@ async function bench(options: {
     }
 
     $stream<Item>(options: RemoteStreamOptions<Item>): never {
-      this.streamOptions = options as RemoteStreamOptions<unknown>
+      this.streamOptions = options
       this.createStream(options)
       return {
         restart: this.restartStream,
@@ -185,13 +185,11 @@ describe('ui-team browser plugin', () => {
     const sink = { replace: vi.fn(), invalidated: vi.fn(), stale: vi.fn(), failed: vi.fn() }
     const watch = actions.watch(SESSION, sink)
     expect(b.remote.createStream).toHaveBeenCalledOnce()
-    expect(b.remote.streamOptions).toMatchObject({
-      name: 'Agent Teams change stream',
-      open: expect.any(Function),
-      ended: expect.any(Function),
-      carrierFailed: expect.any(Function),
-    })
-    b.remote.streamOptions?.carrierFailed?.(new Error('connection lost') as never)
+    expect(b.remote.streamOptions?.name).toBe('Agent Teams change stream')
+    expect(typeof b.remote.streamOptions?.open).toBe('function')
+    expect(typeof b.remote.streamOptions?.ended).toBe('function')
+    expect(typeof b.remote.streamOptions?.carrierFailed).toBe('function')
+    b.remote.streamOptions?.carrierFailed?.(new Error('connection lost'))
     expect(sink.stale).toHaveBeenCalledOnce()
     b.remote.streamOptions?.open(new AbortController().signal)
     expect(b.calls.at(-1)?.method).toBe('agentTeams/watch')

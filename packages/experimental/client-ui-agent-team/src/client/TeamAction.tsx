@@ -225,6 +225,11 @@ export function TeamAction({
   const viewRef = useRef<TeamView | null>(null)
   const conflictDraftRef = useRef<string | null>(null)
   const refreshGeneration = useRef(0)
+  const refreshInFlightRef = useRef<Promise<boolean> | null>(null)
+  const refreshQueueRef = useRef<Array<{
+    resolve(value: boolean): void
+    reject(error: unknown): void
+  }>>([])
   const watchGeneration = useRef(0)
   const graphViewportRef = useRef<HTMLDivElement>(null)
   const graphNodeRefs = useRef(new Map<TeamTaskId, HTMLButtonElement>())
@@ -239,6 +244,8 @@ export function TeamAction({
 
   useEffect(() => {
     refreshGeneration.current += 1
+    refreshInFlightRef.current = null
+    refreshQueueRef.current.splice(0).forEach((waiter) => { waiter.resolve(false) })
     watchGeneration.current += 1
     viewRef.current = null
     conflictDraftRef.current = null
@@ -275,7 +282,7 @@ export function TeamAction({
       : next.tasks[0]?.id ?? null)
   }, [])
 
-  const refresh = useCallback(async (): Promise<boolean> => {
+  const refreshOnce = useCallback(async (): Promise<boolean> => {
     const requestedSession = sessionId
     const generation = ++refreshGeneration.current
     setLoading(true)
@@ -291,6 +298,38 @@ export function TeamAction({
       return false
     }
   }, [load, replaceView, sessionId])
+
+  const refreshOnceRef = useRef(refreshOnce)
+  refreshOnceRef.current = refreshOnce
+  const refresh = useCallback((): Promise<boolean> => {
+    if (refreshInFlightRef.current !== null) {
+      return new Promise<boolean>((resolve, reject) => {
+        refreshQueueRef.current.push({ resolve, reject })
+      })
+    }
+    const start = (): Promise<boolean> => {
+      const request = refreshOnceRef.current()
+      refreshInFlightRef.current = request
+      void request.then(() => {
+        if (refreshInFlightRef.current !== request) return
+        refreshInFlightRef.current = null
+        const queued = refreshQueueRef.current.splice(0)
+        if (queued.length === 0) return
+        const trailing = start()
+        void trailing.then(
+          (value) => { queued.forEach((waiter) => { waiter.resolve(value) }) },
+          (error: unknown) => { queued.forEach((waiter) => { waiter.reject(error) }) },
+        )
+      }, (error: unknown) => {
+        if (refreshInFlightRef.current !== request) return
+        refreshInFlightRef.current = null
+        const queued = refreshQueueRef.current.splice(0)
+        queued.forEach((waiter) => { waiter.reject(error) })
+      })
+      return request
+    }
+    return start()
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -321,6 +360,9 @@ export function TeamAction({
     control.start()
     return () => {
       if (watchGeneration.current === generation) watchGeneration.current += 1
+      refreshGeneration.current += 1
+      refreshInFlightRef.current = null
+      refreshQueueRef.current.splice(0).forEach((waiter) => { waiter.resolve(false) })
       void control.dispose()
     }
   }, [open, refresh, replaceView, sessionId, watch])
@@ -469,7 +511,8 @@ export function TeamAction({
       originX: graphTransform.x,
       originY: graphTransform.y,
     }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    const capture = Reflect.get(event.currentTarget, 'setPointerCapture')
+    if (typeof capture === 'function') Reflect.apply(capture, event.currentTarget, [event.pointerId])
   }
 
   const moveGraphPan = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -486,7 +529,8 @@ export function TeamAction({
     const drag = graphDragRef.current
     if (drag === null || drag.pointerId !== event.pointerId) return
     graphDragRef.current = null
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    const release = Reflect.get(event.currentTarget, 'releasePointerCapture')
+    if (typeof release === 'function') Reflect.apply(release, event.currentTarget, [event.pointerId])
   }
 
   const moveGraphSelection = (task: TeamTask, event: ReactKeyboardEvent<HTMLButtonElement>): void => {

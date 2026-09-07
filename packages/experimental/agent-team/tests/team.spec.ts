@@ -1002,7 +1002,7 @@ describe('Team shared task DAG', () => {
     const leadEvents = lead.session.snapshotEvents().length
     const otherEvents = otherLead.session.snapshotEvents().length
 
-    await expect(ctx.agentTeams.updateTask({ ...lead } as Agent, request))
+    await expect(ctx.agentTeams.updateTask({ ...lead }, request))
       .rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
     await expect(ctx.agentTeams.updateTask(otherLead, request))
       .rejects.toMatchObject({ code: 'TEAM_TASK_NOT_FOUND' })
@@ -1255,12 +1255,9 @@ describe('Team Remote API', () => {
         && event.data.messageId === message.value.submission.messageId)).toBe(true)
     })
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
-    await expect(ctx.agentTeams.listMessages(lead, { limit: 20 })).resolves.toMatchObject({
-      items: [expect.objectContaining({
-        id: message.value.submission.messageId,
-        delivery: expect.objectContaining({ stage: 'delivered' }),
-      })],
-    })
+    const deliveredPage = await ctx.agentTeams.listMessages(lead, { limit: 20 })
+    expect(deliveredPage.items[0]?.id).toBe(message.value.submission.messageId)
+    expect(deliveredPage.items[0]?.delivery.stage).toBe('delivered')
 
     await ctx.agentTeams.createTask(lead, { subject: 'Burst task one', description: 'First burst commit.' })
     await ctx.agentTeams.createTask(lead, { subject: 'Burst task two', description: 'Second burst commit.' })
@@ -1287,7 +1284,7 @@ describe('Team Remote API', () => {
     const { ctx, lead } = await setup(['hang'])
     const started = await spawn(ctx, lead, 'watch-worker')
     const worker = await waitRunning(ctx, started.member.id)
-    expect(() => ctx.agentTeams.watch({ ...lead } as Agent, SIGNAL))
+    expect(() => ctx.agentTeams.watch({ ...lead }, SIGNAL))
       .toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
     expect(() => ctx.agentTeams.watch(worker, SIGNAL))
       .toThrow(expect.objectContaining({ code: 'TEAM_LEAD_REQUIRED' }))
@@ -1383,13 +1380,11 @@ describe('Team Remote API', () => {
       expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
         && event.data.messageId === first.value.submission.messageId)).toBe(true)
     })
-    await expect(ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)).resolves.toEqual({
-      ok: true,
-      value: {
-        submission: first.value.submission,
-        delivery: expect.objectContaining({ stage: 'delivered' }),
-      },
-    })
+    const deliveredReplay = await ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)
+    expect(deliveredReplay.ok).toBe(true)
+    if (!deliveredReplay.ok) throw new Error('Remote Team replay did not succeed')
+    expect(deliveredReplay.value.submission).toEqual(first.value.submission)
+    expect(deliveredReplay.value.delivery.stage).toBe('delivered')
 
     const eventCount = lead.session.snapshotEvents().length
     await expect(ctx.agentTeams.remoteSendMessage(lead, {
@@ -1460,13 +1455,11 @@ describe('Team Remote API', () => {
       expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
         && event.data.messageId === reply.value.submission.messageId)).toBe(true)
     })
-    await expect(ctx.agentTeams.remoteSendMessage(lead, replyRequest, SIGNAL)).resolves.toEqual({
-      ok: true,
-      value: {
-        submission: reply.value.submission,
-        delivery: expect.objectContaining({ stage: 'delivered' }),
-      },
-    })
+    const deliveredReply = await ctx.agentTeams.remoteSendMessage(lead, replyRequest, SIGNAL)
+    expect(deliveredReply.ok).toBe(true)
+    if (!deliveredReply.ok) throw new Error('Remote Team reply replay did not succeed')
+    expect(deliveredReply.value.submission).toEqual(reply.value.submission)
+    expect(deliveredReply.value.delivery.stage).toBe('delivered')
     const page = await ctx.agentTeams.listMessages(lead, { limit: 20 })
     expect(page.items.find(item => item.id === reply.value.submission.messageId))
       .toMatchObject({ replyTo: original.id, sender: { id: lead.id }, recipient: { id: recipient.id } })

@@ -143,11 +143,54 @@ describe('TeamAction', () => {
     expect(await screen.findByText('Watch baseline task')).toBeTruthy()
 
     act(() => { sink?.invalidated() })
+    expect(load).toHaveBeenCalledOnce()
+    openingLoad.resolve({ ok: true, value: view })
     expect(await screen.findByText('Committed live task')).toBeTruthy()
     expect(load).toHaveBeenCalledTimes(2)
-    openingLoad.resolve({ ok: true, value: view })
-    await Promise.resolve()
     expect(screen.queryByText('Implement runtime')).toBeNull()
+  })
+
+  it('coalesces a burst of Team watch invalidations into one trailing authority reload', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const firstReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const trailingReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: view })
+      .mockImplementationOnce(() => firstReload.promise)
+      .mockImplementationOnce(() => trailingReload.promise)
+      .mockImplementation(() => new Promise<TeamActionResult<TeamView>>(() => {}))
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load,
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+
+    act(() => {
+      sink?.invalidated()
+      sink?.invalidated()
+      sink?.invalidated()
+      sink?.invalidated()
+    })
+    expect(load).toHaveBeenCalledTimes(2)
+
+    firstReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 2, subject: 'First live commit' }] },
+    })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
+    expect(screen.getByText('First live commit')).toBeTruthy()
+
+    trailingReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 3, subject: 'Trailing live commit' }] },
+    })
+    expect(await screen.findByText('Trailing live commit')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(3)
   })
 
   it('retains stale data and disposes replaced or closed watch generations', async () => {
@@ -172,7 +215,7 @@ describe('TeamAction', () => {
       firstSink?.replace({ ...view, tasks: [{ ...task, subject: 'Retained task' }] })
       firstSink?.stale()
     })
-    expect(await screen.findByText('连接已断开，正在显示可能过期的 Team 数据。')).toBeTruthy()
+    expect(await screen.findByText('连接已断开，正在显示可能陈旧的 Team 数据。')).toBeTruthy()
     expect(screen.getByText('Retained task')).toBeTruthy()
 
     rendered.rerender(<TeamAction {...props(actions({ load, watch: secondWatch }))} />)
@@ -185,7 +228,7 @@ describe('TeamAction', () => {
       firstSink?.failed(new Error('late old generation failure'))
       secondSink?.replace({ ...view, tasks: [{ ...task, revision: 2, subject: 'Replacement task' }] })
     })
-    expect(screen.queryByText('连接已断开，正在显示可能过期的 Team 数据。')).toBeNull()
+    expect(screen.queryByText('连接已断开，正在显示可能陈旧的 Team 数据。')).toBeNull()
     expect(screen.getByText('Replacement task')).toBeTruthy()
     act(() => { secondSink?.failed(new Error('watch unavailable')) })
     expect(screen.getByText('Team 实时更新不可用；已保留最后一次权威读取。')).toBeTruthy()
@@ -245,6 +288,8 @@ describe('TeamAction', () => {
       act(() => { sink?.replace(view) })
       expect(await screen.findByText('Implement runtime')).toBeTruthy()
       expect(screen.queryByText(translated.disconnected)).toBeNull()
+      opening.resolve({ ok: true, value: view })
+      await Promise.resolve()
       act(() => { sink?.stale() })
       expect(screen.getByText(translated.stale)).toBeTruthy()
       act(() => { sink?.failed(new Error('watch unavailable')) })
@@ -536,7 +581,7 @@ describe('TeamAction', () => {
     await waitFor(() => { expect(openTeammate).toHaveBeenCalledWith(SESSION, view.members[1]) })
   })
 
-  it('keeps only the newest overlapping refresh for one session', async () => {
+  it('serializes overlapping refresh requests and publishes the trailing authority read', async () => {
     const older = Promise.withResolvers<TeamActionResult<TeamView>>()
     const newer = Promise.withResolvers<TeamActionResult<TeamView>>()
     const newestView = {
@@ -554,10 +599,11 @@ describe('TeamAction', () => {
     const refresh = screen.getByRole('button', { name: zh.refresh })
     fireEvent.click(refresh)
     fireEvent.click(refresh)
+    expect(load).toHaveBeenCalledTimes(2)
+    older.resolve({ ok: true, value: view })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
     newer.resolve({ ok: true, value: newestView })
     expect(await screen.findByText('Newest task')).toBeTruthy()
-    older.resolve({ ok: true, value: view })
-    await Promise.resolve()
 
     expect(screen.getByText('Newest task')).toBeTruthy()
     expect(screen.queryByText('Implement runtime')).toBeNull()
@@ -579,10 +625,8 @@ describe('TeamAction', () => {
 
     fireEvent.click(screen.getByRole('button', { name: zh.refresh }))
     fireEvent.click(screen.getByRole('button', { name: /完成/u }))
-    expect(await screen.findByRole('button', { name: /重开/u })).toBeTruthy()
-
     stale.resolve({ ok: true, value: view })
-    await Promise.resolve()
+    expect(await screen.findByRole('button', { name: /重开/u })).toBeTruthy()
     expect(screen.getByRole('button', { name: /重开/u })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /完成/u })).toBeNull()
   })
@@ -606,10 +650,8 @@ describe('TeamAction', () => {
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'New task' } })
     fireEvent.change(screen.getByPlaceholderText('任务描述'), { target: { value: 'Details' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    expect(await screen.findByText('New task')).toBeTruthy()
-
     stale.resolve({ ok: true, value: view })
-    await Promise.resolve()
+    expect(await screen.findByText('New task')).toBeTruthy()
     expect(screen.getByText('New task')).toBeTruthy()
   })
 

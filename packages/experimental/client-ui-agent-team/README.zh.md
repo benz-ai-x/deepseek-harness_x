@@ -51,9 +51,9 @@ kind: "package-reference"
 
 Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.zh.md) 的生成式 `ctx.remote.agentTeams` contribution，然后通过 Cordis effect 注册 locale dictionary 与一个 conversation-header entry。该 entry 声明 `agent-team.panel.view`，观察其公开 contribution 与本地化标签，并在既有 dialog 内渲染所选 contribution。释放 plugin Fiber 会移除 Remote、locale、entry、子 Slot、subscription 与 contribution navigation。
 
-打开的面板把每个重连 watch generation 作为一份完整 baseline 加后续有界 invalidation 消费。Baseline 会原子替换更早的 unary read；invalidation 只调用既有权威 view reader，不携带 task state。Carrier 丢失会保留最后已发布 view，并显示明确的 disconnected 或 stale 状态；重连只读取新 baseline。Session 变化与 service replacement 会隔离迟到 generation，而关闭面板或释放 Client Fiber 会释放 stream control。
+打开的面板把每个重连 watch generation 作为一份完整 baseline 加后续有界 invalidation 消费。Baseline 会原子替换更早的 unary read；invalidation 只调用既有权威 view reader，不携带 task state。权威读取严格串行：一次读取期间的 burst 只设置一个 dirty latch，并至多触发一次 trailing read。Carrier 丢失会保留最后已发布 view，并显示明确的 disconnected 或 stale 状态；重连只读取新 baseline。Session 变化与 service replacement 会隔离迟到 generation、释放排队读取并让新 generation 独立继续，而关闭面板或释放 Client Fiber 会释放 stream control。
 
-开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。任务文本、scope 与完整 dependency 草稿使用同一个 `edit` compare-and-set mutation。如果发生冲突，UI 会重新读取当前权威任务，保留明确标记为未保存的旧 form 与 dependency 草稿，并且绝不自动重试；如果重新读取失败，则保留该错误。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
+开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。任务文本、scope 与完整 dependency 草稿使用同一个 `edit` compare-and-set mutation，其 expected revision 在开始编辑时钉住。如果发生冲突，UI 会重新读取当前权威任务，在竞态 watch refresh 后仍保留明确标记为未保存的旧 form 与 dependency 草稿，并且绝不自动重试；如果重新读取失败，则保留该错误。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
 
 | 文件 | 职责 |
 |---|---|
