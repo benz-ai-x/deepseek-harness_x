@@ -19,6 +19,7 @@ import {
   type TeamTaskActionResult,
 } from './TeamAction.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
+import { AgentTeamPanelNavigationService } from './navigation.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -31,7 +32,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'agent-team.panel.view': {
       kind: 'list'
       scope: 'session'
-      owner: { readonly teamSessionId: SessionId }
+      owner: {
+        readonly teamSessionId: SessionId
+        readonly selectedMemberId?: SessionId
+        readonly navigationRevision?: number
+      }
     }
   }
 }
@@ -41,6 +46,7 @@ export const inject = ['sessions', 'remote', 'slots', 'locale']
 
 function registerUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'client-ui-agent-team: dictionaries')
+  const panelNavigation = new AgentTeamPanelNavigationService(ctx)
   const sessions = ctx.sessions
   const leadSessionId = (sessionId: SessionId): SessionId => {
     const address = sessions.binding(sessionId)?.session.getSnapshot().subagent?.address
@@ -73,7 +79,8 @@ function registerUi(ctx: ClientContext): void {
   }
 
   const actions: TeamActionInjected = {
-    hooks: { panelViews },
+    hooks: { panelViews, panelNavigation: panelNavigation.observable },
+    consumePanelNavigation: (revision) => { panelNavigation.consume(revision) },
     resolveTeamSessionId: leadSessionId,
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))

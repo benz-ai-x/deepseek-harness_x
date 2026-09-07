@@ -76,18 +76,30 @@ function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): Tea
     renderSlot: () => null,
     ...plain,
     usePanelViews: bindSnapshotSelector(hooks.panelViews),
+    usePanelNavigation: bindSnapshotSelector(hooks.panelNavigation),
     t: makeTranslate(zh, commonZh),
   } as unknown as TeamActionProps
 }
 
-function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjected {
+type TeamActionOverrides = Omit<Partial<TeamActionInjected>, 'hooks'> & {
+  readonly hooks?: Partial<TeamActionInjected['hooks']>
+}
+
+function actions(overrides: TeamActionOverrides = {}): TeamActionInjected {
+  const { hooks, ...plain } = overrides
   return {
     hooks: {
       panelViews: {
         getSnapshot: () => EMPTY_PANEL_VIEWS,
         subscribe: () => () => {},
       },
+      panelNavigation: {
+        getSnapshot: () => null,
+        subscribe: () => () => {},
+      },
+      ...hooks,
     },
+    consumePanelNavigation: () => {},
     resolveTeamSessionId: sessionId => sessionId,
     load: () => Promise.resolve({ ok: true, value: view }),
     createTask: () => Promise.resolve(taskSuccess({ ...task, id: TASK_2, subject: 'New task' })),
@@ -96,7 +108,7 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
       value: { ok: true, value: { ...task, revision: 2 } },
     }),
     openTeammate: () => Promise.resolve(),
-    ...overrides,
+    ...plain,
   }
 }
 
@@ -126,6 +138,48 @@ describe('TeamAction', () => {
     expect(renderSlot).toHaveBeenLastCalledWith(
       'agent-team.panel.view',
       { teamSessionId: SESSION },
+      { only: 'messages' },
+    )
+  })
+
+  it('opens a public child view for one explicitly addressed Team member', async () => {
+    const renderSlot = vi.fn(() => <div>Addressed message center</div>)
+    const messageViews = [{ id: 'messages', label: '消息' }] as const
+    const navigation = {
+      revision: 7,
+      teamSessionId: SESSION,
+      viewId: 'messages',
+      memberId: 'team-child' as SessionId,
+    }
+    const injected = actions({
+      hooks: {
+        panelViews: {
+          getSnapshot: () => messageViews,
+          subscribe: () => () => {},
+        },
+        panelNavigation: {
+          getSnapshot: () => navigation,
+          subscribe: () => () => {},
+        },
+      },
+      consumePanelNavigation: vi.fn(),
+    })
+
+    render(<TeamAction {...{
+      ...props(injected),
+      renderSlot,
+    }} />)
+
+    expect(await screen.findByRole('dialog', { name: /Agent Team/u })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '消息' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getAllByRole('dialog', { name: /Agent Team/u })).toHaveLength(1)
+    expect(renderSlot).toHaveBeenLastCalledWith(
+      'agent-team.panel.view',
+      {
+        teamSessionId: SESSION,
+        selectedMemberId: 'team-child',
+        navigationRevision: 7,
+      },
       { only: 'messages' },
     )
   })

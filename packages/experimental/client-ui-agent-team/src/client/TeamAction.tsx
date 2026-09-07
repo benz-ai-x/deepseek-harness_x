@@ -18,6 +18,7 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS, type TeamKey } from './locales.ts'
+import type { AgentTeamPanelNavigationSnapshot } from './navigation.ts'
 import css from './TeamAction.module.css'
 
 /** Generated Remote result consumed directly by the Team UI. */
@@ -30,7 +31,9 @@ export type TeamTaskActionResult = RemoteResult<TeamTaskMutationResult>
 export interface TeamActionInjected {
   readonly hooks: {
     readonly panelViews: HostObservable<readonly TeamPanelView[]>
+    readonly panelNavigation: HostObservable<AgentTeamPanelNavigationSnapshot | null>
   }
+  consumePanelNavigation: (revision: number) => void
   resolveTeamSessionId: (sessionId: SessionId) => SessionId
   load: (sessionId: SessionId) => Promise<TeamActionResult<TeamView>>
   createTask: (sessionId: SessionId, input: {
@@ -110,7 +113,8 @@ function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
 
 /** Render the live Team roster and compare-and-set task board. */
 export function TeamAction({
-  sessionId, load, createTask, updateTask, openTeammate, usePanelViews, resolveTeamSessionId, renderSlot, t,
+  sessionId, load, createTask, updateTask, openTeammate, usePanelViews, usePanelNavigation,
+  consumePanelNavigation, resolveTeamSessionId, renderSlot, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -122,7 +126,9 @@ export function TeamAction({
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT)
   const [pendingTasks, setPendingTasks] = useState<ReadonlySet<string>>(() => new Set())
   const [activeView, setActiveView] = useState('overview')
+  const [panelDestination, setPanelDestination] = useState<AgentTeamPanelNavigationSnapshot | null>(null)
   const childViews = usePanelViews(views => views)
+  const panelNavigation = usePanelNavigation(request => request)
   const sessionRef = useRef(sessionId)
   const refreshGeneration = useRef(0)
   sessionRef.current = sessionId
@@ -139,6 +145,7 @@ export function TeamAction({
     setEditDraft(EMPTY_DRAFT)
     setPendingTasks(new Set())
     setActiveView('overview')
+    setPanelDestination(null)
   }, [sessionId])
 
   useEffect(() => {
@@ -146,6 +153,17 @@ export function TeamAction({
       setActiveView('overview')
     }
   }, [activeView, childViews])
+
+  useEffect(() => {
+    if (panelNavigation === null
+      || panelNavigation.teamSessionId !== resolveTeamSessionId(sessionId)
+      || (panelNavigation.viewId !== 'overview'
+        && !childViews.some(view => view.id === panelNavigation.viewId))) return
+    setOpen(true)
+    setActiveView(panelNavigation.viewId)
+    setPanelDestination(panelNavigation)
+    consumePanelNavigation(panelNavigation.revision)
+  }, [childViews, consumePanelNavigation, panelNavigation, resolveTeamSessionId, sessionId])
 
   const refresh = useCallback(async (): Promise<boolean> => {
     const requestedSession = sessionId
@@ -440,6 +458,12 @@ export function TeamAction({
           )}
           {activeView !== 'overview' && renderSlot('agent-team.panel.view', {
             teamSessionId: resolveTeamSessionId(sessionId),
+            ...(panelDestination?.viewId === activeView && panelDestination.memberId !== undefined
+              ? { selectedMemberId: panelDestination.memberId }
+              : {}),
+            ...(panelDestination?.viewId === activeView
+              ? { navigationRevision: panelDestination.revision }
+              : {}),
           }, { only: activeView })}
         </div>
       )}

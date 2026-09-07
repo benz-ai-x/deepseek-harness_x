@@ -39,6 +39,8 @@ kind: "package-reference"
 
 页头 action 拥有唯一的 Team dialog，并在其中声明 session-scoped list Slot `agent-team.panel.view`。Client 扩展通过该公开 Slot 提供稳定 id、顺序、本地化标签与组件；Team owner 会传入当前会话解析出的精确 Lead `teamSessionId`。Contribution 会作为“概览”旁的 tab 出现，无需导入本包的私有组件。注册、locale 变化与移除会更新导航列表，释放任一 Fiber 都会移除相应权限与 UI。
 
+另一个 Client 扩展可以调用 `ctx.agentTeamPanelNavigation.open({ teamSessionId, viewId, memberId })`，链接到已注册的某个 child，并可指定精确 Team member。Owner 会打开同一个 dialog、选择该公开 child，并通过 Slot owner props 传入 `selectedMemberId` 与单调递增的 `navigationRevision`。匹配的 panel 只消费一次 retained request；未知 child 或另一个 Team 无法消费。该提示只选择 Client UI，绝不授予 Team 读取或写入权限。
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -49,12 +51,15 @@ kind: "package-reference"
 
 Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.zh.md) 的生成式 `ctx.remote.agentTeams` contribution，然后通过 Cordis effect 注册 locale dictionary 与一个 conversation-header entry。该 entry 声明 `agent-team.panel.view`，观察其公开 contribution 与本地化标签，并在既有 dialog 内渲染所选 contribution。释放 plugin Fiber 会移除 Remote、locale、entry、子 Slot、subscription 与 contribution navigation。
 
+同一个 Fiber 还负责 `ctx.agentTeamPanelNavigation` service 及其“保留至消费”的请求交换。这个很小的纯 Client service 只携带 Team Session、公开 child id、可选 member id 与 revision；不携带消息正文、凭据、provider 对象或 Host 权限。
+
 开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。`team-task-conflict` 结果仅在重新读取成功后显示状态陈旧提示；如果重新读取失败，则保留该错误。由于 Team service 把任务文本或 scope 编辑与 dependency 修改公开为独立 action，两者使用两个连续的 compare-and-set mutation。
 
 | 文件 | 职责 |
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | 生成式 Remote、locale、导航、公开子视图 projection 与 slot registration |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Team dialog、子视图 tab、roster 与任务板交互状态 |
+| [`src/client/navigation.ts`](src/client/navigation.ts) | 进入唯一 Team panel 的 Fiber-owned 公开导航请求 |
 | [`src/client/locales.ts`](src/client/locales.ts) | 中英文 panel 文案 |
 | [`src/index.ts`](src/index.ts) | 不执行行为的 Host entry |
 

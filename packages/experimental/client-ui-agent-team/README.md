@@ -39,6 +39,8 @@ The task board shows task identity, owner, blockers, readiness, advisory write s
 
 The header action owns the only Team dialog and declares the session-scoped list Slot `agent-team.panel.view` inside it. A Client extension contributes a stable id, order, localized label, and component through that public Slot; the Team owner passes the exact Lead `teamSessionId` selected by the current conversation. Contributions appear as tabs beside Overview and need no import from this package's private components. Registration, locale changes, and removal update the navigation list, and disposing either Fiber removes its authority and UI.
 
+Another Client extension can call `ctx.agentTeamPanelNavigation.open({ teamSessionId, viewId, memberId })` to link into one registered child for an optional exact Team member. The owner opens the same dialog, selects that public child, and passes `selectedMemberId` plus a monotonic `navigationRevision` through the Slot owner props. A matching panel consumes the retained request once; an unknown child or another Team cannot consume it. The hint selects Client UI only and never grants Team read or write authority.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -49,12 +51,15 @@ The header action owns the only Team dialog and declares the session-scoped list
 
 The Client export mounts the generated `ctx.remote.agentTeams` contribution from [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.md), then registers its locale dictionaries and one conversation-header entry through Cordis effects. That entry declares `agent-team.panel.view`, observes its public contributions and localized labels, and renders the selected contribution inside the existing dialog. Disposing the plugin Fiber removes the Remote, locale, entry, child Slot, subscriptions, and contribution navigation.
 
+The same Fiber owns the `ctx.agentTeamPanelNavigation` service and its retained-until-consumed request exchange. This small Client-only service carries only Team Session, public child id, optional member id, and revision; it does not carry message content, credentials, provider objects, or Host authority.
+
 Starting a create or update invalidates older refreshes. Success reloads the complete Team view so every task's derived fields stay current. A `team-task-conflict` result displays a stale-state notice only after that reload succeeds; a reload failure remains visible instead. Editing task text or scopes and changing dependencies use two sequential compare-and-set mutations because the Team service exposes them as separate actions.
 
 | File | Role |
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | Generated Remote, locale, navigation, public child-view projection, and slot registration |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Team dialog, child-view tabs, roster, and task-board interaction state |
+| [`src/client/navigation.ts`](src/client/navigation.ts) | Fiber-owned public navigation requests into the single Team panel |
 | [`src/client/locales.ts`](src/client/locales.ts) | English and Chinese panel copy |
 | [`src/index.ts`](src/index.ts) | Inert Host entry |
 

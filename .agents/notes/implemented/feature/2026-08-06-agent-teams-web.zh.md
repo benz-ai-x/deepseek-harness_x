@@ -16,6 +16,8 @@
 
 `@deepseek-ai/dsh-experimental-client-ui-agent-team` 通过稳定 `ctx.remote` service 挂载 `@deepseek-ai/dsh-experimental-agent-team/remote` contribution，随后直接消费生成式 `ctx.remote.agentTeams` method，不增加 Client result 包装层。它为 roster status、model diagnostics、task control 与扩展视图持有唯一 Team dialog。该 dialog 的 header entry 声明公开的 session-scoped `agent-team.panel.view` list Slot，把本地化 contribution label 投影为 tab，并在 render site 传递精确 Lead `teamSessionId`。Contribution 只使用公开 Slot 与生成式 Remote type；释放任一 Fiber 都会移除其 UI 与权限。
 
+Team UI Fiber 还拥有公开且仅限 Client 的 `ctx.agentTeamPanelNavigation` service。扩展可以指定精确 Team Session、已注册的 child-view id 与可选 member id。Owner 会把请求保留到匹配的 panel 与 child 出现，再打开同一个 dialog、选择该 child，通过 Slot owner props 转发 member 与单调 revision，并只消费请求一次。这个导航提示既不读取 Host 数据也不授予权限；child 仍使用自身生成式 Remote 与精确 live-Lead 检查。
+
 每次 task update 都发送当前显示的 revision。每个 create 或 update 都独立持有 pending token，在开始前使更早的 refresh 失效，并在成功后重新读取完整 Team view。Conflict 仅在其 reload 成功后要求用户检查；如果重新读取失败，则保留该错误。重叠 refresh 只发布所选 Session 的最新请求。
 
 Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address，不带 Team tag。UI 刷新直接 child catalog、再次检查所选 Session，然后打开 addressed conversation。History 与普通 addressed-child continuation 使用稳定 Subagent 路径。[持久人类 Team 消息请求决策](../architecture/2026-09-07-durable-human-team-message-requests.zh.md)部分取代本 Note 原有的「不发送／不回复」和「只能继续 addressed-child 会话」边界：当前消息 composer 使用生成式 `agentTeams/sendMessage` Remote 发送显式人类工作与回复。本 Note 仍是消息读取、分页、任务、teammate 导航与 Client Slot 组合的当前归属。
@@ -26,7 +28,7 @@ Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'cont
 
 ## 边界
 
-Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实时 subscription operation。独立的仅限 Lead 生成式 `agentTeams/sendMessage` Remote 与消息 composer 提供显式发送和回复，不会把读取变成变更，也不推断工作已完成。Reader 绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的普通 continuation 仍是 addressed-child prompt；只有显式的消息 composer 提交才是 Team mailbox message。
+Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实时 subscription operation。独立的仅限 Lead 生成式 `agentTeams/sendMessage` Remote 与消息 composer 提供显式发送和回复，不会把读取变成变更，也不推断工作已完成。Reader 绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的普通 continuation 仍是 addressed-child prompt；只有显式的消息 composer 提交才是 Team mailbox message。Panel navigation 明确不是全局 router 或另一份 Team state store。它不携带消息正文、provider 对象、凭据、native payload 或配置路径；不匹配的 Team 或未注册的 child 无法消费请求。
 
 ## 考虑过的替代方案
 
@@ -44,7 +46,7 @@ Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实
 
 ## 测试
 
-Team service test 覆盖固定 window 分页、filter、detail authorization、净化内容、participant forgery、过期身份、cursor scope 与损坏、持久化 failure、无 activity 读取和冷启动。逐文件 coverage 固定 message reader 的每条路径；生成流程与 plain-Node built-artifact smoke 校验导出的 Remote descriptor。Client typecheck 与浏览器 component test 覆盖 owner 声明的子导航、动态注册与 dispose、挂载 namespace、Lead routing、task control、陈旧 async result，以及状态或错误呈现。无密钥 Agent Team profile snapshot 通过真实 Host service 执行元数据与净化详情读取；Web 端到端测试则在真实 Remote composition 上固定单一可导航 panel。
+Team service test 覆盖固定 window 分页、filter、detail authorization、净化内容、participant forgery、过期身份、cursor scope 与损坏、持久化 failure、无 activity 读取和冷启动。逐文件 coverage 固定 message reader 的每条路径；生成流程与 plain-Node built-artifact smoke 校验导出的 Remote descriptor。Client typecheck 与浏览器 component test 覆盖 owner 声明的子导航、动态注册与 dispose、挂载 namespace、Lead routing、task control、陈旧 async result，以及状态或错误呈现。定址导航场景还覆盖精确 Team 匹配、唯一 Team dialog、child 选择、member/revision Slot props、单次消费，以及导航 service 随 owning Fiber 移除。无密钥 Agent Team profile snapshot 通过真实 Host service 执行元数据与净化详情读取；Web 端到端测试则在真实 Remote composition 上固定单一可导航 panel。
 
 ## 后果
 

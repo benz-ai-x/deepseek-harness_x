@@ -205,6 +205,28 @@ describe('ui-team browser plugin', () => {
     expect(actions.hooks.panelViews.getSnapshot()).toEqual([])
   })
 
+  it('publishes addressed panel navigation only for the owning Client Fiber', async () => {
+    const b = await bench()
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+
+    b.ctx.agentTeamPanelNavigation.open({
+      teamSessionId: SESSION,
+      viewId: 'messages',
+      memberId: CHILD,
+    })
+    expect(actions.hooks.panelNavigation.getSnapshot()).toEqual({
+      revision: 1,
+      teamSessionId: SESSION,
+      viewId: 'messages',
+      memberId: CHILD,
+    })
+
+    actions.consumePanelNavigation(1)
+    expect(actions.hooks.panelNavigation.getSnapshot()).toBeNull()
+    await b.fiber.dispose()
+    expect(b.ctx.get('agentTeamPanelNavigation')).toBeUndefined()
+  })
+
   it('unmounts the Remote contribution when later Client registration fails', async () => {
     const b = await bench({ registrationFailure: true })
     await expect(b.activation).resolves.toMatchObject({ message: 'slot registration failed' })

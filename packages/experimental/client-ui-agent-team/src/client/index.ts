@@ -9,6 +9,11 @@ export type {
   TeamActionInjected, TeamActionProps, TeamActionResult, TeamPanelView,
 } from './TeamAction.tsx'
 export type { TeamKey } from './locales.ts'
+export type {
+  AgentTeamPanelNavigation,
+  AgentTeamPanelNavigationRequest,
+  AgentTeamPanelNavigationSnapshot,
+} from './navigation.ts'
 
 /** Mount the generated Team Remote contribution and its browser UI. */
 export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
