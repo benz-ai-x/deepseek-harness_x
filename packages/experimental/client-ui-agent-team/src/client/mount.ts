@@ -42,6 +42,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const inject = ['sessions', 'remote', 'slots', 'locale']
 
 function registerUi(ctx: ClientContext): void {
+  const watchOwner = createTeamWatchOwner()
+  ctx.effect(
+    () => async () => { await watchOwner.dispose() },
+    'client-ui-agent-team: watch controls',
+  )
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'client-ui-agent-team: dictionaries')
   const sessions = ctx.sessions
   const leadSessionId = (sessionId: SessionId): SessionId => {
@@ -84,7 +89,7 @@ function registerUi(ctx: ClientContext): void {
       return await ctx.remote.agentTeams.getTask(leadSessionId(sessionId), taskId)
     },
     watch(sessionId, sink) {
-      return createTeamActionWatch(ctx, leadSessionId(sessionId), sink)
+      return watchOwner.own(createTeamActionWatch(ctx, leadSessionId(sessionId), sink))
     },
     async createTask(sessionId, input): Promise<TeamTaskActionResult> {
       return await ctx.remote.agentTeams.createTask(leadSessionId(sessionId), input)
@@ -139,6 +144,56 @@ function registerUi(ctx: ClientContext): void {
 type TeamWatchBaselineFrame = Extract<TeamWatchFrame, { readonly type: 'baseline' }>
 type TeamWatchInvalidationFrame = Exclude<TeamWatchFrame, TeamWatchBaselineFrame>
 
+interface AwaitableTeamActionWatchControl {
+  start(): void
+  dispose(): Promise<void>
+}
+
+interface TeamWatchOwner {
+  own(control: AwaitableTeamActionWatchControl): TeamActionWatchControl
+  dispose(): Promise<void>
+}
+
+/** Retain every triggered watch close until the Client registration can await quiescence. */
+function createTeamWatchOwner(): TeamWatchOwner {
+  const controls = new Set<TeamActionWatchControl>()
+  const pending = new Set<Promise<void>>()
+  const failures: unknown[] = []
+  let accepting = true
+  return {
+    own(control) {
+      let completion: Promise<void> | undefined
+      let disposed = false
+      const owned: TeamActionWatchControl = {
+        start() {
+          if (!disposed) control.start()
+        },
+        dispose(): Promise<void> {
+          if (completion !== undefined) return completion
+          disposed = true
+          controls.delete(owned)
+          const closing = control.dispose()
+          const observed = closing.catch((error: unknown) => { failures.push(error) })
+          completion = observed
+          pending.add(observed)
+          void observed.then(() => { pending.delete(observed) })
+          return observed
+        },
+      }
+      if (accepting) controls.add(owned)
+      else void owned.dispose()
+      return owned
+    },
+    async dispose() {
+      accepting = false
+      for (const control of [...controls]) void control.dispose()
+      await Promise.all([...pending])
+      if (failures.length === 1) throw failures[0]
+      if (failures.length > 1) throw new AggregateError(failures, 'Team watch controls failed to dispose')
+    },
+  }
+}
+
 /**
  * Bind one logical Team generation stream to its public panel sink.
  * @param ctx - Client Context providing the generated Remote stream carrier.
@@ -150,7 +205,7 @@ export function createTeamActionWatch(
   ctx: ClientContext,
   sessionId: SessionId,
   sink: TeamActionWatchSink,
-): TeamActionWatchControl {
+): AwaitableTeamActionWatchControl {
   const stream = ctx.remote.$stream<TeamWatchFrame>({
     name: 'Agent Teams change stream',
     open: signal => ctx.remote.agentTeams.watch(sessionId, signal),

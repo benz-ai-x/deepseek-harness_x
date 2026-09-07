@@ -26,6 +26,8 @@ async function bench(options: {
   registrationFailure?: boolean
   remoteFailure?: 'view' | 'update'
   refreshGate?: Promise<void>
+  disposeStreamGate?: Promise<void>
+  disposeStreamFailure?: Error
 } = {}) {
   const ctx = new Context()
   const calls: { method: string; args: unknown[] }[] = []
@@ -42,8 +44,12 @@ async function bench(options: {
     readonly disposeMount = vi.fn(() => Promise.resolve())
     readonly mount = vi.fn((_contribution: unknown) => Promise.resolve(this.disposeMount))
     readonly createStream = vi.fn()
+    readonly iterateStream = vi.fn()
     readonly restartStream = vi.fn()
-    readonly disposeStream = vi.fn(() => Promise.resolve())
+    readonly disposeStream = vi.fn(() => options.disposeStreamGate
+      ?? (options.disposeStreamFailure === undefined
+        ? Promise.resolve()
+        : Promise.reject(options.disposeStreamFailure)))
     streamOptions: RemoteStreamOptions<unknown> | undefined
 
     constructor(serviceCtx: Context) {
@@ -60,7 +66,10 @@ async function bench(options: {
       return {
         restart: this.restartStream,
         dispose: this.disposeStream,
-        [Symbol.asyncIterator]: async function * () {},
+        [Symbol.asyncIterator]: () => {
+          this.iterateStream()
+          return (async function * () {})()
+        },
       } as never
     }
   }
@@ -74,7 +83,7 @@ async function bench(options: {
       id: SESSION, name: 'lead', role: 'lead' as const, status: 'idle' as const, diagnostics: [],
     }], tasks: [task],
   }
-  ctx.provide('remote.agentTeams', {
+  const agentTeams = {
     view: (...args: unknown[]) => {
       calls.push({ method: 'agentTeams/view', args })
       return Promise.resolve(options.remoteFailure === 'view'
@@ -103,7 +112,8 @@ async function bench(options: {
         }
         : { ok: true as const, value: { ok: true as const, value: { ...task, revision: 2 } } })
     },
-  })
+  }
+  const disposeAgentTeams = ctx.reflect.provide('remote.agentTeams', agentTeams)
   const navigation: unknown[] = []
   let current = options.addressed === true ? CHILD : SESSION
   ctx.provide('sessions', {
@@ -164,6 +174,8 @@ async function bench(options: {
         name: 'agent-team.panel.view', id, label, order: 10,
       } as never, () => null),
     ),
+    agentTeams,
+    disposeAgentTeams,
   }
 }
 
@@ -239,6 +251,79 @@ describe('ui-team browser plugin', () => {
     contribution()
     await Promise.resolve()
     expect(actions.hooks.panelViews.getSnapshot()).toEqual([])
+  })
+
+  it('awaits a React-triggered watch disposal before its owning Fiber releases Remote registration', async () => {
+    const released = Promise.withResolvers<undefined>()
+    const b = await bench({ disposeStreamGate: released.promise })
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const control = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    control.start()
+
+    void control.dispose()
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    let settled = false
+    const closing = b.fiber.dispose().then(() => { settled = true })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+    expect(b.remote.disposeMount).not.toHaveBeenCalled()
+
+    released.resolve(undefined)
+    await closing
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    expect(b.remote.disposeMount).toHaveBeenCalledOnce()
+    expect(b.entry()).toBeUndefined()
+  })
+
+  it('reports a triggered watch disposal failure through lifecycle while releasing Remote registration', async () => {
+    const failure = new Error('watch transport disposal failed')
+    const b = await bench({ disposeStreamFailure: failure })
+    const logged = vi.spyOn(b.ctx.logger, 'error')
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const control = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    control.start()
+
+    control.dispose()
+    await b.fiber.dispose()
+    expect(logged).toHaveBeenCalledWith(failure)
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    expect(b.remote.disposeMount).toHaveBeenCalledOnce()
+    expect(b.entry()).toBeUndefined()
+  })
+
+  it('drains the old watch before a service generation is withdrawn and rejects stale restarts', async () => {
+    const released = Promise.withResolvers<undefined>()
+    const b = await bench({ disposeStreamGate: released.promise })
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const control = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    control.start()
+
+    let withdrawn = false
+    const withdrawing = Promise.resolve(b.disposeAgentTeams()).then(() => { withdrawn = true })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(withdrawn).toBe(false)
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    expect(b.entry()).toBeUndefined()
+
+    released.resolve(undefined)
+    await withdrawing
+    const staleControl = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    expect(b.remote.createStream).toHaveBeenCalledTimes(2)
+    expect(b.remote.disposeStream).toHaveBeenCalledTimes(2)
+    staleControl.start()
+    expect(b.remote.iterateStream).toHaveBeenCalledOnce()
+
+    const disposeReplacement = b.ctx.reflect.provide('remote.agentTeams', b.agentTeams)
+    await vi.waitFor(() => { expect(b.entry()).toBeDefined() })
+    await disposeReplacement()
   })
 
   it('unmounts the Remote contribution when later Client registration fails', async () => {
