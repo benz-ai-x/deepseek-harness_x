@@ -211,6 +211,7 @@ export function TeamAction({
   const [creating, setCreating] = useState(false)
   const [createDraft, setCreateDraft] = useState<Draft>(EMPTY_DRAFT)
   const [editing, setEditing] = useState<string | null>(null)
+  const [editBase, setEditBase] = useState<Readonly<{ taskId: TeamTaskId; revision: number }> | null>(null)
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT)
   const [pendingTasks, setPendingTasks] = useState<ReadonlySet<string>>(() => new Set())
   const [activeView, setActiveView] = useState('overview')
@@ -222,6 +223,7 @@ export function TeamAction({
   const childViews = usePanelViews(views => views)
   const sessionRef = useRef(sessionId)
   const viewRef = useRef<TeamView | null>(null)
+  const conflictDraftRef = useRef<string | null>(null)
   const refreshGeneration = useRef(0)
   const watchGeneration = useRef(0)
   const graphViewportRef = useRef<HTMLDivElement>(null)
@@ -239,6 +241,7 @@ export function TeamAction({
     refreshGeneration.current += 1
     watchGeneration.current += 1
     viewRef.current = null
+    conflictDraftRef.current = null
     setOpen(false)
     setLoading(false)
     setView(null)
@@ -246,6 +249,7 @@ export function TeamAction({
     setCreating(false)
     setCreateDraft(EMPTY_DRAFT)
     setEditing(null)
+    setEditBase(null)
     setEditDraft(EMPTY_DRAFT)
     setPendingTasks(new Set())
     setActiveView('overview')
@@ -280,7 +284,7 @@ export function TeamAction({
     setLoading(false)
     if (result.ok) {
       replaceView(result.value)
-      setError(null)
+      setError(conflictDraftRef.current)
       return true
     } else {
       setError(failureText(result.error))
@@ -301,7 +305,7 @@ export function TeamAction({
         refreshGeneration.current += 1
         setLoading(false)
         replaceView(next)
-        setError(null)
+        setError(conflictDraftRef.current)
         setWatchPhase('connected')
       },
       invalidated() {
@@ -343,15 +347,18 @@ export function TeamAction({
       }
       if (!result.value.ok) {
         if (result.value.error.code === 'team-task-conflict') {
+          const conflictMessage = t(conflictKey)
+          if (conflictKey === 'conflictDraft') conflictDraftRef.current = conflictMessage
           const reloaded = await refresh()
           if (sessionRef.current !== requestedSession) return undefined
-          if (reloaded) setError(t(conflictKey))
+          if (reloaded || conflictKey === 'conflictDraft') setError(conflictMessage)
         } else {
           setError(failureText(result.value.error))
         }
         return undefined
       }
       const task = result.value.value
+      if (conflictKey === 'conflictDraft') conflictDraftRef.current = null
       setError(null)
       await refresh()
       if (sessionRef.current !== requestedSession) return undefined
@@ -384,7 +391,10 @@ export function TeamAction({
   }
 
   const startEdit = (task: TeamTask): void => {
+    conflictDraftRef.current = null
+    setError(null)
     setEditing(task.id)
+    setEditBase({ taskId: task.id, revision: task.revision })
     setEditDraft({
       subject: task.subject,
       description: task.description,
@@ -397,7 +407,7 @@ export function TeamAction({
     const requestedSession = sessionId
     const edited = await settleTask(task.id, () => updateTask(requestedSession, {
       taskId: task.id,
-      expectedRevision: task.revision,
+      expectedRevision: editBase?.taskId === task.id ? editBase.revision : task.revision,
       action: 'edit',
       subject: editDraft.subject.trim(),
       description: editDraft.description.trim(),
@@ -406,6 +416,7 @@ export function TeamAction({
     }), 'conflictDraft')
     if (edited === undefined) return
     setEditing(null)
+    setEditBase(null)
   }
 
   const teammates = view?.members.filter(member => member.role === 'teammate') ?? []
@@ -784,7 +795,12 @@ export function TeamAction({
                               taskId={selectedTask.id}
                               pending={pendingTasks.has(selectedTask.id)}
                               onSave={() => { void submitEdit(selectedTask) }}
-                              onCancel={() => { setEditing(null) }}
+                              onCancel={() => {
+                                conflictDraftRef.current = null
+                                setError(null)
+                                setEditing(null)
+                                setEditBase(null)
+                              }}
                               t={t}
                             />
                           )

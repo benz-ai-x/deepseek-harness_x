@@ -1013,6 +1013,106 @@ describe('TeamAction', () => {
     expect(secondLoad).toHaveBeenCalledTimes(2)
   })
 
+  it('pins an edit revision across another Client commit and a watch invalidation', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const initial = { ...task, status: 'pending' as const, ownerName: 'lead', ready: true }
+    let authoritative = initial
+    let secondSink: WatchSink | undefined
+    const currentView = (): TeamView => ({ ...view, tasks: [authoritative, dependencyOption] })
+    const firstUpdate = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      authoritative = {
+        ...authoritative,
+        revision: 2,
+        subject: input.subject ?? authoritative.subject,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    const secondUpdate = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      if (input.expectedRevision === 1) return Promise.resolve(taskConflict('stale revision 1'))
+      authoritative = {
+        ...authoritative,
+        revision: 3,
+        subject: input.subject ?? authoritative.subject,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    const firstClient = render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: currentView() }),
+      updateTask: firstUpdate,
+    }))} />)
+    const secondClient = render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: currentView() }),
+      watch: (_sessionId, sink) => {
+        secondSink = sink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+      updateTask: secondUpdate,
+    }))} />)
+
+    for (const client of [firstClient, secondClient]) {
+      fireEvent.click(within(client.container).getByRole('button', { name: /Agent Team/u }))
+      await within(client.container).findByRole('button', { name: 'task-1 · Implement runtime' })
+      fireEvent.click(within(client.container).getByRole('button', { name: /编辑/u }))
+    }
+    fireEvent.change(within(firstClient.container).getByPlaceholderText(zh.subject), {
+      target: { value: 'Committed by client A' },
+    })
+    fireEvent.change(within(secondClient.container).getByPlaceholderText(zh.subject), {
+      target: { value: 'Unsaved client B draft' },
+    })
+    fireEvent.click(within(firstClient.container).getByRole('button', { name: zh.save }))
+    await within(firstClient.container).findByRole('button', { name: 'task-1 · Committed by client A' })
+
+    act(() => { secondSink?.invalidated() })
+    await within(secondClient.container).findByRole('button', { name: 'task-1 · Committed by client A' })
+    expect(within(secondClient.container).getByDisplayValue('Unsaved client B draft')).toBeTruthy()
+    fireEvent.click(within(secondClient.container).getByRole('button', { name: zh.save }))
+
+    expect(await within(secondClient.container).findByText(zh.conflictDraft)).toBeTruthy()
+    expect(within(secondClient.container).getByDisplayValue('Unsaved client B draft')).toBeTruthy()
+    expect(secondUpdate).toHaveBeenCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 1,
+      action: 'edit',
+    }))
+  })
+
+  it('retains an unsaved conflict when its reload races a watch refresh', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const conflictRead = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const watchRead = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const current = { ...task, revision: 2, subject: 'Current authority' }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [task, dependencyOption] } })
+      .mockImplementationOnce(() => conflictRead.promise)
+      .mockImplementationOnce(() => watchRead.promise)
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load,
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+      updateTask: () => Promise.resolve(taskConflict('stale revision 1')),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
+    fireEvent.change(screen.getByPlaceholderText(zh.subject), { target: { value: 'Unsaved draft' } })
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(2) })
+
+    act(() => { sink?.invalidated() })
+    expect(load).toHaveBeenCalledTimes(2)
+    conflictRead.resolve({ ok: true, value: { ...view, tasks: [current, dependencyOption] } })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
+    watchRead.resolve({ ok: true, value: { ...view, tasks: [current, dependencyOption] } })
+
+    expect(await screen.findByText(zh.conflictDraft)).toBeTruthy()
+    expect(screen.getByDisplayValue('Unsaved draft')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'task-1 · Current authority' })).toBeTruthy()
+  })
+
   it('keeps reload failures visible after task and dependency conflicts', async () => {
     const taskLoad = vi.fn()
       .mockResolvedValueOnce({ ok: true, value: view })
