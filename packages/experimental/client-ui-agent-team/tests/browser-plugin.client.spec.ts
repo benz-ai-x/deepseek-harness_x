@@ -1,6 +1,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { TeamMemberView as TeamRosterMember, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team/client'
@@ -25,6 +26,8 @@ async function bench(options: {
   registrationFailure?: boolean
   remoteFailure?: 'view' | 'update'
   refreshGate?: Promise<void>
+  disposeStreamGate?: Promise<void>
+  disposeStreamFailure?: Error
 } = {}) {
   const ctx = new Context()
   const calls: { method: string; args: unknown[] }[] = []
@@ -40,6 +43,14 @@ async function bench(options: {
   class RemoteService extends Service {
     readonly disposeMount = vi.fn(() => Promise.resolve())
     readonly mount = vi.fn((_contribution: unknown) => Promise.resolve(this.disposeMount))
+    readonly createStream = vi.fn()
+    readonly iterateStream = vi.fn()
+    readonly restartStream = vi.fn()
+    readonly disposeStream = vi.fn(() => options.disposeStreamGate
+      ?? (options.disposeStreamFailure === undefined
+        ? Promise.resolve()
+        : Promise.reject(options.disposeStreamFailure)))
+    streamOptions: RemoteStreamOptions<unknown> | undefined
 
     constructor(serviceCtx: Context) {
       super(serviceCtx, 'remote')
@@ -47,6 +58,19 @@ async function bench(options: {
 
     $mount(contribution: unknown): Promise<() => Promise<void>> {
       return this.mount(contribution)
+    }
+
+    $stream<Item>(options: RemoteStreamOptions<Item>): never {
+      this.streamOptions = options
+      this.createStream(options)
+      return {
+        restart: this.restartStream,
+        dispose: this.disposeStream,
+        [Symbol.asyncIterator]: () => {
+          this.iterateStream()
+          return (async function * () {})()
+        },
+      } as never
     }
   }
   const remote = new RemoteService(ctx)
@@ -59,13 +83,18 @@ async function bench(options: {
       id: SESSION, name: 'lead', role: 'lead' as const, status: 'idle' as const, diagnostics: [],
     }], tasks: [task],
   }
-  ctx.provide('remote.agentTeams', {
+  const agentTeams = {
     view: (...args: unknown[]) => {
       calls.push({ method: 'agentTeams/view', args })
       return Promise.resolve(options.remoteFailure === 'view'
         ? failure
         : { ok: true as const, value: view })
     },
+    watch: (...args: unknown[]) => {
+      calls.push({ method: 'agentTeams/watch', args })
+      return { [Symbol.asyncIterator]: async function * () {} }
+    },
+    getTask: answer('agentTeams/getTask', task),
     createTask: answer('agentTeams/createTask', task),
     updateTask: (...args: unknown[]) => {
       calls.push({ method: 'agentTeams/updateTask', args })
@@ -83,7 +112,8 @@ async function bench(options: {
         }
         : { ok: true as const, value: { ok: true as const, value: { ...task, revision: 2 } } })
     },
-  })
+  }
+  const disposeAgentTeams = ctx.reflect.provide('remote.agentTeams', agentTeams)
   const navigation: unknown[] = []
   let current = options.addressed === true ? CHILD : SESSION
   ctx.provide('sessions', {
@@ -144,6 +174,8 @@ async function bench(options: {
         name: 'agent-team.panel.view', id, label, order: 10,
       } as never, () => null),
     ),
+    agentTeams,
+    disposeAgentTeams,
   }
 }
 
@@ -163,6 +195,21 @@ describe('ui-team browser plugin', () => {
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
     const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
     expect((await actions.load(SESSION)).ok).toBe(true)
+    expect((await actions.getTask(SESSION, TASK_ID)).ok).toBe(true)
+    const sink = { replace: vi.fn(), invalidated: vi.fn(), stale: vi.fn(), failed: vi.fn() }
+    const watch = actions.watch(SESSION, sink)
+    expect(b.remote.createStream).toHaveBeenCalledOnce()
+    expect(b.remote.streamOptions?.name).toBe('Agent Teams change stream')
+    expect(typeof b.remote.streamOptions?.open).toBe('function')
+    expect(typeof b.remote.streamOptions?.ended).toBe('function')
+    expect(typeof b.remote.streamOptions?.carrierFailed).toBe('function')
+    b.remote.streamOptions?.carrierFailed?.(new Error('connection lost'))
+    expect(sink.stale).toHaveBeenCalledOnce()
+    b.remote.streamOptions?.open(new AbortController().signal)
+    expect(b.calls.at(-1)?.method).toBe('agentTeams/watch')
+    watch.start()
+    await watch.dispose()
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
     expect((await actions.createTask(SESSION, {
       subject: 'Task', description: 'Description', blockedBy: [], writeScopes: [],
     })).ok).toBe(true)
@@ -173,7 +220,8 @@ describe('ui-team browser plugin', () => {
       taskId: TASK_ID, expectedRevision: 2, action: 'reassign', owner: 'worker',
     })).ok).toBe(true)
     expect(b.calls.map(call => call.method)).toEqual([
-      'agentTeams/view', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
+      'agentTeams/view', 'agentTeams/getTask', 'agentTeams/watch', 'agentTeams/createTask',
+      'agentTeams/updateTask', 'agentTeams/updateTask',
     ])
     expect(b.calls.at(-1)?.args[1]).toMatchObject({ owner: 'worker' })
 
@@ -254,6 +302,79 @@ describe('ui-team browser plugin', () => {
     stopLater()
     stopThrowing()
     await b.fiber.dispose()
+  })
+
+  it('awaits a React-triggered watch disposal before its owning Fiber releases Remote registration', async () => {
+    const released = Promise.withResolvers<undefined>()
+    const b = await bench({ disposeStreamGate: released.promise })
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const control = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    control.start()
+
+    void control.dispose()
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    let settled = false
+    const closing = b.fiber.dispose().then(() => { settled = true })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+    expect(b.remote.disposeMount).not.toHaveBeenCalled()
+
+    released.resolve(undefined)
+    await closing
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    expect(b.remote.disposeMount).toHaveBeenCalledOnce()
+    expect(b.entry()).toBeUndefined()
+  })
+
+  it('reports a triggered watch disposal failure through lifecycle while releasing Remote registration', async () => {
+    const failure = new Error('watch transport disposal failed')
+    const b = await bench({ disposeStreamFailure: failure })
+    const logged = vi.spyOn(b.ctx.logger, 'error')
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const control = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    control.start()
+
+    void control.dispose()
+    await b.fiber.dispose()
+    expect(logged).toHaveBeenCalledWith(failure)
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    expect(b.remote.disposeMount).toHaveBeenCalledOnce()
+    expect(b.entry()).toBeUndefined()
+  })
+
+  it('drains the old watch before a service generation is withdrawn and rejects stale restarts', async () => {
+    const released = Promise.withResolvers<undefined>()
+    const b = await bench({ disposeStreamGate: released.promise })
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const control = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    control.start()
+
+    let withdrawn = false
+    const withdrawing = Promise.resolve(b.disposeAgentTeams()).then(() => { withdrawn = true })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(withdrawn).toBe(false)
+    expect(b.remote.disposeStream).toHaveBeenCalledOnce()
+    expect(b.entry()).toBeUndefined()
+
+    released.resolve(undefined)
+    await withdrawing
+    const staleControl = actions.watch(SESSION, {
+      replace() {}, invalidated() {}, stale() {}, failed() {},
+    })
+    expect(b.remote.createStream).toHaveBeenCalledTimes(2)
+    expect(b.remote.disposeStream).toHaveBeenCalledTimes(2)
+    staleControl.start()
+    expect(b.remote.iterateStream).toHaveBeenCalledOnce()
+
+    const disposeReplacement = b.ctx.reflect.provide('remote.agentTeams', b.agentTeams)
+    await vi.waitFor(() => { expect(b.entry()).toBeDefined() })
+    await disposeReplacement()
   })
 
   it('unmounts the Remote contribution when later Client registration fails', async () => {

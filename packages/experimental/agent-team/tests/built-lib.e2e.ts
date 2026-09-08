@@ -25,9 +25,20 @@ describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
     const script = `
       const host = await import(${JSON.stringify(urls.host)})
       const remote = await import(${JSON.stringify(urls.remote)})
+      const watch = remote.default.descriptors.find(descriptor => descriptor.method === 'watch')
       console.log(JSON.stringify({
         className: host.default.name,
         methods: remote.default.descriptors.map(descriptor => descriptor.id),
+        watch: watch === undefined ? null : {
+          mode: watch.mode,
+          cancellation: watch.cancellation,
+          parameters: watch.parameters.map(parameter => ({
+            name: parameter.name,
+            wire: parameter.wire,
+            source: parameter.source,
+            lookup: parameter.lookup,
+          })),
+        },
       }))
     `
 
@@ -36,17 +47,25 @@ describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
     const output = JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '{}') as {
       className: string
       methods: string[]
+      watch: unknown
     }
     expect(output).toEqual({
       className: 'TeamService',
       methods: [
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/createTask',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/getMessage',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/getTask',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/listMessages',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/sendMessage',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/updateTask',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/view',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/watch',
       ],
+      watch: {
+        mode: 'stream',
+        cancellation: { parameter: 'signal' },
+        parameters: [{ name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent' }],
+      },
     })
   })
 })

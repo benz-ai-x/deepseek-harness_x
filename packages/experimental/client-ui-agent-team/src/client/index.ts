@@ -6,8 +6,11 @@ import { mountAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
 export type { AgentTeamPanelViewOwnerProps } from './mount.ts'
+export { createTeamWatchOwner } from './watch-owner.ts'
+export type { TeamWatchControl, TeamWatchOwner } from './watch-owner.ts'
 export type {
-  TeamActionInjected, TeamActionProps, TeamActionResult, TeamPanelView,
+  TeamActionInjected, TeamActionProps, TeamActionResult, TeamActionWatchControl,
+  TeamActionWatchSink, TeamPanelView,
 } from './TeamAction.tsx'
 export type { TeamKey } from './locales.ts'
 export type {

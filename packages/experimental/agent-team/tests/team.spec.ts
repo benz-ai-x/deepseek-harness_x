@@ -891,6 +891,151 @@ describe('Team shared task DAG', () => {
     }
   })
 
+  it('atomically edits task details and dependencies through one CAS', async () => {
+    const { ctx, lead } = await setup([])
+    const first = await ctx.agentTeams.createTask(lead, { subject: 'A', description: 'first prerequisite' })
+    const second = await ctx.agentTeams.createTask(lead, { subject: 'B', description: 'second prerequisite' })
+    const dependent = await ctx.agentTeams.createTask(lead, { subject: 'C', description: 'dependent task' })
+
+    const edited = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: dependent.revision,
+      action: 'edit',
+      subject: 'C edited',
+      blockedBy: [first.id, second.id],
+    })
+    expect(edited).toMatchObject({
+      id: dependent.id,
+      revision: 2,
+      subject: 'C edited',
+      blockedBy: [first.id, second.id],
+      ready: false,
+    })
+
+    const eventCount = lead.session.snapshotEvents().length
+    const invalidDependencies = [
+      { blockedBy: [TeamTaskId('missing')], code: 'TEAM_TASK_NOT_FOUND' },
+      { blockedBy: [first.id], code: 'TEAM_TASK_DEPENDENCY_CYCLE' },
+      { blockedBy: [dependent.id], code: 'TEAM_TASK_DEPENDENCY_CYCLE' },
+    ] as const
+    for (const invalid of invalidDependencies) {
+      await expect(ctx.agentTeams.updateTask(lead, {
+        taskId: first.id,
+        expectedRevision: first.revision,
+        action: 'edit',
+        subject: 'must not commit',
+        blockedBy: invalid.blockedBy,
+      })).rejects.toMatchObject({ code: invalid.code })
+    }
+    expect(lead.session.snapshotEvents()).toHaveLength(eventCount)
+    expect(ctx.agentTeams.getTask(lead, first.id)).toMatchObject({
+      revision: first.revision,
+      subject: 'A',
+      blockedBy: [],
+    })
+
+    const claimedFirst = await ctx.agentTeams.updateTask(lead, {
+      taskId: first.id,
+      expectedRevision: first.revision,
+      action: 'claim',
+    })
+    await ctx.agentTeams.updateTask(lead, {
+      taskId: first.id,
+      expectedRevision: claimedFirst.revision,
+      action: 'complete',
+    })
+    expect(ctx.agentTeams.getTask(lead, dependent.id).ready).toBe(false)
+    const claimedSecond = await ctx.agentTeams.updateTask(lead, {
+      taskId: second.id,
+      expectedRevision: second.revision,
+      action: 'claim',
+    })
+    await ctx.agentTeams.updateTask(lead, {
+      taskId: second.id,
+      expectedRevision: claimedSecond.revision,
+      action: 'complete',
+    })
+    expect(ctx.agentTeams.getTask(lead, dependent.id)).toMatchObject({
+      blockedBy: [first.id, second.id],
+      ready: true,
+    })
+    const claimedDependent = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: edited.revision,
+      action: 'claim',
+    })
+    expect(claimedDependent).toMatchObject({ status: 'in_progress', ownerName: 'lead' })
+    const retainedOwner = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: claimedDependent.revision,
+      action: 'edit',
+      blockedBy: [first.id],
+    })
+    expect(retainedOwner).toMatchObject({
+      status: 'in_progress',
+      ownerName: 'lead',
+      blockedBy: [first.id],
+    })
+    const completedDependent = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: retainedOwner.revision,
+      action: 'complete',
+    })
+    const reopened = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: completedDependent.revision,
+      action: 'reopen',
+    })
+    expect(reopened).toMatchObject({ status: 'pending', blockedBy: [first.id], ready: true })
+    expect(reopened).not.toHaveProperty('ownerName')
+    const deleted = await ctx.agentTeams.updateTask(lead, {
+      taskId: dependent.id,
+      expectedRevision: reopened.revision,
+      action: 'delete',
+    })
+    expect(ctx.agentTeams.getTask(lead, dependent.id)).toMatchObject({
+      revision: deleted.revision,
+      status: 'deleted',
+      blockedBy: [first.id],
+    })
+    expect(ctx.agentTeams.listTasks(lead).map(task => task.id)).not.toContain(dependent.id)
+  })
+
+  it('rejects stale Lead, cross-Team, and non-owner dependency drafts without events', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'non-owner')
+    const nonOwner = await waitRunning(ctx, started.member.id)
+    const blocker = await ctx.agentTeams.createTask(lead, { subject: 'blocker', description: 'blocker' })
+    const target = await ctx.agentTeams.createTask(lead, { subject: 'target', description: 'target' })
+    const otherLead = await ctx.agentLoop.create(SessionId('other-lead'), { provider: 'mock', model: 'mock' })
+    const request = {
+      taskId: target.id,
+      expectedRevision: target.revision,
+      action: 'edit' as const,
+      subject: 'must not commit',
+      blockedBy: [blocker.id],
+    }
+    const leadEvents = lead.session.snapshotEvents().length
+    const otherEvents = otherLead.session.snapshotEvents().length
+
+    await expect(ctx.agentTeams.updateTask({ ...lead }, request))
+      .rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
+    await expect(ctx.agentTeams.updateTask(otherLead, request))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_NOT_FOUND' })
+    await expect(ctx.agentTeams.updateTask(nonOwner, request))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_UNAUTHORIZED' })
+
+    expect(lead.session.snapshotEvents()).toHaveLength(leadEvents)
+    expect(otherLead.session.snapshotEvents()).toHaveLength(otherEvents)
+    expect(ctx.agentTeams.getTask(lead, target.id)).toMatchObject({
+      revision: target.revision,
+      subject: 'target',
+      blockedBy: [],
+    })
+    ctx.agentTeams.interrupt(lead, 'non-owner')
+    await waitNoAgent(ctx, nonOwner.id)
+  })
+
   it('rejects incomplete mutations, invalid transitions, and deletion of a live blocker', async () => {
     const { ctx, lead } = await setup([])
     await expect(ctx.agentTeams.createTask(lead, { subject: ' ', description: 'invalid' }))
@@ -1082,6 +1227,7 @@ describe('Team Remote API', () => {
     expect(createdResult).toMatchObject({ ok: true, value: { revision: 1 } })
     if (!createdResult.ok) throw new Error('Remote task creation did not succeed')
     const created = createdResult.value
+    expect(ctx.agentTeams.remoteGetTask(lead, created.id)).toEqual(created)
     await expect(ctx.agentTeams.remoteUpdateTask(lead, {
       taskId: created.id,
       expectedRevision: created.revision,
@@ -1091,6 +1237,98 @@ describe('Team Remote API', () => {
       value: { id: created.id, revision: 2, ownerName: 'lead' },
     })
     expect(ctx.agentTeams.remoteView(lead).tasks).toHaveLength(1)
+  })
+
+  it('streams a complete Team baseline before coalesced committed invalidations', async () => {
+    const { ctx, lead, teamFiber } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'watch-recipient')
+    const recipient = await waitRunning(ctx, started.member.id)
+    const controller = new AbortController()
+    const iterator = ctx.agentTeams.watch(lead, controller.signal)[Symbol.asyncIterator]()
+
+    const opening = iterator.next()
+    const firstCommit = ctx.agentTeams.createTask(lead, {
+      subject: 'Concurrent baseline task',
+      description: 'Must be visible through either the baseline or its queued invalidation.',
+    })
+    const baseline = await opening
+    expect(baseline).toMatchObject({ done: false, value: { type: 'baseline' } })
+    if (baseline.done || baseline.value.type !== 'baseline') throw new Error('Team watch did not open')
+    expect(baseline.value.value.members).toContainEqual(expect.objectContaining({ name: 'lead', role: 'lead' }))
+    await firstCommit
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    expect(ctx.agentTeams.remoteView(lead).tasks).toHaveLength(1)
+
+    const message = await ctx.agentTeams.remoteSendMessage(lead, {
+      requestId: TeamMessageRequestId('watch-message-commit'),
+      recipientId: recipient.id,
+      text: 'Refresh the same committed message window used by the public panel.',
+    }, SIGNAL)
+    expect(message).toMatchObject({ ok: true, value: { submission: { status: 'accepted' } } })
+    if (!message.ok) throw new Error('watch message was not accepted')
+    await vi.waitFor(() => {
+      expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
+        && event.data.messageId === message.value.submission.messageId)).toBe(true)
+    })
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    const deliveredPage = await ctx.agentTeams.listMessages(lead, { limit: 20 })
+    expect(deliveredPage.items[0]?.id).toBe(message.value.submission.messageId)
+    expect(deliveredPage.items[0]?.delivery.stage).toBe('delivered')
+
+    await ctx.agentTeams.createTask(lead, { subject: 'Burst task one', description: 'First burst commit.' })
+    await ctx.agentTeams.createTask(lead, { subject: 'Burst task two', description: 'Second burst commit.' })
+    await ctx.agentTeams.createTask(lead, { subject: 'Burst task three', description: 'Third burst commit.' })
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    const noUnboundedQueue = iterator.next()
+    controller.abort(new Error('watch caller closed'))
+    await expect(noUnboundedQueue).resolves.toEqual({ done: true, value: undefined })
+    ctx.agentTeams.interrupt(lead, 'watch-recipient')
+    recipient.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, recipient.id)
+
+    const disposalIterator = ctx.agentTeams.watch(lead, SIGNAL)[Symbol.asyncIterator]()
+    await expect(disposalIterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: 'baseline' },
+    })
+    const disposed = disposalIterator.next()
+    await teamFiber.dispose()
+    await expect(disposed).resolves.toEqual({ done: true, value: undefined })
+  })
+
+  it('authorizes Team watch generations to the exact live Lead and Team', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'watch-worker')
+    const worker = await waitRunning(ctx, started.member.id)
+    expect(() => ctx.agentTeams.watch({ ...lead }, SIGNAL))
+      .toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    expect(() => ctx.agentTeams.watch(worker, SIGNAL))
+      .toThrow(expect.objectContaining({ code: 'TEAM_LEAD_REQUIRED' }))
+
+    const otherLead = await ctx.agentLoop.create(SessionId('watch-other-lead'), {
+      provider: 'mock', model: 'mock',
+    })
+    const leadController = new AbortController()
+    const otherController = new AbortController()
+    const leadWatch = ctx.agentTeams.watch(lead, leadController.signal)[Symbol.asyncIterator]()
+    const otherWatch = ctx.agentTeams.watch(otherLead, otherController.signal)[Symbol.asyncIterator]()
+    const leadBaseline = await leadWatch.next()
+    expect(leadBaseline).toMatchObject({ done: false, value: { type: 'baseline' } })
+    if (leadBaseline.done || leadBaseline.value.type !== 'baseline') throw new Error('Lead watch did not open')
+    expect(leadBaseline.value.value.members).toContainEqual(expect.objectContaining({ id: lead.id }))
+    const otherBaseline = await otherWatch.next()
+    expect(otherBaseline).toMatchObject({ done: false, value: { type: 'baseline' } })
+    if (otherBaseline.done || otherBaseline.value.type !== 'baseline') throw new Error('other Team watch did not open')
+    expect(otherBaseline.value.value.members).toContainEqual(expect.objectContaining({ id: otherLead.id }))
+
+    const otherPending = otherWatch.next()
+    await ctx.agentTeams.createTask(lead, { subject: 'Lead-only change', description: 'Do not wake another Team.' })
+    await expect(leadWatch.next()).resolves.toEqual({ done: false, value: { type: 'invalidated' } })
+    otherController.abort(new Error('other Team watch complete'))
+    await expect(otherPending).resolves.toEqual({ done: true, value: undefined })
+    leadController.abort(new Error('Lead watch complete'))
+    ctx.agentTeams.interrupt(lead, 'watch-worker')
+    await waitNoAgent(ctx, worker.id)
   })
 
   it('preserves Team task rejections and propagates unexpected failures', async () => {
@@ -1158,13 +1396,11 @@ describe('Team Remote API', () => {
       expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
         && event.data.messageId === first.value.submission.messageId)).toBe(true)
     })
-    await expect(ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)).resolves.toEqual({
-      ok: true,
-      value: {
-        submission: first.value.submission,
-        delivery: expect.objectContaining({ stage: 'delivered' }),
-      },
-    })
+    const deliveredReplay = await ctx.agentTeams.remoteSendMessage(lead, request, SIGNAL)
+    expect(deliveredReplay.ok).toBe(true)
+    if (!deliveredReplay.ok) throw new Error('Remote Team replay did not succeed')
+    expect(deliveredReplay.value.submission).toEqual(first.value.submission)
+    expect(deliveredReplay.value.delivery.stage).toBe('delivered')
 
     const eventCount = lead.session.snapshotEvents().length
     await expect(ctx.agentTeams.remoteSendMessage(lead, {
@@ -1235,13 +1471,11 @@ describe('Team Remote API', () => {
       expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/delivered'
         && event.data.messageId === reply.value.submission.messageId)).toBe(true)
     })
-    await expect(ctx.agentTeams.remoteSendMessage(lead, replyRequest, SIGNAL)).resolves.toEqual({
-      ok: true,
-      value: {
-        submission: reply.value.submission,
-        delivery: expect.objectContaining({ stage: 'delivered' }),
-      },
-    })
+    const deliveredReply = await ctx.agentTeams.remoteSendMessage(lead, replyRequest, SIGNAL)
+    expect(deliveredReply.ok).toBe(true)
+    if (!deliveredReply.ok) throw new Error('Remote Team reply replay did not succeed')
+    expect(deliveredReply.value.submission).toEqual(reply.value.submission)
+    expect(deliveredReply.value.delivery.stage).toBe('delivered')
     const page = await ctx.agentTeams.listMessages(lead, { limit: 20 })
     expect(page.items.find(item => item.id === reply.value.submission.messageId))
       .toMatchObject({ replyTo: original.id, sender: { id: lead.id }, recipient: { id: recipient.id } })

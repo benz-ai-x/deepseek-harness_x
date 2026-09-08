@@ -3,11 +3,13 @@
 import type {
   TeamMemberView as TeamRosterMember,
   TeamView,
+  TeamWatchFrame,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import type {} from '@deepseek-ai/dsh-experimental-agent-team/remote'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import { RemoteSnapshotStream, RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -16,10 +18,11 @@ import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   TeamAction, type TeamActionInjected, type TeamActionResult, type TeamPanelView,
-  type TeamTaskActionResult,
+  type TeamActionWatchSink, type TeamTaskActionResult,
 } from './TeamAction.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
 import { AgentTeamPanelNavigationService } from './navigation.ts'
+import { createTeamWatchOwner, type TeamWatchControl } from './watch-owner.ts'
 
 /** Values the Team panel owner passes to every public child view. */
 export interface AgentTeamPanelViewOwnerProps {
@@ -51,6 +54,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const inject = ['sessions', 'remote', 'slots', 'locale']
 
 function registerUi(ctx: ClientContext): void {
+  const watchOwner = createTeamWatchOwner()
+  ctx.effect(
+    () => async () => { await watchOwner.dispose() },
+    'client-ui-agent-team: watch controls',
+  )
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'client-ui-agent-team: dictionaries')
   const panelNavigation = new AgentTeamPanelNavigationService(ctx)
   const sessions = ctx.sessions
@@ -90,6 +98,12 @@ function registerUi(ctx: ClientContext): void {
     resolveTeamSessionId: leadSessionId,
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
+    },
+    async getTask(sessionId, taskId) {
+      return await ctx.remote.agentTeams.getTask(leadSessionId(sessionId), taskId)
+    },
+    watch(sessionId, sink) {
+      return watchOwner.own(createTeamActionWatch(ctx, leadSessionId(sessionId), sink))
     },
     async createTask(sessionId, input): Promise<TeamTaskActionResult> {
       return await ctx.remote.agentTeams.createTask(leadSessionId(sessionId), input)
@@ -139,6 +153,38 @@ function registerUi(ctx: ClientContext): void {
       panelViewListeners.clear()
     }
   }, 'client-ui-agent-team: panel views')
+}
+
+type TeamWatchBaselineFrame = Extract<TeamWatchFrame, { readonly type: 'baseline' }>
+type TeamWatchInvalidationFrame = Exclude<TeamWatchFrame, TeamWatchBaselineFrame>
+
+/**
+ * Bind one logical Team generation stream to its public panel sink.
+ * @param ctx - Client Context providing the generated Remote stream carrier.
+ * @param sessionId - exact live Lead Session selecting the watched Team.
+ * @param sink - generation-fenced public panel destinations.
+ * @returns reconnecting stream control owned by the panel lifecycle.
+ */
+export function createTeamActionWatch(
+  ctx: ClientContext,
+  sessionId: SessionId,
+  sink: TeamActionWatchSink,
+): TeamWatchControl {
+  const stream = ctx.remote.$stream<TeamWatchFrame>({
+    name: 'Agent Teams change stream',
+    open: signal => ctx.remote.agentTeams.watch(sessionId, signal),
+    ended: accepted => accepted
+      ? new RemoteStreamCarrierError('Agent Teams change stream ended after its opening baseline')
+      : new Error('Agent Teams change stream ended before its opening baseline'),
+    carrierFailed: () => { sink.stale() },
+  })
+  return new RemoteSnapshotStream<TeamWatchBaselineFrame, TeamWatchInvalidationFrame>(stream, {
+    name: 'Agent Teams change stream',
+    isSnapshot: (frame): frame is TeamWatchBaselineFrame => frame.type === 'baseline',
+    replace: (frame) => { sink.replace(frame.value) },
+    update: () => { sink.invalidated() },
+    failed: (error) => { sink.failed(error) },
+  })
 }
 
 /**

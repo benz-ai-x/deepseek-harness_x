@@ -109,11 +109,13 @@ roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`
 
 List result 只包含发送者、接收者、排队时间与投递事实。Detail read 返回原样的有意文本，以及分离的图片 media type、尺寸和字节数。Reasoning、tool call 与 result、attachment identity、provider extension 和其他不支持的 block 会变成显式省略标记；`complete`、`partial` 或 `unavailable` 说明最终内容覆盖程度。Reader 会在筛选前验证每个持久 participant，从当前 Host-owned roster 派生名称，且不发布 Team activity。`pending` 与 `delivered` 是投递事实，`unknown` 保留给无法取得当前事实的 Client；这些状态都不表示已读、用户确认或任务完成。
 
+精确的 live Lead 还可以打开生成式 `agentTeams/watch` stream。每个物理 generation 会先注册所属 Team 的 follower，再读取并发送一份完整 `TeamView` baseline；随后把任何一组已提交 roster、message、task 或实时 status 变更合并为至多一个待处理 `invalidated` frame。Invalidation 不携带复制的 domain state：浏览器 consumer 会重新读取权威 Team view 与当前消息 window。调用方取消与 Team service dispose 都会释放 follower。
+
 ### 共享任务板
 
 任何成员都可以添加任务，包含标题、详情、对其他任务的可选依赖，以及可选的文件触及提示。只有其全部依赖完成后，任务才可 claim。
 
-任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
+任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。一次 edit 可原子替换任务文本、文件提示与完整依赖集；Host 会在追加任何内容前校验引用、调用方权限、自依赖与间接环。
 
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
@@ -182,7 +184,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### 共享任务板
 
-任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
+任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。`edit` transition 可在同一个下一 revision 中一起提交文本、`writeScopes` 与 `blockedBy`；依赖或权限拒绝会保持之前的 snapshot 与 Lead log 不变。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
 
 ### 等待与中断
 
@@ -217,7 +219,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 ### 浏览器 Remote
 
-`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还直接负责生成式 `agentTeams/view`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/sendMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出浏览器安全的 view、消息查询／提交、净化内容与 task mutation type。消息 list 和 detail failure 保留为普通外层 `RemoteResult` failure。人类发送、task create 与 task update rejection 则作为 transport 成功响应中的显式 domain result，其中 message request conflict 与过期 task revision 都能同其他 Team rejection 区分。
+`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还直接负责生成式 `agentTeams/view`、`agentTeams/watch`、`agentTeams/getTask`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/sendMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出浏览器安全的 view、watch frame、消息查询／提交、净化内容与 task mutation type。`view` 返回未删除 task board；`watch` 返回完整 opening view，之后只发送有界 invalidation；`getTask` 以真实 Team-local id 读取同一 Lead log，也包含其保留的删除墓碑。Task 与消息 read failure 保留为普通外层 `RemoteResult` failure。人类发送、task create 与 task update rejection 则作为 transport 成功响应中的显式 domain result，其中 message request conflict 与过期 task revision 都能同其他 Team rejection 区分。
 
 ## 模型体验
 

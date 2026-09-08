@@ -1,24 +1,27 @@
 // @vitest-environment jsdom
 
+import { createHook } from 'node:async_hooks'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamTaskId, TeamTaskView as TeamTask, TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import {
   TeamAction, type TeamActionInjected, type TeamActionProps, type TeamActionResult,
   type TeamTaskActionResult,
 } from '../src/client/TeamAction.tsx'
-import { zh } from '../src/client/locales.ts'
+import { en, zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
 const SESSION = 'lead' as SessionId
 const TASK_1 = 'task-1' as TeamTaskId
 const TASK_2 = 'task-2' as TeamTaskId
+const TASK_3 = 'task-3' as TeamTaskId
 const EMPTY_PANEL_VIEWS: readonly [] = []
 const task: TeamTask = {
   id: TASK_1,
@@ -31,6 +34,16 @@ const task: TeamTask = {
   writeScopes: ['src'],
   ready: false,
   writeScopeWarnings: ['write scopes overlap with task-2'],
+}
+const dependencyOption: TeamTask = {
+  ...task,
+  id: TASK_2,
+  subject: 'Dependency option',
+  description: 'Selectable dependency',
+  status: 'pending',
+  ownerName: 'lead',
+  ready: true,
+  writeScopeWarnings: [],
 }
 const view: TeamView = {
   members: [
@@ -102,6 +115,8 @@ function actions(overrides: TeamActionOverrides = {}): TeamActionInjected {
     consumePanelNavigation: () => {},
     resolveTeamSessionId: sessionId => sessionId,
     load: () => Promise.resolve({ ok: true, value: view }),
+    getTask: () => Promise.resolve({ ok: true, value: task }),
+    watch: () => ({ start() {}, dispose: () => Promise.resolve() }),
     createTask: () => Promise.resolve(taskSuccess({ ...task, id: TASK_2, subject: 'New task' })),
     updateTask: () => Promise.resolve({
       ok: true,
@@ -113,6 +128,603 @@ function actions(overrides: TeamActionOverrides = {}): TeamActionInjected {
 }
 
 describe('TeamAction', () => {
+  it('starts from the Team watch baseline and rereads authority after invalidation', async () => {
+    const openingLoad = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const baselineTask = { ...task, subject: 'Watch baseline task' }
+    const committedTask = { ...task, revision: 2, subject: 'Committed live task' }
+    const load = vi.fn()
+      .mockImplementationOnce(() => openingLoad.promise)
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [committedTask] } })
+    let sink: {
+      replace(value: TeamView): void
+      invalidated(): void
+      stale(): void
+      failed(error: unknown): void
+    } | undefined
+    const start = vi.fn()
+    const dispose = vi.fn(() => Promise.resolve())
+    const watch = vi.fn((_sessionId: SessionId, nextSink: typeof sink) => {
+      sink = nextSink
+      return { start, dispose }
+    })
+    const injected = { ...actions({ load }), watch } as unknown as TeamActionInjected
+
+    render(<TeamAction {...props(injected)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await waitFor(() => { expect(watch).toHaveBeenCalledWith(SESSION, expect.any(Object)) })
+    expect(start).toHaveBeenCalledOnce()
+    act(() => { sink?.replace({ ...view, tasks: [baselineTask] }) })
+    expect(await screen.findByText('Watch baseline task')).toBeTruthy()
+
+    act(() => { sink?.invalidated() })
+    expect(load).toHaveBeenCalledOnce()
+    openingLoad.resolve({ ok: true, value: view })
+    expect(await screen.findByText('Committed live task')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Implement runtime')).toBeNull()
+  })
+
+  it('coalesces a burst of Team watch invalidations into one trailing authority reload', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const firstReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const trailingReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: view })
+      .mockImplementationOnce(() => firstReload.promise)
+      .mockImplementationOnce(() => trailingReload.promise)
+      .mockImplementation(() => new Promise<TeamActionResult<TeamView>>(() => {}))
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load,
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+
+    act(() => {
+      sink?.invalidated()
+      sink?.invalidated()
+      sink?.invalidated()
+      sink?.invalidated()
+    })
+    expect(load).toHaveBeenCalledTimes(2)
+
+    firstReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 2, subject: 'First live commit' }] },
+    })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
+    expect(screen.getByText('First live commit')).toBeTruthy()
+
+    trailingReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 3, subject: 'Trailing live commit' }] },
+    })
+    expect(await screen.findByText('Trailing live commit')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps watch invalidation completion state constant while publishing trailing authority', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const firstReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const trailingReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const finalReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: view })
+      .mockImplementationOnce(() => firstReload.promise)
+      .mockImplementationOnce(() => trailingReload.promise)
+      .mockImplementationOnce(() => finalReload.promise)
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load,
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+
+    act(() => { sink?.invalidated() })
+    expect(load).toHaveBeenCalledTimes(2)
+    let promiseResources = 0
+    const hook = createHook({
+      init(_asyncId, type) {
+        if (type === 'PROMISE') promiseResources += 1
+      },
+    })
+    hook.enable()
+    try {
+      for (let index = 0; index < 4_096; index += 1) sink?.invalidated()
+    } finally {
+      hook.disable()
+    }
+    expect(promiseResources).toBeLessThanOrEqual(1)
+    expect(load).toHaveBeenCalledTimes(2)
+
+    firstReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 2, subject: 'First bounded read' }] },
+    })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
+
+    let trailingPromiseResources = 0
+    const trailingHook = createHook({
+      init(_asyncId, type) {
+        if (type === 'PROMISE') trailingPromiseResources += 1
+      },
+    })
+    trailingHook.enable()
+    try {
+      for (let index = 0; index < 4_096; index += 1) sink?.invalidated()
+    } finally {
+      trailingHook.disable()
+    }
+    expect(trailingPromiseResources).toBeLessThanOrEqual(1)
+    trailingReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 3, subject: 'Trailing bounded read' }] },
+    })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(4) })
+    finalReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 4, subject: 'Final bounded read' }] },
+    })
+    expect(await screen.findByText('Final bounded read')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(4)
+  })
+
+  it('retains stale data and disposes replaced or closed watch generations', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const load = vi.fn(() => Promise.resolve({ ok: true as const, value: view }))
+    let firstSink: WatchSink | undefined
+    let secondSink: WatchSink | undefined
+    const firstControl = { start: vi.fn(), dispose: vi.fn(() => Promise.resolve()) }
+    const secondControl = { start: vi.fn(), dispose: vi.fn(() => Promise.resolve()) }
+    const firstWatch = vi.fn((_sessionId: SessionId, sink: WatchSink) => {
+      firstSink = sink
+      return firstControl
+    })
+    const secondWatch = vi.fn((_sessionId: SessionId, sink: WatchSink) => {
+      secondSink = sink
+      return secondControl
+    })
+    const rendered = render(<TeamAction {...props(actions({ load, watch: firstWatch }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await waitFor(() => { expect(firstWatch).toHaveBeenCalledOnce() })
+    act(() => {
+      firstSink?.replace({ ...view, tasks: [{ ...task, subject: 'Retained task' }] })
+      firstSink?.stale()
+    })
+    expect(await screen.findByText('连接已断开，正在显示可能陈旧的 Team 数据。')).toBeTruthy()
+    expect(screen.getByText('Retained task')).toBeTruthy()
+
+    rendered.rerender(<TeamAction {...props(actions({ load, watch: secondWatch }))} />)
+    await waitFor(() => {
+      expect(firstControl.dispose).toHaveBeenCalledOnce()
+      expect(secondWatch).toHaveBeenCalledOnce()
+      expect(secondControl.start).toHaveBeenCalledOnce()
+    })
+    act(() => {
+      firstSink?.failed(new Error('late old generation failure'))
+      secondSink?.replace({ ...view, tasks: [{ ...task, revision: 2, subject: 'Replacement task' }] })
+    })
+    expect(screen.queryByText('连接已断开，正在显示可能陈旧的 Team 数据。')).toBeNull()
+    expect(screen.getByText('Replacement task')).toBeTruthy()
+    act(() => { secondSink?.failed(new Error('watch unavailable')) })
+    expect(screen.getByText('Team 实时更新不可用；已保留最后一次权威读取。')).toBeTruthy()
+    expect(screen.getByText('Replacement task')).toBeTruthy()
+
+    const callsBeforeClose = load.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => { expect(secondControl.dispose).toHaveBeenCalledOnce() })
+    act(() => { secondSink?.invalidated() })
+    expect(load).toHaveBeenCalledTimes(callsBeforeClose)
+  })
+
+  it('renders disconnected, stale, unavailable, and conflict feedback in both locales', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    for (const translated of [
+      {
+        locale: en,
+        common: commonEn,
+        disconnected: en.watchDisconnected,
+        stale: en.watchStale,
+        unavailable: en.watchUnavailable,
+        conflict: en.conflict,
+        action: /Agent Team/u,
+        complete: /Complete/u,
+      },
+      {
+        locale: zh,
+        common: commonZh,
+        disconnected: zh.watchDisconnected,
+        stale: zh.watchStale,
+        unavailable: zh.watchUnavailable,
+        conflict: zh.conflict,
+        action: /Agent Team/u,
+        complete: /完成/u,
+      },
+    ]) {
+      const opening = Promise.withResolvers<TeamActionResult<TeamView>>()
+      const load = vi.fn()
+        .mockImplementationOnce(() => opening.promise)
+        .mockResolvedValue({ ok: true, value: { ...view, tasks: [{ ...task, revision: 2 }] } })
+      let sink: WatchSink | undefined
+      const control = { start: vi.fn(), dispose: vi.fn(() => Promise.resolve()) }
+      const watch = vi.fn((_sessionId: SessionId, nextSink: WatchSink) => {
+        sink = nextSink
+        return control
+      })
+      const updateTask = vi.fn(() => Promise.resolve(taskConflict('stale revision')))
+      render(<TeamAction {...{
+        ...props(actions({ load, updateTask, watch })),
+        t: makeTranslate(translated.locale, translated.common),
+      }} />)
+      fireEvent.click(screen.getByRole('button', { name: translated.action }))
+      await waitFor(() => { expect(watch).toHaveBeenCalledOnce() })
+
+      act(() => { sink?.stale() })
+      expect(screen.getByText(translated.disconnected)).toBeTruthy()
+      act(() => { sink?.replace(view) })
+      expect(await screen.findByText('Implement runtime')).toBeTruthy()
+      expect(screen.queryByText(translated.disconnected)).toBeNull()
+      opening.resolve({ ok: true, value: view })
+      await Promise.resolve()
+      act(() => { sink?.stale() })
+      expect(screen.getByText(translated.stale)).toBeTruthy()
+      act(() => { sink?.failed(new Error('watch unavailable')) })
+      expect(screen.getByText(translated.unavailable)).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('button', { name: translated.complete }))
+      expect(await screen.findByText(translated.conflict)).toBeTruthy()
+      expect(updateTask).toHaveBeenCalledOnce()
+      cleanup()
+      await waitFor(() => { expect(control.dispose).toHaveBeenCalledOnce() })
+    }
+  })
+
+  it('shares real task selection and detail between the list and dependency graph', async () => {
+    const dependent: TeamTask = {
+      id: TASK_2,
+      revision: 4,
+      subject: 'Publish result',
+      description: 'Publish after the runtime is complete',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      writeScopes: ['docs'],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [task, dependent] } }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Publish result')
+    fireEvent.click(screen.getByRole('button', { name: 'task-2 · Publish result' }))
+
+    const detail = screen.getByRole('region', { name: '任务详情' })
+    expect(detail.textContent).toContain('task-2')
+    expect(detail.textContent).toContain('Publish after the runtime is complete')
+    expect(detail.textContent).toContain('task-1')
+    expect(detail.textContent).toContain('被依赖阻塞')
+    expect(detail.querySelector('select')?.value).toBe('')
+    expect(screen.getByRole('button', { name: /编辑/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /删除/u })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '任务依赖图' }))
+    const graph = screen.getByRole('application', { name: '任务依赖图' })
+    const edge = within(graph).getByLabelText('task-1 → task-2')
+    expect(edge.getAttribute('data-from-task-id')).toBe('task-1')
+    expect(edge.getAttribute('data-to-task-id')).toBe('task-2')
+    expect(edge.getAttribute('marker-end')).toBe('url(#agent-team-task-arrow)')
+    const dependentNode = within(graph).getByRole('button', { name: 'task-2 · Publish result' })
+    expect(dependentNode.getAttribute('aria-pressed')).toBe('true')
+    expect(dependentNode.textContent).toContain(zh.unowned)
+    expect(dependentNode.textContent).toContain(zh.blocked)
+    expect(dependentNode.textContent).toContain('task-1')
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('task-2')
+
+    fireEvent.click(within(graph).getByRole('button', { name: 'task-1 · Implement runtime' }))
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('task-1')
+    fireEvent.click(screen.getByRole('button', { name: '任务列表' }))
+    expect(screen.getByRole('button', { name: 'task-1 · Implement runtime' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('Build the Team runtime')
+  })
+
+  it('shows only unfinished Host dependencies as blockers while retaining every DAG edge', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const completed: TeamTask = {
+      ...task,
+      status: 'completed',
+      revision: 2,
+      ready: false,
+    }
+    const unfinished: TeamTask = { ...dependencyOption }
+    const dependent: TeamTask = {
+      id: TASK_3,
+      revision: 1,
+      subject: 'Ship release',
+      description: 'Wait only for unfinished work',
+      status: 'pending',
+      blockedBy: [TASK_1, TASK_2],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({
+        ok: true,
+        value: { ...view, tasks: [completed, unfinished, dependent] },
+      }),
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Ship release')
+    const listChoice = screen.getByRole('button', { name: 'task-3 · Ship release' })
+    expect(within(listChoice).getByText(`${zh.blockedBy}: task-2`)).toBeTruthy()
+    expect(within(listChoice).queryByText(`${zh.blockedBy}: task-1, task-2`)).toBeNull()
+    fireEvent.click(listChoice)
+    const detail = screen.getByRole('region', { name: zh.taskDetails })
+    expect(within(detail).getByText(`${zh.blockedBy}: task-2`)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    expect(within(graph).getByLabelText('task-1 → task-3')).toBeTruthy()
+    expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+    const graphNode = within(graph).getByRole('button', { name: 'task-3 · Ship release' })
+    expect(within(graphNode).getByText(`${zh.blockedBy}: task-2`)).toBeTruthy()
+
+    act(() => {
+      sink?.replace({
+        ...view,
+        tasks: [completed, { ...unfinished, status: 'completed', revision: 2, ready: false }, {
+          ...dependent,
+          revision: 2,
+          ready: true,
+        }],
+      })
+    })
+    expect(within(graphNode).queryByText(new RegExp(zh.blockedBy, 'u'))).toBeNull()
+    expect(within(graphNode).getByText(zh.ready)).toBeTruthy()
+    expect(within(graph).getByLabelText('task-1 → task-3')).toBeTruthy()
+    expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+  })
+
+  it('auto-lays out the DAG and supports zoom, pan, fit, and directional keyboard navigation', async () => {
+    const prerequisite: TeamTask = {
+      ...task,
+      status: 'completed',
+      revision: 2,
+      ready: false,
+    }
+    const middle: TeamTask = {
+      id: TASK_2,
+      revision: 1,
+      subject: 'Integrate runtime',
+      description: 'Use the completed runtime',
+      status: 'completed',
+      blockedBy: [TASK_1],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    const dependent: TeamTask = {
+      id: TASK_3,
+      revision: 1,
+      subject: 'Publish result',
+      description: 'Publish after integration',
+      status: 'pending',
+      blockedBy: [TASK_2],
+      writeScopes: [],
+      ready: true,
+      writeScopeWarnings: [],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({
+        ok: true,
+        value: { ...view, tasks: [prerequisite, middle, dependent] },
+      }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Publish result')
+    fireEvent.click(screen.getByRole('button', { name: '任务依赖图' }))
+
+    const graph = screen.getByRole('application', { name: '任务依赖图' })
+    const first = within(graph).getByRole('button', { name: 'task-1 · Implement runtime' })
+    const second = within(graph).getByRole('button', { name: 'task-2 · Integrate runtime' })
+    const third = within(graph).getByRole('button', { name: 'task-3 · Publish result' })
+    expect(first.getAttribute('data-graph-column')).toBe('0')
+    expect(second.getAttribute('data-graph-column')).toBe('1')
+    expect(third.getAttribute('data-graph-column')).toBe('2')
+
+    fireEvent.click(screen.getByRole('button', { name: '放大依赖图' }))
+    expect(graph.getAttribute('data-zoom')).toBe('1.2')
+    fireEvent.pointerDown(within(graph).getByLabelText('task-1 → task-2'), {
+      clientX: 20,
+      clientY: 30,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(graph, { clientX: 55, clientY: 70, pointerId: 1 })
+    fireEvent.pointerUp(graph, { pointerId: 1 })
+    expect(graph.getAttribute('data-pan-x')).toBe('35')
+    expect(graph.getAttribute('data-pan-y')).toBe('40')
+    fireEvent.click(screen.getByRole('button', { name: '适配依赖图视野' }))
+    expect(graph.getAttribute('data-pan-x')).not.toBe('35')
+    expect(Number(graph.getAttribute('data-zoom'))).toBeGreaterThan(0)
+
+    first.focus()
+    fireEvent.keyDown(first, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(second)
+    expect(second.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.keyDown(second, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(third)
+    fireEvent.keyDown(third, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(second)
+    fireEvent.click(screen.getByRole('button', { name: '任务列表' }))
+    expect(screen.getByRole('button', { name: 'task-2 · Integrate runtime' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('fits a five-row DAG completely inside the default graph viewport', async () => {
+    const tasks = Array.from({ length: 5 }, (_, index): TeamTask => ({
+      ...task,
+      id: `task-${index + 1}` as TeamTaskId,
+      subject: `Vertical task ${index + 1}`,
+      status: 'pending',
+      blockedBy: [],
+      ready: true,
+      writeScopeWarnings: [],
+    }))
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks } }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Vertical task 5')
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    const last = within(graph).getByRole('button', { name: 'task-5 · Vertical task 5' })
+    expect(last.getAttribute('data-graph-column')).toBe('0')
+    expect(last.getAttribute('data-graph-row')).toBe('4')
+
+    fireEvent.click(screen.getByRole('button', { name: zh.fitGraph }))
+    expect(graph.getAttribute('data-zoom')).toBe('0.35')
+    expect(graph.getAttribute('data-pan-y')).toBe('8')
+    fireEvent.click(screen.getByRole('button', { name: zh.zoomOut }))
+    expect(graph.getAttribute('data-zoom')).toBe('0.15')
+    fireEvent.click(screen.getByRole('button', { name: zh.zoomIn }))
+    expect(graph.getAttribute('data-zoom')).toBe('0.35')
+  })
+
+  it('shows filtered-out dependency hints without changing Host readiness', async () => {
+    const prerequisite: TeamTask = {
+      ...task,
+      subject: 'Hidden prerequisite',
+    }
+    const dependent: TeamTask = {
+      id: TASK_2,
+      revision: 3,
+      subject: 'Visible dependent',
+      description: 'Still blocked by the hidden task',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [prerequisite, dependent] } }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Visible dependent')
+    fireEvent.click(screen.getByRole('button', { name: 'task-2 · Visible dependent' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: '筛选任务' }), {
+      target: { value: 'Visible dependent' },
+    })
+
+    expect(screen.queryByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'task-2 · Visible dependent' })).toBeTruthy()
+    expect(screen.getByText('隐藏依赖：task-1')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain(zh.blocked)
+
+    fireEvent.click(screen.getByRole('button', { name: '任务依赖图' }))
+    const graph = screen.getByRole('application', { name: '任务依赖图' })
+    expect(within(graph).queryByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeNull()
+    const dependentNode = within(graph).getByRole('button', { name: 'task-2 · Visible dependent' })
+    expect(dependentNode).toBeTruthy()
+    expect(within(graph).getByText('隐藏依赖：task-1')).toBeTruthy()
+    dependentNode.focus()
+    fireEvent.keyDown(dependentNode, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(dependentNode)
+    expect(within(screen.getByRole('region', { name: '任务详情' }))
+      .getByText('task-2 · Visible dependent')).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '筛选任务' }), { target: { value: '' } })
+    expect(within(graph).getByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeTruthy()
+    expect(within(graph).getByLabelText('task-1 → task-2')).toBeTruthy()
+  })
+
+  it('navigates to a visible prerequisite when the first dependency is filtered out', async () => {
+    const hidden: TeamTask = { ...task, subject: 'Hidden prerequisite' }
+    const visible: TeamTask = { ...dependencyOption, subject: 'Visible prerequisite' }
+    const dependent: TeamTask = {
+      ...task,
+      id: TASK_3,
+      subject: 'Visible dependent',
+      blockedBy: [TASK_1, TASK_2],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [hidden, visible, dependent] } }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Visible dependent')
+    fireEvent.change(screen.getByRole('searchbox', { name: zh.taskFilter }), {
+      target: { value: 'Visible' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    const dependentNode = within(graph).getByRole('button', { name: 'task-3 · Visible dependent' })
+    const prerequisiteNode = within(graph).getByRole('button', { name: 'task-2 · Visible prerequisite' })
+    expect(within(graph).queryByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeNull()
+    expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+    dependentNode.focus()
+    fireEvent.keyDown(dependentNode, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(prerequisiteNode)
+    expect(within(screen.getByRole('region', { name: zh.taskDetails }))
+      .getByText('task-2 · Visible prerequisite')).toBeTruthy()
+    fireEvent.keyDown(prerequisiteNode, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(dependentNode)
+  })
+
+  it('renders the shared task graph status and controls in English', async () => {
+    const dependent: TeamTask = {
+      id: TASK_2,
+      revision: 2,
+      subject: 'Publish result',
+      description: 'Publish after the runtime is complete',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    const injected = actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [task, dependent] } }),
+    })
+    render(<TeamAction {...{
+      ...props(injected),
+      t: makeTranslate(en, commonEn),
+    }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Publish result')
+    fireEvent.click(screen.getByRole('button', { name: en.taskGraph }))
+
+    const graph = screen.getByRole('application', { name: en.taskGraph })
+    const node = within(graph).getByRole('button', { name: 'task-2 · Publish result' })
+    expect(node.textContent).toContain(`${en.owner}: ${en.unowned}`)
+    expect(node.textContent).toContain(en.blocked)
+    expect(screen.getByRole('button', { name: en.zoomIn })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.fitGraph })).toBeTruthy()
+    expect(screen.getByRole('region', { name: en.taskDetails })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: en.taskFilter }), {
+      target: { value: 'Publish result' },
+    })
+    expect(within(graph).getByText('Hidden dependencies: task-1')).toBeTruthy()
+  })
+
   it('navigates a public child view inside the one Team-owned panel', async () => {
     const renderSlot = vi.fn(() => <div>Injected message center</div>)
     const messageViews = [{ id: 'messages', label: '消息' }] as const
@@ -222,7 +834,7 @@ describe('TeamAction', () => {
     await waitFor(() => { expect(openTeammate).toHaveBeenCalledWith(SESSION, view.members[1]) })
   })
 
-  it('keeps only the newest overlapping refresh for one session', async () => {
+  it('serializes overlapping refresh requests and publishes the trailing authority read', async () => {
     const older = Promise.withResolvers<TeamActionResult<TeamView>>()
     const newer = Promise.withResolvers<TeamActionResult<TeamView>>()
     const newestView = {
@@ -240,10 +852,11 @@ describe('TeamAction', () => {
     const refresh = screen.getByRole('button', { name: zh.refresh })
     fireEvent.click(refresh)
     fireEvent.click(refresh)
+    expect(load).toHaveBeenCalledTimes(2)
+    older.resolve({ ok: true, value: view })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
     newer.resolve({ ok: true, value: newestView })
     expect(await screen.findByText('Newest task')).toBeTruthy()
-    older.resolve({ ok: true, value: view })
-    await Promise.resolve()
 
     expect(screen.getByText('Newest task')).toBeTruthy()
     expect(screen.queryByText('Implement runtime')).toBeNull()
@@ -265,10 +878,8 @@ describe('TeamAction', () => {
 
     fireEvent.click(screen.getByRole('button', { name: zh.refresh }))
     fireEvent.click(screen.getByRole('button', { name: /完成/u }))
-    expect(await screen.findByRole('button', { name: /重开/u })).toBeTruthy()
-
     stale.resolve({ ok: true, value: view })
-    await Promise.resolve()
+    expect(await screen.findByRole('button', { name: /重开/u })).toBeTruthy()
     expect(screen.getByRole('button', { name: /重开/u })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /完成/u })).toBeNull()
   })
@@ -292,10 +903,8 @@ describe('TeamAction', () => {
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'New task' } })
     fireEvent.change(screen.getByPlaceholderText('任务描述'), { target: { value: 'Details' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    expect(await screen.findByText('New task')).toBeTruthy()
-
     stale.resolve({ ok: true, value: view })
-    await Promise.resolve()
+    expect(await screen.findByText('New task')).toBeTruthy()
     expect(screen.getByText('New task')).toBeTruthy()
   })
 
@@ -399,7 +1008,7 @@ describe('TeamAction', () => {
     expect(load).toHaveBeenCalledTimes(2)
   })
 
-  it('creates a task from normalized blocker and write-scope lists', async () => {
+  it('creates a task from a selected blocker and normalized write-scope list', async () => {
     const createTask = vi.fn(actions().createTask)
     render(<TeamAction {...props(actions({ createTask }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
@@ -407,7 +1016,7 @@ describe('TeamAction', () => {
     fireEvent.click(screen.getByRole('button', { name: /新建任务/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: ' New task ' } })
     fireEvent.change(screen.getByPlaceholderText('任务描述'), { target: { value: ' Details ' } })
-    fireEvent.change(screen.getByPlaceholderText(/依赖任务/u), { target: { value: 'task-1, task-1' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-1 · Implement runtime' }))
     fireEvent.change(screen.getByPlaceholderText(/写入范围/u), { target: { value: 'src/a, src/b' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => {
@@ -420,7 +1029,155 @@ describe('TeamAction', () => {
     })
   })
 
+  it('selects dependencies by real task id and commits one atomic CAS from the shared detail', async () => {
+    const first: TeamTask = {
+      ...task,
+      subject: 'A',
+      description: 'First prerequisite',
+      status: 'completed',
+      ownerName: 'lead',
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    const second: TeamTask = {
+      ...task,
+      id: TASK_2,
+      subject: 'B',
+      description: 'Second prerequisite',
+      status: 'completed',
+      ownerName: 'lead',
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    let dependent: TeamTask = {
+      ...task,
+      id: TASK_3,
+      revision: 7,
+      subject: 'C',
+      description: 'Depends on selected prerequisites',
+      status: 'pending',
+      blockedBy: [TASK_1],
+      ready: true,
+      writeScopeWarnings: [],
+    }
+    const load = vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: { ...view, tasks: [first, second, dependent] },
+    }))
+    const updateTask = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      dependent = {
+        ...dependent,
+        revision: dependent.revision + 1,
+        subject: input.subject ?? dependent.subject,
+        description: input.description ?? dependent.description,
+        blockedBy: input.blockedBy ?? dependent.blockedBy,
+        writeScopes: input.writeScopes ?? dependent.writeScopes,
+      }
+      return Promise.resolve(taskSuccess(dependent))
+    })
+    render(<TeamAction {...props(actions({ load, updateTask }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('First prerequisite')
+    fireEvent.click(screen.getByRole('button', { name: 'task-3 · C' }))
+    fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
+
+    const dependencies = screen.getByRole('group', { name: zh.blockers })
+    const firstChoice = within(dependencies).getByRole<HTMLInputElement>('checkbox', { name: 'task-1 · A' })
+    const secondChoice = within(dependencies).getByRole<HTMLInputElement>('checkbox', { name: 'task-2 · B' })
+    expect(firstChoice.checked).toBe(true)
+    expect(secondChoice.checked).toBe(false)
+    expect(within(dependencies).queryByRole('checkbox', { name: 'task-3 · C' })).toBeNull()
+
+    fireEvent.click(firstChoice)
+    fireEvent.click(secondChoice)
+    expect(updateTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    expect(within(graph).getByLabelText('task-1 → task-3')).toBeTruthy()
+    expect(within(graph).queryByLabelText('task-2 → task-3')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(updateTask).toHaveBeenCalledTimes(1) })
+    expect(updateTask).toHaveBeenCalledWith(SESSION, {
+      taskId: TASK_3,
+      expectedRevision: 7,
+      action: 'edit',
+      subject: 'C',
+      description: 'Depends on selected prerequisites',
+      blockedBy: [TASK_2],
+      writeScopes: ['src'],
+    })
+    await waitFor(() => {
+      const detail = screen.getByRole('region', { name: zh.taskDetails })
+      expect(detail.textContent).not.toContain(`${zh.blockedBy}:`)
+      expect(detail.textContent).toContain(zh.ready)
+      expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+      expect(within(graph).queryByLabelText('task-1 → task-3')).toBeNull()
+    })
+  })
+
+  it('keeps a concurrently deleted selected dependency visible and removable from the draft', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const blockedTask: TeamTask = {
+      ...task,
+      status: 'pending',
+      blockedBy: [TASK_2],
+      ready: false,
+    }
+    let sink: WatchSink | undefined
+    const updateTask = vi.fn(actions().updateTask)
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({
+        ok: true,
+        value: { ...view, tasks: [blockedTask, dependencyOption] },
+      }),
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+      updateTask,
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: zh.edit }))
+    expect(screen.getByRole<HTMLInputElement>('checkbox', {
+      name: 'task-2 · Dependency option',
+    }).checked).toBe(true)
+
+    act(() => {
+      sink?.replace({
+        ...view,
+        tasks: [{ ...blockedTask, revision: 2, blockedBy: [] }],
+      })
+    })
+    const unavailable = screen.getByRole<HTMLInputElement>('checkbox', {
+      name: `task-2 · ${zh.dependencyUnavailable}`,
+    })
+    expect(unavailable.checked).toBe(true)
+    expect(updateTask).not.toHaveBeenCalled()
+
+    fireEvent.click(unavailable)
+    expect(screen.queryByRole('checkbox', { name: `task-2 · ${zh.dependencyUnavailable}` })).toBeNull()
+    expect(updateTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => {
+      expect(updateTask).toHaveBeenCalledWith(SESSION, expect.objectContaining({
+        taskId: TASK_1,
+        expectedRevision: 1,
+        action: 'edit',
+        blockedBy: [],
+      }))
+    })
+  })
+
   it('assigns, edits, completes, reopens, and deletes with contiguous CAS revisions', async () => {
+    const taskZero: TeamTask = {
+      ...dependencyOption,
+      id: 'task-0' as TeamTaskId,
+      subject: 'Prerequisite',
+    }
     let current = { ...task }
     const updateTask: TeamActionInjected['updateTask'] = vi.fn((
       _sessionId: SessionId,
@@ -442,6 +1199,7 @@ describe('TeamAction', () => {
             revision,
             subject: input.subject ?? current.subject,
             description: input.description ?? current.description,
+            blockedBy: input.blockedBy ?? current.blockedBy,
             writeScopes: input.writeScopes ?? current.writeScopes,
           }
           break
@@ -466,7 +1224,7 @@ describe('TeamAction', () => {
     })
     const load = vi.fn(() => Promise.resolve({
       ok: true as const,
-      value: { ...view, tasks: current.status === 'deleted' ? [] : [current] },
+      value: { ...view, tasks: current.status === 'deleted' ? [taskZero] : [current, taskZero] },
     }))
     render(<TeamAction {...props(actions({ load, updateTask }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
@@ -481,12 +1239,12 @@ describe('TeamAction', () => {
     fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Updated runtime' } })
     fireEvent.change(screen.getByPlaceholderText('任务描述'), { target: { value: 'Updated details' } })
-    fireEvent.change(screen.getByPlaceholderText(/依赖任务/u), { target: { value: 'task-0' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-0 · Prerequisite' }))
     fireEvent.change(screen.getByPlaceholderText(/写入范围/u), { target: { value: 'src/runtime' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText('Updated runtime')).toBeTruthy()
     expect(current).toMatchObject({
-      revision: 4,
+      revision: 3,
       description: 'Updated details',
       blockedBy: ['task-0'],
       writeScopes: ['src/runtime'],
@@ -496,7 +1254,7 @@ describe('TeamAction', () => {
     fireEvent.click(await screen.findByRole('button', { name: /重开/u }))
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /重开/u })).toBeNull()
-      expect(current).toMatchObject({ revision: 6, status: 'pending' })
+      expect(current).toMatchObject({ revision: 5, status: 'pending' })
     })
     fireEvent.click(screen.getByRole('button', { name: /删除/u }))
     await waitFor(() => { expect(screen.queryByText('Updated runtime')).toBeNull() })
@@ -505,11 +1263,72 @@ describe('TeamAction', () => {
       .toEqual([
         ['reassign', 1],
         ['edit', 2],
-        ['set_dependencies', 3],
-        ['complete', 4],
-        ['reopen', 5],
-        ['delete', 6],
+        ['complete', 3],
+        ['reopen', 4],
+        ['delete', 5],
       ])
+  })
+
+  it('retains a deleted selection and reads its authoritative tombstone through getTask', async () => {
+    const remaining = {
+      ...dependencyOption,
+      id: 'task-0' as TeamTaskId,
+      subject: 'Remaining task',
+    }
+    const tombstone = { ...task, revision: 2, status: 'deleted' as const }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [task, remaining] } })
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [remaining] } })
+    const updateTask = vi.fn<TeamActionInjected['updateTask']>(() => Promise.resolve(taskSuccess(tombstone)))
+    const getTask = vi.fn(() => Promise.resolve({ ok: true as const, value: tombstone }))
+    const injected = { ...actions({ load, updateTask }), getTask } as TeamActionInjected
+
+    render(<TeamAction {...props(injected)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: /删除/u }))
+
+    await waitFor(() => {
+      expect(getTask).toHaveBeenCalledWith(SESSION, TASK_1)
+      expect(screen.getByRole('region', { name: zh.taskDetails }).textContent)
+        .toContain('task-1 · Implement runtime')
+    })
+    expect(screen.getByRole('region', { name: zh.taskDetails }).textContent).toContain('已删除')
+    expect(screen.queryByRole('button', { name: /编辑/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /删除/u })).toBeNull()
+    expect(updateTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('fences a late tombstone read after switching Team sessions', async () => {
+    const oldTombstone = Promise.withResolvers<TeamActionResult<TeamTask>>()
+    const oldView = { ...view, tasks: [] }
+    const newSession = 'new-lead' as SessionId
+    const newTask = { ...task, id: TASK_2, subject: 'New Team task' }
+    const getTask = vi.fn(() => oldTombstone.promise)
+    const firstLoad = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: view })
+      .mockResolvedValueOnce({ ok: true, value: oldView })
+    const firstActions = actions({
+      load: firstLoad,
+      getTask,
+    })
+    const rendered = render(<TeamAction {...props(firstActions)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: zh.refresh }))
+    await waitFor(() => { expect(getTask).toHaveBeenCalledWith(SESSION, TASK_1) })
+
+    rendered.rerender(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [newTask] } }),
+      getTask,
+    }), newSession)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('New Team task')
+    oldTombstone.resolve({ ok: true, value: { ...task, status: 'deleted' } })
+    await Promise.resolve()
+
+    expect(screen.queryByText('task-1 · Implement runtime')).toBeNull()
+    expect(screen.queryByText(zh['status.deleted'])).toBeNull()
   })
 
   it('reloads and warns instead of retrying a stale task mutation', async () => {
@@ -524,6 +1343,282 @@ describe('TeamAction', () => {
     expect(await screen.findByText(zh.conflict)).toBeTruthy()
     expect(load).toHaveBeenCalledTimes(2)
     expect(updateTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads the authoritative task while retaining a conflicting client draft as unsaved', async () => {
+    const firstBlocker: TeamTask = {
+      ...task,
+      subject: 'A',
+      description: 'First dependency',
+      status: 'completed',
+      writeScopeWarnings: [],
+    }
+    const secondBlocker: TeamTask = {
+      ...task,
+      id: TASK_2,
+      subject: 'B',
+      description: 'Second dependency',
+      status: 'completed',
+      writeScopeWarnings: [],
+    }
+    const initial: TeamTask = {
+      ...task,
+      id: TASK_3,
+      subject: 'C',
+      description: 'Shared initial value',
+      status: 'pending',
+      ownerName: 'lead',
+      ready: true,
+      writeScopeWarnings: [],
+    }
+    let authoritative = initial
+    const currentView = (): TeamView => ({ ...view, tasks: [firstBlocker, secondBlocker, authoritative] })
+    const firstLoad = vi.fn(() => Promise.resolve({ ok: true as const, value: currentView() }))
+    const secondLoad = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [firstBlocker, secondBlocker, initial] } })
+      .mockImplementation(() => Promise.resolve({ ok: true as const, value: currentView() }))
+    const firstUpdate = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      authoritative = {
+        ...authoritative,
+        revision: 2,
+        subject: input.subject ?? authoritative.subject,
+        description: input.description ?? authoritative.description,
+        blockedBy: input.blockedBy ?? authoritative.blockedBy,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    const secondUpdate = vi.fn<TeamActionInjected['updateTask']>(() => Promise.resolve(taskConflict('stale revision 1')))
+    const firstClient = render(<TeamAction {...props(actions({ load: firstLoad, updateTask: firstUpdate }))} />)
+    const secondClient = render(<TeamAction {...props(actions({ load: secondLoad, updateTask: secondUpdate }))} />)
+
+    for (const client of [firstClient, secondClient]) {
+      fireEvent.click(within(client.container).getByRole('button', { name: /Agent Team/u }))
+      await within(client.container).findByRole('button', { name: 'task-3 · C' })
+      fireEvent.click(within(client.container).getByRole('button', { name: 'task-3 · C' }))
+      fireEvent.click(within(client.container).getByRole('button', { name: /编辑/u }))
+    }
+    fireEvent.change(within(firstClient.container).getByPlaceholderText(zh.subject), {
+      target: { value: 'Committed by client A' },
+    })
+    fireEvent.click(within(firstClient.container).getByRole('checkbox', { name: 'task-1 · A' }))
+    fireEvent.change(within(secondClient.container).getByPlaceholderText(zh.subject), {
+      target: { value: 'Unsaved client B draft' },
+    })
+    fireEvent.click(within(secondClient.container).getByRole('checkbox', { name: 'task-2 · B' }))
+
+    fireEvent.click(within(firstClient.container).getByRole('button', { name: zh.save }))
+    await within(firstClient.container).findByRole('button', { name: 'task-3 · Committed by client A' })
+    fireEvent.click(within(secondClient.container).getByRole('button', { name: zh.save }))
+
+    expect(await within(secondClient.container).findByText('任务当前版本已重新加载；你的草稿尚未保存。')).toBeTruthy()
+    expect(within(secondClient.container).getByRole('button', {
+      name: 'task-3 · Committed by client A',
+    })).toBeTruthy()
+    expect(within(secondClient.container).getByDisplayValue('Unsaved client B draft')).toBeTruthy()
+    expect(within(secondClient.container).getByRole<HTMLInputElement>('checkbox', { name: 'task-1 · A' }).checked).toBe(false)
+    expect(within(secondClient.container).getByRole<HTMLInputElement>('checkbox', { name: 'task-2 · B' }).checked).toBe(true)
+    expect(secondUpdate).toHaveBeenCalledTimes(1)
+    expect(secondUpdate).toHaveBeenCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_3,
+      expectedRevision: 1,
+      action: 'edit',
+      blockedBy: [TASK_2],
+    }))
+    expect(secondLoad).toHaveBeenCalledTimes(2)
+  })
+
+  it('advances the edit base only after a successful conflict reload and waits for another explicit Save', async () => {
+    const initial: TeamTask = {
+      ...task,
+      status: 'pending',
+      ready: true,
+    }
+    let authoritative: TeamTask = {
+      ...initial,
+      revision: 2,
+      subject: 'Current authority',
+    }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [initial, dependencyOption] } })
+      .mockImplementation(() => Promise.resolve({
+        ok: true as const,
+        value: { ...view, tasks: [authoritative, dependencyOption] },
+      }))
+    const updateTask = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      if (input.expectedRevision === 1) return Promise.resolve(taskConflict('stale revision 1'))
+      authoritative = {
+        ...authoritative,
+        revision: 3,
+        subject: input.subject ?? authoritative.subject,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    render(<TeamAction {...props(actions({ load, updateTask }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: zh.edit }))
+    fireEvent.change(screen.getByPlaceholderText(zh.subject), {
+      target: { value: 'Retained draft' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+
+    expect(await screen.findByText(zh.conflictDraft)).toBeTruthy()
+    expect(screen.getByDisplayValue('Retained draft')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'task-1 · Current authority' })).toBeTruthy()
+    expect(updateTask).toHaveBeenCalledTimes(1)
+    expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 1,
+      action: 'edit',
+    }))
+
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    expect(await screen.findByRole('button', { name: 'task-1 · Retained draft' })).toBeTruthy()
+    expect(updateTask).toHaveBeenCalledTimes(2)
+    expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 2,
+      action: 'edit',
+    }))
+  })
+
+  it('keeps a failed conflict reload visible and leaves the edit base unchanged', async () => {
+    const failedReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [task, dependencyOption] } })
+      .mockImplementationOnce(() => failedReload.promise)
+      .mockResolvedValue(remoteFailure('authority reload failed'))
+    const updateTask = vi.fn(() => Promise.resolve(taskConflict('stale revision 1')))
+    render(<TeamAction {...props(actions({ load, updateTask }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    await act(async () => { await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: zh.edit }))
+    fireEvent.change(screen.getByPlaceholderText(zh.subject), {
+      target: { value: 'Still unsaved' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(2) })
+
+    await act(async () => {
+      failedReload.resolve(remoteFailure('authority reload failed'))
+      await failedReload.promise
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('alert').textContent).toBe('authority reload failed (gateway/internal)')
+    expect(screen.queryByText(zh.conflictDraft)).toBeNull()
+    expect(screen.getByDisplayValue('Still unsaved')).toBeTruthy()
+    expect(updateTask).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(updateTask).toHaveBeenCalledTimes(2) })
+    expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 1,
+      action: 'edit',
+    }))
+  })
+
+  it('pins an edit revision across another Client commit and a watch invalidation', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const initial = { ...task, status: 'pending' as const, ownerName: 'lead', ready: true }
+    let authoritative = initial
+    let secondSink: WatchSink | undefined
+    const currentView = (): TeamView => ({ ...view, tasks: [authoritative, dependencyOption] })
+    const firstUpdate = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      authoritative = {
+        ...authoritative,
+        revision: 2,
+        subject: input.subject ?? authoritative.subject,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    const secondUpdate = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      if (input.expectedRevision === 1) return Promise.resolve(taskConflict('stale revision 1'))
+      authoritative = {
+        ...authoritative,
+        revision: 3,
+        subject: input.subject ?? authoritative.subject,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    const firstClient = render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: currentView() }),
+      updateTask: firstUpdate,
+    }))} />)
+    const secondClient = render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: currentView() }),
+      watch: (_sessionId, sink) => {
+        secondSink = sink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+      updateTask: secondUpdate,
+    }))} />)
+
+    for (const client of [firstClient, secondClient]) {
+      fireEvent.click(within(client.container).getByRole('button', { name: /Agent Team/u }))
+      await within(client.container).findByRole('button', { name: 'task-1 · Implement runtime' })
+      fireEvent.click(within(client.container).getByRole('button', { name: /编辑/u }))
+    }
+    fireEvent.change(within(firstClient.container).getByPlaceholderText(zh.subject), {
+      target: { value: 'Committed by client A' },
+    })
+    fireEvent.change(within(secondClient.container).getByPlaceholderText(zh.subject), {
+      target: { value: 'Unsaved client B draft' },
+    })
+    fireEvent.click(within(firstClient.container).getByRole('button', { name: zh.save }))
+    await within(firstClient.container).findByRole('button', { name: 'task-1 · Committed by client A' })
+
+    act(() => { secondSink?.invalidated() })
+    await within(secondClient.container).findByRole('button', { name: 'task-1 · Committed by client A' })
+    expect(within(secondClient.container).getByDisplayValue('Unsaved client B draft')).toBeTruthy()
+    fireEvent.click(within(secondClient.container).getByRole('button', { name: zh.save }))
+
+    expect(await within(secondClient.container).findByText(zh.conflictDraft)).toBeTruthy()
+    expect(within(secondClient.container).getByDisplayValue('Unsaved client B draft')).toBeTruthy()
+    expect(secondUpdate).toHaveBeenCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 1,
+      action: 'edit',
+    }))
+  })
+
+  it('retains an unsaved conflict when its reload races a watch refresh', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const conflictRead = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const watchRead = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const current = { ...task, revision: 2, subject: 'Current authority' }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [task, dependencyOption] } })
+      .mockImplementationOnce(() => conflictRead.promise)
+      .mockImplementationOnce(() => watchRead.promise)
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load,
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+      updateTask: () => Promise.resolve(taskConflict('stale revision 1')),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
+    fireEvent.change(screen.getByPlaceholderText(zh.subject), { target: { value: 'Unsaved draft' } })
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(2) })
+
+    act(() => { sink?.invalidated() })
+    expect(load).toHaveBeenCalledTimes(2)
+    conflictRead.resolve({ ok: true, value: { ...view, tasks: [current, dependencyOption] } })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
+    watchRead.resolve({ ok: true, value: { ...view, tasks: [current, dependencyOption] } })
+
+    expect(await screen.findByText(zh.conflictDraft)).toBeTruthy()
+    expect(screen.getByDisplayValue('Unsaved draft')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'task-1 · Current authority' })).toBeTruthy()
   })
 
   it('keeps reload failures visible after task and dependency conflicts', async () => {
@@ -542,18 +1637,16 @@ describe('TeamAction', () => {
     first.unmount()
 
     const dependencyLoad = vi.fn()
-      .mockResolvedValueOnce({ ok: true, value: view })
-      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [{ ...task, revision: 2, subject: 'Edited' }] } })
+      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [task, dependencyOption] } })
       .mockResolvedValueOnce(remoteFailure('dependency reload failed'))
     const dependencyUpdate = vi.fn()
-      .mockResolvedValueOnce(taskSuccess({ ...task, revision: 2, subject: 'Edited' }))
       .mockResolvedValueOnce(taskConflict('stale dependency'))
     render(<TeamAction {...props(actions({ load: dependencyLoad, updateTask: dependencyUpdate }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
     fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Edited' } })
-    fireEvent.change(screen.getByPlaceholderText(zh.blockers), { target: { value: 'task-2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-2 · Dependency option' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText('dependency reload failed (gateway/internal)')).toBeTruthy()
     expect(screen.queryByText(zh.conflict)).toBeNull()
@@ -710,10 +1803,12 @@ describe('TeamAction', () => {
     const { ownerName: _ownerName, ...unownedTask } = task
     const updateTask = vi.fn()
       .mockResolvedValueOnce(remoteFailure('edit failed'))
-      .mockResolvedValueOnce(taskSuccess({ ...task, revision: 2, subject: 'Saved edit' }))
       .mockResolvedValueOnce(taskRejected('dependency failed'))
       .mockResolvedValueOnce(taskSuccess({ ...unownedTask, revision: 2 }))
-    render(<TeamAction {...props(actions({ updateTask }))} />)
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [task, dependencyOption] } }),
+      updateTask,
+    }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
 
@@ -729,12 +1824,12 @@ describe('TeamAction', () => {
     expect(await screen.findByText('edit failed (gateway/internal)')).toBeTruthy()
 
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Saved edit' } })
-    fireEvent.change(screen.getByPlaceholderText(zh.blockers), { target: { value: 'task-2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-2 · Dependency option' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText('dependency failed (team-rejected)')).toBeTruthy()
-    expect(updateTask.mock.calls[2]?.[1]).toMatchObject({
-      action: 'set_dependencies',
-      expectedRevision: 2,
+    expect(updateTask.mock.calls[1]?.[1]).toMatchObject({
+      action: 'edit',
+      expectedRevision: 1,
       blockedBy: ['task-2'],
     })
 
@@ -748,16 +1843,17 @@ describe('TeamAction', () => {
     })
   })
 
-  it('shows a Remote carrier failure from the dependency mutation', async () => {
-    const updateTask = vi.fn()
-      .mockResolvedValueOnce(taskSuccess({ ...task, revision: 2, subject: 'Edited' }))
-      .mockResolvedValueOnce(remoteFailure('dependency transport failed'))
-    render(<TeamAction {...props(actions({ updateTask }))} />)
+  it('shows a Remote carrier failure from the atomic edit and dependency mutation', async () => {
+    const updateTask = vi.fn().mockResolvedValueOnce(remoteFailure('dependency transport failed'))
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [task, dependencyOption] } }),
+      updateTask,
+    }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
     fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Edited' } })
-    fireEvent.change(screen.getByPlaceholderText(zh.blockers), { target: { value: 'task-2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-2 · Dependency option' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     expect(await screen.findByText('dependency transport failed (gateway/internal)')).toBeTruthy()
@@ -783,64 +1879,64 @@ describe('TeamAction', () => {
     expect(updateTask).toHaveBeenCalledWith(SESSION, expect.objectContaining({ action: 'edit' }))
   })
 
-  it('reloads a dependency conflict and ignores dependency settlement after a session switch', async () => {
+  it('reloads an atomic edit conflict and ignores its settlement after a session switch', async () => {
+    const taskView = { ...view, tasks: [task, dependencyOption] }
     const load = vi.fn()
-      .mockResolvedValueOnce({ ok: true, value: view })
-      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [{ ...task, revision: 2, subject: 'Conflict edit' }] } })
-      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [{ ...task, revision: 3 }] } })
-    const conflictUpdate = vi.fn()
-      .mockResolvedValueOnce(taskSuccess({ ...task, revision: 2, subject: 'Conflict edit' }))
-      .mockResolvedValueOnce(taskConflict('stale dependency'))
+      .mockResolvedValueOnce({ ok: true, value: taskView })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { ...view, tasks: [{ ...task, revision: 2, subject: 'Current edit' }, dependencyOption] },
+      })
+    const conflictUpdate = vi.fn().mockResolvedValueOnce(taskConflict('stale dependency'))
     const first = render(<TeamAction {...props(actions({ load, updateTask: conflictUpdate }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
     fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Conflict edit' } })
-    fireEvent.change(screen.getByPlaceholderText(zh.blockers), { target: { value: 'task-2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-2 · Dependency option' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    expect(await screen.findByText(zh.conflict)).toBeTruthy()
-    expect(load).toHaveBeenCalledTimes(3)
+    expect(await screen.findByText(zh.conflictDraft)).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(conflictUpdate).toHaveBeenCalledTimes(1)
     first.unmount()
 
     const dependencyReload = Promise.withResolvers<TeamActionResult<TeamView>>()
     const dependencyLoad = vi.fn()
-      .mockResolvedValueOnce({ ok: true, value: view })
-      .mockResolvedValueOnce({ ok: true, value: { ...view, tasks: [{ ...task, revision: 2, subject: 'Late edit' }] } })
+      .mockResolvedValueOnce({ ok: true, value: taskView })
       .mockImplementationOnce(() => dependencyReload.promise)
-    const staleUpdate = vi.fn()
-      .mockResolvedValueOnce(taskSuccess({ ...task, revision: 2, subject: 'Late edit' }))
-      .mockResolvedValueOnce(taskConflict('stale dependency'))
+    const staleUpdate = vi.fn().mockResolvedValueOnce(taskConflict('stale dependency'))
     const second = render(<TeamAction {...props(actions({ load: dependencyLoad, updateTask: staleUpdate }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
     fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Late edit' } })
-    fireEvent.change(screen.getByPlaceholderText(zh.blockers), { target: { value: 'task-2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-2 · Dependency option' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() => { expect(dependencyLoad).toHaveBeenCalledTimes(3) })
+    await waitFor(() => { expect(dependencyLoad).toHaveBeenCalledTimes(2) })
     second.rerender(<TeamAction {...props(actions(), 'next-session' as SessionId)} />)
-    dependencyReload.resolve({ ok: true, value: { ...view, tasks: [{ ...task, revision: 3 }] } })
+    dependencyReload.resolve({ ok: true, value: { ...view, tasks: [{ ...task, revision: 3 }, dependencyOption] } })
     await Promise.resolve()
     await Promise.resolve()
-    expect(screen.queryByText(zh.conflict)).toBeNull()
+    expect(screen.queryByText(zh.conflictDraft)).toBeNull()
     second.unmount()
 
     const dependency = Promise.withResolvers<TeamTaskActionResult>()
-    const lateUpdate = vi.fn()
-      .mockResolvedValueOnce(taskSuccess({ ...task, revision: 2, subject: 'Late edit' }))
-      .mockImplementationOnce(() => dependency.promise)
-    const third = render(<TeamAction {...props(actions({ updateTask: lateUpdate }))} />)
+    const lateUpdate = vi.fn().mockImplementationOnce(() => dependency.promise)
+    const third = render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: taskView }),
+      updateTask: lateUpdate,
+    }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
     fireEvent.click(screen.getByRole('button', { name: /编辑/u }))
     fireEvent.change(screen.getByPlaceholderText('任务标题'), { target: { value: 'Late edit' } })
-    fireEvent.change(screen.getByPlaceholderText(zh.blockers), { target: { value: 'task-2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'task-2 · Dependency option' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() => { expect(lateUpdate).toHaveBeenCalledTimes(2) })
+    await waitFor(() => { expect(lateUpdate).toHaveBeenCalledTimes(1) })
     expect(screen.getByRole<HTMLButtonElement>('button', { name: '保存' }).disabled).toBe(true)
     expect(screen.getByRole<HTMLButtonElement>('button', { name: '取消' }).disabled).toBe(true)
     third.rerender(<TeamAction {...props(actions(), 'next-session' as SessionId)} />)
-    dependency.resolve(taskSuccess({ ...task, revision: 3, subject: 'Late dependency' }))
+    dependency.resolve(taskSuccess({ ...task, revision: 2, subject: 'Late dependency' }))
     await Promise.resolve()
     expect(screen.queryByText('Late dependency')).toBeNull()
   })

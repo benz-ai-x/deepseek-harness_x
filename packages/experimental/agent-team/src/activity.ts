@@ -1,6 +1,6 @@
-/** One-shot Team change waiters independent of durable state projection. */
+/** Team change waiters and bounded followers independent of durable state projection. */
 
-import type { TeamId, TeamWaitResult } from './types.ts'
+import type { TeamId, TeamView, TeamWaitResult, TeamWatchFrame } from './types.ts'
 import { errorMessage, TeamError } from './error.ts'
 
 interface Waiter {
@@ -10,7 +10,35 @@ interface Waiter {
 /** Owns current Team change waiters and releases each at most once. */
 export class TeamActivity {
   private readonly waiters = new Map<TeamId, Set<Waiter>>()
+  private readonly followers = new Map<TeamId, Set<TeamFollower>>()
   private closed = false
+
+  /**
+   * Open one projection generation after synchronously registering its invalidation follower.
+   * @param id - Team whose committed changes invalidate the projection.
+   * @param baseline - exact authoritative projection read after follower registration.
+   * @param signal - generation cancellation.
+   * @returns one complete baseline followed by coalesced invalidations.
+   */
+  async *follow(id: TeamId, baseline: () => TeamView, signal: AbortSignal): AsyncIterable<TeamWatchFrame> {
+    signal.throwIfAborted()
+    if (this.closed) return
+    const follower = new TeamFollower()
+    let followers = this.followers.get(id)
+    if (followers === undefined) {
+      followers = new Set()
+      this.followers.set(id, followers)
+    }
+    followers.add(follower)
+    try {
+      yield { type: 'baseline', value: baseline() }
+      yield* follower.read(signal)
+    } finally {
+      followers.delete(follower)
+      if (followers.size === 0) this.followers.delete(id)
+      follower.close()
+    }
+  }
 
   /**
    * Wait for one later Team-domain or member-status change.
@@ -71,9 +99,14 @@ export class TeamActivity {
    */
   notify(id: TeamId): void {
     const waiters = this.waiters.get(id)
-    if (waiters === undefined) return
-    this.waiters.delete(id)
-    for (const waiter of waiters) waiter.resolve()
+    if (waiters !== undefined) {
+      this.waiters.delete(id)
+      for (const waiter of waiters) waiter.resolve()
+    }
+    const followers = this.followers.get(id)
+    if (followers !== undefined) {
+      for (const follower of followers) follower.invalidate()
+    }
   }
 
   /** Close admission and wake every current waiter during runtime disposal. */
@@ -83,5 +116,54 @@ export class TeamActivity {
       for (const waiter of waiters) waiter.resolve()
     }
     this.waiters.clear()
+    for (const followers of this.followers.values()) {
+      for (const follower of followers) follower.close()
+    }
+    this.followers.clear()
+  }
+}
+
+/** One stream generation retaining at most one pending invalidation. */
+class TeamFollower {
+  private invalidated = false
+  private waiting: (() => void) | undefined
+  private closed = false
+
+  invalidate(): void {
+    if (this.closed) return
+    this.invalidated = true
+    this.waiting?.()
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    this.waiting?.()
+  }
+
+  async *read(signal: AbortSignal): AsyncIterable<TeamWatchFrame> {
+    while (!this.closed && !signal.aborted) {
+      if (this.invalidated) {
+        this.invalidated = false
+        yield { type: 'invalidated' }
+        continue
+      }
+      await this.wait(signal)
+    }
+  }
+
+  private wait(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      const finish = (): void => {
+        signal.removeEventListener('abort', finish)
+        /* v8 ignore next -- one read owns the sole installed wait callback. */
+        if (this.waiting === finish) this.waiting = undefined
+        resolve()
+      }
+      this.waiting = finish
+      signal.addEventListener('abort', finish, { once: true })
+      /* v8 ignore next -- signal and pending bit cannot change during this synchronous setup. */
+      if (signal.aborted || this.closed || this.invalidated) finish()
+    })
   }
 }

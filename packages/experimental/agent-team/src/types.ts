@@ -204,6 +204,11 @@ export interface TeamView {
   readonly tasks: TeamTaskView[]
 }
 
+/** Reconnect-safe Team projection baseline followed by bounded invalidations. */
+export type TeamWatchFrame =
+  | { readonly type: 'baseline'; readonly value: TeamView }
+  | { readonly type: 'invalidated' }
+
 /** One peer message retained until its target Session records it. */
 export interface TeamMessageSnapshot {
   readonly id: TeamMessageId

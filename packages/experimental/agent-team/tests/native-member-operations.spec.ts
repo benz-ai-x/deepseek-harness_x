@@ -390,7 +390,7 @@ describe('native Team member queries', () => {
 
   it.each([
     { action: 'edit' as const, correction: { writeScopes: ['src'] },
-      message: 'task edit requires a subject, description, or write scope change' },
+      message: 'task edit requires a subject, description, dependency, or write scope change' },
     { action: 'set_dependencies' as const, correction: { blockedBy: [] },
       message: 'set_dependencies requires a dependency list' },
   ])('lets DSH and native callers correct missing $action input from shared diagnostics', async ({ action, correction, message }) => {

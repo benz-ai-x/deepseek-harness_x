@@ -109,11 +109,13 @@ The exact live Lead can read persisted Team messages through `listMessages()` an
 
 List results contain only sender, recipient, queue time, and delivery facts. Detail reads return literal intentional text and detached image media type, dimensions, and byte size. Reasoning, tool calls and results, attachment identities, provider extensions, and other unsupported blocks become explicit omission markers; `complete`, `partial`, or `unavailable` reports the resulting content coverage. The reader validates every persisted participant before filtering, derives names from the current Host-owned roster, and publishes no Team activity. `pending` and `delivered` are delivery facts, while `unknown` is reserved for a client that cannot obtain a current fact; none of these states means read, acknowledged by a person, or task completion.
 
+The exact live Lead can also open the generated `agentTeams/watch` stream. Each physical generation registers its Team follower before reading and emits one complete `TeamView` baseline, then coalesces any burst of committed roster, message, task, or live-status changes into one pending `invalidated` frame. An invalidation carries no copied domain state: browser consumers re-read the authoritative Team view and current message window. Caller cancellation and Team-service disposal release the follower.
+
 ### Shared task board
 
 Any member can add a task with a title, details, optional dependencies on other tasks, and optional hints about which files it will touch. A task is claimable only when everything it depends on is complete.
 
-Tasks have an owner: a member claims a task to start work, completes it when done, releases it back, or reopens it; the Lead can assign a task to any member. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
+Tasks have an owner: a member claims a task to start work, completes it when done, releases it back, or reopens it; the Lead can assign a task to any member. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work. One edit can atomically replace task text, file hints, and the full dependency set; the Host validates references, caller authority, self-dependencies, and indirect cycles before appending anything.
 
 File hints produce warnings when two in-progress tasks plan to touch overlapping paths — they never block anything. Deleted tasks remain in history but disappear from the active list.
 
@@ -182,7 +184,7 @@ Human submissions use required `team/message/request-committed@1` to atomically 
 
 ### Shared task board
 
-Tasks are complete versioned snapshots; every mutation carries `expectedRevision`, and a stale caller receives `TEAM_TASK_STALE_REVISION` instead of overwriting a newer value. Numeric `task-<n>` ids require a safe-integer suffix, and id-space exhaustion reports `TEAM_TASK_LIMIT` instead of reusing the final id. Deleted tasks remain tombstones for replay and id stability but do not consume `maxTasks` or appear in `listTasks()`. `writeScopes` are normalized workspace-relative prefixes; views warn on overlap with in-progress tasks but never block claim or authorize writes.
+Tasks are complete versioned snapshots; every mutation carries `expectedRevision`, and a stale caller receives `TEAM_TASK_STALE_REVISION` instead of overwriting a newer value. The `edit` transition can commit text, `writeScopes`, and `blockedBy` together at one next revision; dependency and authority rejection leaves the prior snapshot and Lead log unchanged. Numeric `task-<n>` ids require a safe-integer suffix, and id-space exhaustion reports `TEAM_TASK_LIMIT` instead of reusing the final id. Deleted tasks remain tombstones for replay and id stability but do not consume `maxTasks` or appear in `listTasks()`. `writeScopes` are normalized workspace-relative prefixes; views warn on overlap with in-progress tasks but never block claim or authorize writes.
 
 ### Waiting and interruption
 
@@ -217,7 +219,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 ### Browser Remote
 
-`TeamService` owns the generated `agentTeams/view`, `agentTeams/listMessages`, `agentTeams/getMessage`, `agentTeams/sendMessage`, `agentTeams/createTask`, and `agentTeams/updateTask` Remote methods beside the roster, mailbox, task, and lifecycle operations. The `./remote` export supplies the Client contribution mounted by the Web UI, while `./client` re-exports browser-safe view, message-query/submission, sanitized-content, and task-mutation types. Message list and detail failures remain ordinary outer `RemoteResult` failures. Human send, task create, and task update rejections are explicit domain results inside a successful transport response; message request conflicts and stale task revisions remain distinguishable from other Team rejections.
+`TeamService` owns the generated `agentTeams/view`, `agentTeams/watch`, `agentTeams/getTask`, `agentTeams/listMessages`, `agentTeams/getMessage`, `agentTeams/sendMessage`, `agentTeams/createTask`, and `agentTeams/updateTask` Remote methods beside the roster, mailbox, task, and lifecycle operations. The `./remote` export supplies the Client contribution mounted by the Web UI, while `./client` re-exports browser-safe view, watch-frame, message-query/submission, sanitized-content, and task-mutation types. `view` returns the non-deleted task board; `watch` returns a complete opening view followed only by bounded invalidations; `getTask` resolves one real Team-local id against the same Lead log and includes its retained deletion tombstone. Task and message read failures remain ordinary outer `RemoteResult` failures. Human send, task create, and task update rejections are explicit domain results inside a successful transport response; message request conflicts and stale task revisions remain distinguishable from other Team rejections.
 
 ## Model Experience
 

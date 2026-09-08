@@ -10,15 +10,17 @@
 
 ## 决策
 
-私有 `ctx.agentTeams` service 除 domain operation 外，还直接负责生成式 `agentTeams/view`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。Team package 负责浏览器安全的 view、已提交消息、净化内容与 mutation-result type。Team view 包含 roster 与当前 task 状态，但不包含 pending mailbox 内容或已删除 task tombstone。消息页面只包含 metadata；detail 需要稳定 id 与 list window 返回的 committed cursor，然后公开原样的有意文本和图片事实，并把私有或不支持的 block 替换为显式省略项。Create 与 update rejection 通过封闭 business result 跨越 Remote；消息读取和意外 failure 保留为普通 `RemoteResult` failure。
+私有 `ctx.agentTeams` service 除 domain operation 外，还直接负责生成式 `agentTeams/view`、`agentTeams/watch`、`agentTeams/getTask`、`agentTeams/listMessages`、`agentTeams/getMessage`、`agentTeams/sendMessage`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。Team package 负责浏览器安全的 view、watch frame、已提交消息、净化内容与 mutation-result type。Team view 包含 roster 与当前未删除 task 状态；`getTask` 以真实 Team-local id 读取同一 Lead log，也包含保留的删除 tombstone。两种读取都不包含 pending mailbox 内容。消息页面只包含 metadata；detail 需要稳定 id 与 list window 返回的 committed cursor，然后公开原样的有意文本和图片事实，并把私有或不支持的 block 替换为显式省略项。Create 与 update rejection 通过封闭 business result 跨越 Remote；read 与意外 failure 保留为普通 `RemoteResult` failure。
 
 只有精确的 live Lead 能读取 Team message index。每次读取都与 Team journal 串行执行，并在固定 event-sequence cutoff 前 flush Lead Session。Cursor 将该 cutoff 与 Team 及规范化查询绑定，能在 projection 冷重建后继续使用，并拒绝损坏、未来历史、其他 Team 或改变后的 filter。Reader 会在筛选前验证 Host-owned participant，因此查询不能隐藏伪造 sender。Queue 与 delivery event sequence 和 time 会与正文内容分开投影。投递事实不表示用户已读消息或相关工作已完成。
 
-`@deepseek-ai/dsh-experimental-client-ui-agent-team` 通过稳定 `ctx.remote` service 挂载 `@deepseek-ai/dsh-experimental-agent-team/remote` contribution，随后直接消费生成式 `ctx.remote.agentTeams` method，不增加 Client result 包装层。它为 roster status、model diagnostics、task control 与扩展视图持有唯一 Team dialog。该 dialog 的 header entry 声明公开的 session-scoped `agent-team.panel.view` list Slot，把本地化 contribution label 投影为 tab，并在 render site 传递精确 Lead `teamSessionId`。Contribution 只使用公开 Slot 与生成式 Remote type；释放任一 Fiber 都会移除其 UI 与权限。
+`@deepseek-ai/dsh-experimental-client-ui-agent-team` 通过稳定 `ctx.remote` service 挂载 `@deepseek-ai/dsh-experimental-agent-team/remote` contribution，随后直接消费生成式 `ctx.remote.agentTeams` method，不增加 Client result 包装层。它为 roster status、model diagnostics、task control 与扩展视图持有唯一 Team dialog。任务列表与依赖图由同一 Team view 派生，并共用已选任务、详情面板与变更控件。如果该选择 id 从非删除 view 中消失，Client 会保留 id，并通过生成式 `agentTeams/getTask` 读取它的权威 tombstone；同一详情面板显示删除状态，但不提供变更控件。图节点使用真实 task id 和 Host 给出的 owner、status、readiness 与 blocker；有向边从前置指向依赖它的任务。确定性布局、有界缩放与平移、适配视野、感知依赖的键盘移动以及原生 button 列表覆盖导航。过滤只改变可见性，并标明被省略的前置，不重新计算 readiness。该 dialog 的 header entry 声明公开的 session-scoped `agent-team.panel.view` list Slot，把本地化 contribution label 投影为 tab，并在 render site 传递精确 Lead `teamSessionId`。Contribution 只使用公开 Slot 与生成式 Remote type；释放任一 Fiber 都会移除其 UI 与权限。
 
 Team UI Fiber 还拥有公开且仅限 Client 的 `ctx.agentTeamPanelNavigation` service。扩展可以指定精确 Team Session、已注册的 child-view id 与可选 member id。Owner 会把请求保留到匹配的 panel 与 child 出现，再打开同一个 dialog、选择该 child，通过 Slot owner props 转发 member 与单调 revision，并只消费请求一次。这个导航提示既不读取 Host 数据也不授予权限；child 仍使用自身生成式 Remote 与精确 live-Lead 检查。
 
-每次 task update 都发送当前显示的 revision。每个 create 或 update 都独立持有 pending token，在开始前使更早的 refresh 失效，并在成功后重新读取完整 Team view。Conflict 仅在其 reload 成功后要求用户检查；如果重新读取失败，则保留该错误。重叠 refresh 只发布所选 Session 的最新请求。
+每个物理 `agentTeams/watch` generation 都以一份完整 `TeamView` baseline 开始，之后只携带有界 invalidation。“概览”会原子发布该 baseline，或在失效后重新读取 `view`；消息中心 contribution 使用同一信号重新读取当前 committed page。“概览”同时最多执行一次权威读取；读取期间收到的任意数量 invalidation 都共享该 refresh cycle 的唯一 completion，只设置一个 dirty bit。只要该 bit 曾被设置，cycle 就会再读取一次，因此 completion 状态保持常数空间，并覆盖最后一次已观测失效。Carrier 丢失时保留最后已发布事实，并显示明确的 disconnected 或 stale 状态；重连只读取，绝不会重放消息提交。Session 变化、service replacement、迟到页面、迟到 detail read 与旧 stream callback 都受 generation 隔离。React cleanup 会同步触发幂等 control release，但绝不返回它的 Promise；外层 Client registration 拥有这些仍存活及已触发的 control，且其可等待 Cordis 生命周期在所有底层 transport 与 consumer 静止前不会完成 session 或 service replacement。释放失败会进入 Cordis 生命周期边界；该边界会报告错误，同时继续按逆序清理 registration。
+
+非 edit 的 task update 会发送当前显示的 revision。Edit form 打开时捕获 compare-and-set 基准，watch 驱动的 refresh 不会推进该基准。Create 与 edit form 会把当前真实 task id 显示为原生依赖 checkbox，并排除正在编辑的任务。如果已选 dependency 从当前 Team view 消失，它仍会以明确的「不可用或已删除」checkbox 保留在草稿中，用户可在保存前将其移除。任务文本、scope 与完整 dependency 草稿通过同一个 `edit` compare-and-set mutation 提交；Host 在追加下一个 revision 前校验引用、权限、自依赖与间接环。每个 create 或 update 都独立持有 pending token，在开始前使更早的 refresh 失效，并在成功后重新读取完整 Team view。Edit conflict 会保留旧 form 与 dependency 草稿，且不自动重试 mutation。由 conflict 触发的权威 reload 成功后，才会把 edit 基准推进到新 revision，显示草稿尚未保存，并等待下一次显式 Save；reload 失败时基准不变，且真实 reload 错误保持可见。重叠 refresh 只发布所选 Session 的最新请求。显示模式、已选 id、过滤文本与视口变换仍是可释放的组件状态，而不是持久 task projection。
 
 Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'continuable' }` Subagent address，不带 Team tag。UI 刷新直接 child catalog、再次检查所选 Session，然后打开 addressed conversation。History 与普通 addressed-child continuation 使用稳定 Subagent 路径。[持久人类 Team 消息请求决策](../architecture/2026-09-07-durable-human-team-message-requests.zh.md)部分取代本 Note 原有的「不发送／不回复」和「只能继续 addressed-child 会话」边界：当前消息 composer 使用生成式 `agentTeams/sendMessage` Remote 发送显式人类工作与回复。本 Note 仍是消息读取、分页、任务、teammate 导航与 Client Slot 组合的当前归属。
 
@@ -26,9 +28,13 @@ Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'cont
 
 稳定 Web preset 仍会在自身 preset scope 内注册 continuable Subagent control。顶层 Agent Teams profile override 无法替换这些 registration，因此该实验性 composition 可能同时暴露 Team roster 与 legacy child control。Team-aware Web preset 暂缓实现；[Web profile README](../../../../packages/experimental/agent-team-web-profile/README.zh.md#known-limitations-and-deferred-work)负责记录当前限制。
 
+任务面板与 Team 消息 contribution 共用 Team Client package 导出的浏览器专用 `createTeamWatchOwner`。每个 registration 仍持有独立 owner，共享实现使父面板与子视图的 transport teardown 和失败报告保持一致。扩展无需导入私有组件或额外挂载 Remote。
+
 ## 边界
 
-Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实时 subscription operation。独立的仅限 Lead 生成式 `agentTeams/sendMessage` Remote 与消息 composer 提供显式发送和回复，不会把读取变成变更，也不推断工作已完成。Reader 绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的普通 continuation 仍是 addressed-child prompt；只有显式的消息 composer 提交才是 Team mailbox message。Panel navigation 明确不是全局 router 或另一份 Team state store。它不携带消息正文、provider 对象、凭据、native payload 或配置路径；不匹配的 Team 或未注册的 child 无法消费请求。
+Web 消息读取仍只提供 list/detail 且没有 read receipt；独立 Team watch 只携带完整 view baseline 与无状态 invalidation。仅限 Lead 的生成式 `agentTeams/sendMessage` Remote 与消息 composer 提供显式发送和回复，不会把读取或重连变成变更，也不推断工作已完成。Reader 绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的普通 continuation 仍是 addressed-child prompt；只有显式的消息 composer 提交才是 Team mailbox message。
+
+Panel navigation 明确不是全局 router 或另一份 Team state store。它不携带消息正文、provider 对象、凭据、native payload 或配置路径；不匹配的 Team 或未注册的 child 无法消费请求。
 
 ## 考虑过的替代方案
 
@@ -44,10 +50,14 @@ Web 消息读取 method 仍只提供 list/detail，不提供 read receipt 或实
 
 **在 `agentTeams/view` 或 list page 中返回消息正文。** 拒绝，因为宽泛 snapshot 与常规 refresh 会保留敏感内容，并扩大每个 response。按需 detail 会把权限与内容选择留在 Host read。
 
+**持久化图布局，或从可见边派生 readiness。** 拒绝，因为两种做法都会新建可能与 Lead log 分歧的第二份 task projection。Client 会为每份分离 view 确定性排布，即使过滤隐藏了前置，也会显示 Host 给出的 readiness。
+
 ## 测试
 
-Team service test 覆盖固定 window 分页、filter、detail authorization、净化内容、participant forgery、过期身份、cursor scope 与损坏、持久化 failure、无 activity 读取和冷启动。逐文件 coverage 固定 message reader 的每条路径；生成流程与 plain-Node built-artifact smoke 校验导出的 Remote descriptor。Client typecheck 与浏览器 component test 覆盖 owner 声明的子导航、动态注册与 dispose、挂载 namespace、Lead routing、task control、陈旧 async result，以及状态或错误呈现。定址导航场景还覆盖精确 Team 匹配、唯一 Team dialog、child 选择、member/revision Slot props、单次消费，以及导航 service 随 owning Fiber 移除。无密钥 Agent Team profile snapshot 通过真实 Host service 执行元数据与净化详情读取；Web 端到端测试则在真实 Remote composition 上固定单一可导航 panel。
+Team service test 覆盖固定 window 分页、filter、消息与 task detail authorization、净化内容、participant forgery、过期身份、cursor scope 与损坏、持久化 failure、无 activity 读取、冷启动、原子 dependency edit、DAG 校验、被拒写入的 event count、baseline 先于 invalidation、突发合并、精确 Team watch 权限，以及取消／释放。逐文件 coverage固定 message reader 的每条路径；生成流程与 plain-Node built-artifact smoke 校验导出的 unary 与 stream Remote descriptor。Client typecheck 与浏览器 component test 覆盖 owner 声明的子导航、动态注册与 dispose、挂载 namespace、Lead routing、共享列表／图选择、保留删除 tombstone、真实边方向与 task 事实、布局控件、键盘与列表替代、过滤、原生 dependency 选择、冲突草稿、task control、陈旧 async result、重连 generation、service generation teardown、deferred stream 静止、释放失败报告，以及中英文 disconnected／stale／unavailable 或 conflict 呈现。无密钥 Agent Team profile snapshot 通过真实 Host service 执行 metadata 与净化 detail 读取；Web 端到端测试则在真实 Remote composition 上固定单一可导航 panel。
+
+定址导航场景还覆盖精确 Team 匹配、唯一 Team dialog、child 选择、member/revision Slot props、单次消费，以及导航 service 随 owning Fiber 移除。
 
 ## 后果
 
-Team service 是 domain state、读取权限与公开选定 Team value 的 Remote operation 的唯一 Cordis owner。Team UI 拥有唯一可扩展 dialog，而消息内容仍是按需 Host result。这会增加 projection index 与不透明 cursor protocol，扩展必须通过 owner Slot 注册。稳定 API Proxy、Session Controller、Client UI package 和 Web bundle 保持 Team 无关。Promotion 会重命名实验性 npm package，但不要求新的生成式 namespace。
+Team service 是 domain state、读取权限与公开选定 Team value 的 Remote operation 的唯一 Cordis owner。Team UI 拥有唯一可扩展 dialog，而消息内容仍是按需 Host result，图交互则仍是短暂状态。这会增加 projection index 与不透明 cursor protocol，扩展必须通过 owner Slot 注册。确定性图避免了额外浏览器依赖，但需要持有一小段布局与视口实现。稳定 API Proxy、Session Controller、Client UI package 和 Web bundle 保持 Team 无关。Promotion 会重命名实验性 npm package，但不要求新的生成式 namespace。

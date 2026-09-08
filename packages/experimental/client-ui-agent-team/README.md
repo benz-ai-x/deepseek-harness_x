@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package adds one Agent Teams action and dialog to the Web conversation header, where a user can inspect the current roster, manage the shared task board, navigate into a teammate's conversation, and open extension-owned Team views. It reads authoritative Team state through the generated `ctx.remote.agentTeams` contribution and keeps ordinary child-history navigation on the stable addressed-subagent path. Choose it for the experimental source-checkout Web profile; official releases exclude it. The browser projection does not extend the stable API Proxy, store Team state, or register model-facing input.
+This package adds one Agent Teams action and dialog to the Web conversation header, where a user can inspect the current roster, switch the shared task board between a list and dependency graph, navigate into a teammate's conversation, and open extension-owned Team views. It reads authoritative Team state through the generated `ctx.remote.agentTeams` contribution and keeps ordinary child-history navigation on the stable addressed-subagent path. Choose it for the experimental source-checkout Web profile; official releases exclude it. The browser projection does not extend the stable API Proxy, store Team state, or register model-facing input.
 
 ## Table of Contents
 
@@ -29,17 +29,21 @@ Install the package through [`@deepseek-ai/dsh-experimental-agent-team-web-profi
 
 ### Inspect and navigate the roster
 
-Opening the panel calls `agentTeams/view`. Roster rows show durable names, runtime status, model, and diagnostics. Selecting a healthy teammate refreshes the existing direct-child catalog and opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
+Opening the panel starts `agentTeams/watch` and reads `agentTeams/view`. Roster rows show durable names, runtime status, model, and diagnostics. Selecting a healthy teammate refreshes the existing direct-child catalog and opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
 
 ### Manage the task board
 
-The task board shows task identity, owner, blockers, readiness, advisory write scopes, and overlap warnings. A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Every update sends the displayed revision, and create or update rejections remain explicit business results.
+The list and dependency graph derive from the same `agentTeams/view` task snapshot and share one selected task, detail panel, and mutation controls. Graph nodes use real task ids and Host-provided owner, status, readiness, and blocker facts; each directed edge runs from a prerequisite to its dependent. The graph provides deterministic automatic layout, bounded zoom and pan, fit-to-view, dependency-aware keyboard navigation, and the native-button list as an equivalent alternative. Filtering hides presentation only, identifies prerequisites omitted by the filter, and never recalculates Host readiness. Left-arrow navigation selects the first visible prerequisite, skipping hidden ones.
+
+A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Create and edit forms expose current real task ids as native dependency checkboxes, excluding the task being edited. Non-edit updates send the displayed revision; edits retain the revision captured when the form opens until a conflict-triggered authority reload succeeds. Create or update rejections remain explicit business results.
 
 ### Extend the Team panel
 
 The header action owns the only Team dialog and declares the session-scoped list Slot `agent-team.panel.view` inside it. A Client extension contributes a stable id, order, localized label, and component through that public Slot; the Team owner passes the exported `AgentTeamPanelViewOwnerProps`: exact Lead `teamSessionId`, optional addressed `selectedMemberId`, and optional monotonic `navigationRevision`. Contributions appear as tabs beside Overview and need no import from this package's private components. Registration, locale changes, and removal update the navigation list, and disposing either Fiber removes its authority and UI.
 
 Another Client extension can call `ctx.agentTeamPanelNavigation.open({ teamSessionId, viewId, memberId })` to link into one registered child for an optional exact Team member. The owner opens the same dialog, selects that public child, and passes `selectedMemberId` plus a monotonic `navigationRevision` through the Slot owner props. A matching panel consumes the retained request once; an unknown child or another Team cannot consume it. The hint selects Client UI only and never grants Team read or write authority.
+
+The browser export also provides `createTeamWatchOwner()` for the task panel and extensions that consume Team changes. Each Client registration creates its own owner and gives it the watches opened by its React components. Component cleanup closes a watch immediately and idempotently; the registration awaits `owner.dispose()` through a Cordis effect, including earlier closes still pending. Close failures are reported by the owner after every admitted close settles. The helper mounts no Remote namespace and retains no Team data.
 
 -----
 
@@ -49,11 +53,13 @@ Another Client extension can call `ctx.agentTeamPanelNavigation.open({ teamSessi
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The Client export mounts the generated `ctx.remote.agentTeams` contribution from [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.md), then registers its locale dictionaries and one conversation-header entry through Cordis effects. That entry declares `agent-team.panel.view`, observes its public contributions and localized labels, and renders the selected contribution inside the existing dialog. Disposing the plugin Fiber removes the Remote, locale, entry, child Slot, subscriptions, and contribution navigation.
+The Client export mounts the generated `ctx.remote.agentTeams` contribution from [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.md), then registers its locale dictionaries and one conversation-header entry through Cordis effects. That entry declares `agent-team.panel.view`, observes its public contributions and localized labels, and renders the selected contribution inside the existing dialog. Its Client-registration lifecycle owns every watch control created by React: unmount synchronously starts an idempotent close, while Fiber or service-generation disposal awaits all triggered and live controls before removing the generated Remote. Disposal failures reach the Cordis lifecycle error boundary without retaining the Remote, locale, entry, child Slot, subscriptions, or contribution navigation.
 
 The same Fiber owns the `ctx.agentTeamPanelNavigation` service and its retained-until-consumed request exchange. This small Client-only service carries only Team Session, public child id, optional member id, and revision; it does not carry message content, credentials, provider objects, or Host authority. Subscriber exceptions are logged and contained per listener, so one faulty extension cannot prevent later listeners from observing the retained request.
 
-Starting a create or update invalidates older refreshes. Success reloads the complete Team view so every task's derived fields stay current. A `team-task-conflict` result displays a stale-state notice only after that reload succeeds; a reload failure remains visible instead. Editing task text or scopes and changing dependencies use two sequential compare-and-set mutations because the Team service exposes them as separate actions.
+The open panel consumes each reconnecting watch generation as one complete baseline followed by bounded invalidations. A baseline atomically replaces an older unary read; invalidations call the existing authoritative view reader instead of carrying task state. Authority reads are serialized in one shared refresh cycle: any number of invalidations during a read set one dirty bit and share one completion, and the cycle reads again whenever that bit was set. This keeps completion state constant-space while ensuring the final observed invalidation receives a later authoritative read. Carrier loss retains the last published view with an explicit disconnected or stale status, and reconnect only reads the new baseline. Session changes and service replacement fence late generations, retire the old cycle, and keep the new generation independent, while closing the panel actively stops its control and the owning Client lifecycle awaits stream quiescence.
+
+Starting a create or update invalidates older refreshes. Success reloads the complete Team view so every task's derived fields stay current. If the selected id disappears from that non-deleted view, the selection remains fixed while generated `agentTeams/getTask` reads its authoritative tombstone; the same detail panel shows the deleted fact without mutation controls, and session or service changes fence late detail reads. Task text, scopes, and the complete dependency draft use one `edit` compare-and-set mutation whose expected revision is captured when editing starts and is not advanced by watch refreshes. A selected draft dependency that disappears from the current view remains an explicit unavailable-or-deleted checkbox until the user removes it or saves. If the edit conflicts, the UI keeps the old form and dependency draft and never retries automatically. A successful conflict-triggered authoritative reload advances the base for the next explicit Save and marks the draft unsaved; a failed reload leaves the base unchanged and keeps the real error visible. List/graph mode, selection, filtering, and viewport transform are disposable component state; neither layout nor visibility creates a task projection or changes readiness.
 
 | File | Role |
 |---|---|
@@ -90,7 +96,7 @@ No direct effect; the Team tools and ordinary conversation submission own any la
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh** — the Overview refreshes on open, explicit refresh, and mutations; it has no live event subscription.
+- **Invalidation granularity** — live changes refresh the complete authoritative Team view; the stream intentionally carries no task delta or Client-owned projection.
 - **Overview only** — this base package contributes roster and task controls; message and other Team views require a separate `agent-team.panel.view` contribution.
 - **Ordinary child continuation** — a human message sent after navigation uses the stable addressed-subagent prompt path, not the Team peer mailbox.
 - **No lifecycle or workspace controls** — the panel cannot spawn, rename, delete, or interrupt teammates, and write scopes remain advisory metadata.
@@ -105,4 +111,4 @@ None.
 
 </details>
 
-**Runtime invariant:** No companion is published. RPC is authoritative, and the package owns one disposable header entry that declares and renders the public Team child Slot.
+**Runtime invariant:** No companion is published. RPC is authoritative, and the package owns one disposable header entry, child Slot, and reconnecting Team stream control.
