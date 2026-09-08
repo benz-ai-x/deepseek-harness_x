@@ -121,6 +121,14 @@ interface GraphTransform {
 
 type TeamWatchPhase = 'connecting' | 'connected' | 'stale' | 'disconnected' | 'unavailable'
 
+interface RefreshCycle {
+  readonly state: {
+    dirty: boolean
+    running: boolean
+  }
+  readonly promise: Promise<boolean>
+}
+
 const DEFAULT_GRAPH_TRANSFORM: GraphTransform = { x: 0, y: 0, scale: 1 }
 
 /** Deterministically place prerequisites before dependents without a graph dependency. */
@@ -227,11 +235,7 @@ export function TeamAction({
   const viewRef = useRef<TeamView | null>(null)
   const conflictDraftRef = useRef<string | null>(null)
   const refreshGeneration = useRef(0)
-  const refreshInFlightRef = useRef<Promise<boolean> | null>(null)
-  const refreshQueueRef = useRef<Array<{
-    resolve(value: boolean): void
-    reject(error: unknown): void
-  }>>([])
+  const refreshCycleRef = useRef<RefreshCycle | null>(null)
   const watchGeneration = useRef(0)
   const detailGeneration = useRef(0)
   const graphViewportRef = useRef<HTMLDivElement>(null)
@@ -247,8 +251,7 @@ export function TeamAction({
 
   useEffect(() => {
     refreshGeneration.current += 1
-    refreshInFlightRef.current = null
-    refreshQueueRef.current.splice(0).forEach((waiter) => { waiter.resolve(false) })
+    refreshCycleRef.current = null
     watchGeneration.current += 1
     detailGeneration.current += 1
     viewRef.current = null
@@ -325,33 +328,33 @@ export function TeamAction({
   const refreshOnceRef = useRef(refreshOnce)
   refreshOnceRef.current = refreshOnce
   const refresh = useCallback((): Promise<boolean> => {
-    if (refreshInFlightRef.current !== null) {
-      return new Promise<boolean>((resolve, reject) => {
-        refreshQueueRef.current.push({ resolve, reject })
-      })
+    const current = refreshCycleRef.current
+    if (current?.state.running === true) {
+      current.state.dirty = true
+      return current.promise
     }
-    const start = (): Promise<boolean> => {
-      const request = refreshOnceRef.current()
-      refreshInFlightRef.current = request
-      void request.then(() => {
-        if (refreshInFlightRef.current !== request) return
-        refreshInFlightRef.current = null
-        const queued = refreshQueueRef.current.splice(0)
-        if (queued.length === 0) return
-        const trailing = start()
-        void trailing.then(
-          (value) => { queued.forEach((waiter) => { waiter.resolve(value) }) },
-          (error: unknown) => { queued.forEach((waiter) => { waiter.reject(error) }) },
-        )
-      }, (error: unknown) => {
-        if (refreshInFlightRef.current !== request) return
-        refreshInFlightRef.current = null
-        const queued = refreshQueueRef.current.splice(0)
-        queued.forEach((waiter) => { waiter.reject(error) })
-      })
-      return request
+    const state = { dirty: false, running: true }
+    const wasInvalidated = (): boolean => state.dirty
+    const run = async (): Promise<boolean> => {
+      try {
+        let result = false
+        do {
+          state.dirty = false
+          result = await refreshOnceRef.current()
+        } while (refreshCycleRef.current?.state === state && wasInvalidated())
+        return result
+      } finally {
+        state.running = false
+      }
     }
-    return start()
+    const promise = run()
+    const cycle = { state, promise }
+    refreshCycleRef.current = cycle
+    void promise.then(
+      () => { if (refreshCycleRef.current === cycle) refreshCycleRef.current = null },
+      () => { if (refreshCycleRef.current === cycle) refreshCycleRef.current = null },
+    )
+    return promise
   }, [])
 
   useEffect(() => {
@@ -384,8 +387,7 @@ export function TeamAction({
     return () => {
       if (watchGeneration.current === generation) watchGeneration.current += 1
       refreshGeneration.current += 1
-      refreshInFlightRef.current = null
-      refreshQueueRef.current.splice(0).forEach((waiter) => { waiter.resolve(false) })
+      refreshCycleRef.current = null
       void control.dispose()
     }
   }, [open, refresh, replaceView, sessionId, watch])

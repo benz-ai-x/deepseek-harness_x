@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { createHook } from 'node:async_hooks'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -192,6 +193,76 @@ describe('TeamAction', () => {
     })
     expect(await screen.findByText('Trailing live commit')).toBeTruthy()
     expect(load).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps watch invalidation completion state constant while publishing trailing authority', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const firstReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const trailingReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const finalReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: view })
+      .mockImplementationOnce(() => firstReload.promise)
+      .mockImplementationOnce(() => trailingReload.promise)
+      .mockImplementationOnce(() => finalReload.promise)
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load,
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+
+    act(() => { sink?.invalidated() })
+    expect(load).toHaveBeenCalledTimes(2)
+    let promiseResources = 0
+    const hook = createHook({
+      init(_asyncId, type) {
+        if (type === 'PROMISE') promiseResources += 1
+      },
+    })
+    hook.enable()
+    try {
+      for (let index = 0; index < 4_096; index += 1) sink?.invalidated()
+    } finally {
+      hook.disable()
+    }
+    expect(promiseResources).toBeLessThanOrEqual(1)
+    expect(load).toHaveBeenCalledTimes(2)
+
+    firstReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 2, subject: 'First bounded read' }] },
+    })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(3) })
+
+    let trailingPromiseResources = 0
+    const trailingHook = createHook({
+      init(_asyncId, type) {
+        if (type === 'PROMISE') trailingPromiseResources += 1
+      },
+    })
+    trailingHook.enable()
+    try {
+      for (let index = 0; index < 4_096; index += 1) sink?.invalidated()
+    } finally {
+      trailingHook.disable()
+    }
+    expect(trailingPromiseResources).toBeLessThanOrEqual(1)
+    trailingReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 3, subject: 'Trailing bounded read' }] },
+    })
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(4) })
+    finalReload.resolve({
+      ok: true,
+      value: { ...view, tasks: [{ ...task, revision: 4, subject: 'Final bounded read' }] },
+    })
+    expect(await screen.findByText('Final bounded read')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(4)
   })
 
   it('retains stale data and disposes replaced or closed watch generations', async () => {
