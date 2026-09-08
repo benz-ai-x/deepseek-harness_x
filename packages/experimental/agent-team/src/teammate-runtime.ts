@@ -214,6 +214,7 @@ interface ProviderRecord {
 interface PresenceRecord {
   readonly owner: ProviderRecord
   readonly presence: 'running' | 'idle'
+  readonly memberOperations?: readonly NativeMemberOperationName[]
 }
 
 function uniqueCanonical<T extends string>(
@@ -837,6 +838,20 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
   }
 
   /**
+   * Read the accepted handle's confirmed operations, not the provider catalog.
+   * @param providerId - stable provider identity.
+   * @param nativeHandle - exact provider-owned runtime identity.
+   * @returns a frozen operation list, or undefined when unknown or detached.
+   */
+  runtimeMemberOperations(providerId: string, nativeHandle: TeammateRuntimeHandle): readonly NativeMemberOperationName[] | undefined {
+    const record = this.providers.get(providerId)
+    const presence = this.presence.get(stableKey([providerId, nativeHandle]))
+    return record !== undefined && record.accepting && presence?.owner === record
+      ? presence.memberOperations
+      : undefined
+  }
+
+  /**
    * Create or reattach one idempotent external teammate identity.
    * @param providerId - stable provider identity.
    * @param request - reserved Team identity, initial work, requirements, and cancellation.
@@ -1378,10 +1393,14 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     const nativeHandle = toTeammateRuntimeHandle(result.nativeHandle)
     const turnId = result.turnId === undefined ? undefined : toTeammateRuntimeTurnId(result.turnId)
     this.assertObservablePresence(record, result.presence)
+    const memberOperations = result.memberOperations === undefined ? undefined : uniqueCanonical(
+      record.metadata.id, 'confirmed member operations', result.memberOperations, record.metadata.memberOperations ?? [],
+    )
     return Object.freeze({
       nativeHandle,
       ...(turnId === undefined ? {} : { turnId }),
       presence: result.presence,
+      ...(memberOperations === undefined ? {} : { memberOperations }),
     })
   }
 
@@ -1431,7 +1450,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       this.creationTurns.set(key, normalized.turnId)
     }
     this.creationHandles.set(key, normalized.nativeHandle)
-    this.attachRuntime(record, providerId, normalized)
+    this.attachRuntime(record, providerId, normalized, true)
     return normalized
   }
 
@@ -1439,15 +1458,21 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     record: ProviderRecord,
     providerId: string,
     result: TeammateRuntimeCreateResult,
+    replaceMemberOperations = false,
   ): void {
     record.runtimes.add(result.nativeHandle)
     const key = stableKey([providerId, result.nativeHandle])
     const previous = this.presence.get(key)
+    const memberOperations = replaceMemberOperations
+      ? result.memberOperations
+      : previous?.owner === record ? previous.memberOperations : undefined
     this.presence.set(key, {
       owner: record,
       presence: result.presence,
+      ...(memberOperations === undefined ? {} : { memberOperations }),
     })
-    if (previous?.owner !== record || previous.presence !== result.presence) {
+    if (previous?.owner !== record || previous.presence !== result.presence
+      || previous.memberOperations?.join() !== memberOperations?.join()) {
       this.onPresenceChanged(providerId)
     }
   }

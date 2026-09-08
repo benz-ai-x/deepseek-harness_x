@@ -5732,7 +5732,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeammateRuntimeCreateResult',
-    declaration: 'export interface TeammateRuntimeCreateResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly presence: \'running\' | \'idle\';\n}',
+    declaration: 'export interface TeammateRuntimeCreateResult {\n    readonly nativeHandle: TeammateRuntimeHandle;\n    readonly turnId?: TeammateRuntimeTurnId;\n    readonly presence: \'running\' | \'idle\';\n    readonly memberOperations?: readonly NativeMemberOperationName[];\n}',
   },
   {
     name: 'TeammateRuntimeDeliverRequest',
@@ -5852,7 +5852,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly requestedRoute?: TeamMemberRouteSnapshot;\n    readonly resolvedRoute?: TeamMemberRouteSnapshot;\n    readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'idle\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly requestedRoute?: TeamMemberRouteSnapshot;\n    readonly resolvedRoute?: TeamMemberRouteSnapshot;\n    readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot;\n    readonly memberOperations?: readonly NativeMemberOperationName[];\n    readonly diagnostics: string[];\n}',
   },
   {
     name: 'TeamMessageContent',

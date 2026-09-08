@@ -35,6 +35,7 @@ import TeamService, {
   type TeammateRuntimeRegistration,
   type TeammateRuntimeRequirements,
   type TeamMemberSnapshot,
+  type NativeMemberOperationName,
 } from '../src/index.ts'
 import type { TeammateRuntimeRegistry } from '../src/service-types.ts'
 import { TestSessionQuery } from './test-session-query.ts'
@@ -463,6 +464,70 @@ defineTeammateRuntimeProviderConformance({
 })
 
 describe('durable teammate runtime registry', () => {
+  it('keeps confirmed member operations exact-handle and generation-local through presence changes', async () => {
+    const { ctx, lead } = await setup()
+    try {
+      const store = fakeStore()
+      const original = new FakeDurableRuntime(store)
+      const operations: NativeMemberOperationName[] = ['members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait']
+      const expected = [...operations]
+      const metadata = { memberOperations: expected, bindMemberOperations: () => undefined }
+      const registration = ctx.agentTeams.registerTeammateRuntimeProvider(providerWith(original, {
+        ...metadata,
+        create: async request => ({
+          ...await original.create(request),
+          ...(request.memberName === 'confirmed' ? { memberOperations: operations } : {}),
+          ...(request.memberName === 'partial' ? { memberOperations: ['messages.send'] as const } : {}),
+          ...(request.memberName === 'none' ? { memberOperations: [] } : {}),
+        }),
+      }))
+      const spawn = (name: string) => ctx.agentTeams.spawnTeammate(lead, {
+        name, description: 'Review.', context: 'fresh', prompt: [{ type: 'text', text: 'Review.' }], signal: SIGNAL,
+        runtime: {
+          kind: 'external-agent', provider: original.id, launchRequestId: TeammateLaunchRequestId(name),
+          profile: runtimeProfile(), requirements: createRequest().requirements,
+        },
+      })
+      const confirmed = (await spawn('confirmed')).member
+      await spawn('unknown')
+      await spawn('partial')
+      await spawn('none')
+      const row = (name = 'confirmed') => ctx.agentTeams.listMembers(lead).find(member => member.name === name)!
+      expect(row()).toMatchObject({ memberOperations: expected })
+      expect(row('unknown')).not.toHaveProperty('memberOperations')
+      expect(row('partial')).toMatchObject({ memberOperations: ['messages.send'] })
+      expect(row('none')).toMatchObject({ memberOperations: [] })
+      operations.splice(0)
+      const nativeHandle = confirmed.externalRuntime!.nativeHandle!
+      original.publishPresence(nativeHandle, 'running')
+      expect(row()).toMatchObject({ status: 'running', memberOperations: expected })
+      ctx.agentTeams.interrupt(lead, 'confirmed')
+      expect(row()).toMatchObject({ status: 'idle', memberOperations: expected })
+      await ctx.agentTeams.sendMessage(lead, {
+        target: 'confirmed', content: [{ type: 'text', text: 'Continue.' }], signal: SIGNAL,
+      })
+      expect(row()).toMatchObject({ memberOperations: expected })
+      // A verified resume with omitted proof clears the prior result even in one generation.
+      await runtimeRegistry(ctx).resume(original.id, {
+        nativeHandle, memberId: confirmed.id, launchRequestId: TeammateLaunchRequestId('confirmed'),
+        requirements: createRequest().requirements, signal: SIGNAL,
+      })
+      expect(row()).not.toHaveProperty('memberOperations')
+      expect(row().externalRuntime).toEqual(confirmed.externalRuntime)
+      const replacement = new FakeDurableRuntime(store)
+      await registration.replace(providerWith(replacement, metadata))
+      await expect.poll(() => replacement.resume).toHaveBeenCalled()
+      expect(row()).not.toHaveProperty('memberOperations')
+      expect(row().externalRuntime).toEqual(confirmed.externalRuntime)
+      await registration()
+      expect(row()).toMatchObject({ status: 'inactive' })
+      expect(row()).not.toHaveProperty('memberOperations')
+      expect(replacement.attachedRuntimes.size).toBe(0)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('admits bounded opaque durable identities and releases an oversized native result', async () => {
     expect(TeammateLaunchRequestId('launch/request/请求')).toBe('launch/request/请求')
     expect(TeammateRuntimeHandle('native/session/运行')).toBe('native/session/运行')

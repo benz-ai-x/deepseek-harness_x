@@ -71,6 +71,8 @@ kind: "package-reference"
 
 能力标记描述可以独立执行的行为。`full-collaboration` 覆盖耐久双向消息、全部成员查询与变更、等待、终态结果、精确中断、恢复与释放；只有六项原生成员操作及其 grant binder 全部存在时，注册才接受该声明。`workspace-write` 与它分离：该标记表示 runtime 可以修改分配给它的 workspace，但不会授予权限，也不会越过 sandbox 或 Profile tool policy。只读 provider 可以声明完整协作而不声明 workspace 写入。
 
+目录能力不能证明已有原生会话安装了哪些工具。create 和 resume 结果可以报告精确句柄已确认的 `memberOperations`。live roster 仅在仍接受操作的 provider 世代内公开这份分离列表；省略表示未知，空列表表示确认不支持任何操作。在线状态变化保留已接受的列表，但缺少证明的 resume 会清除它。脱离挂载和 provider 移除也会清除它。这些事实绝不进入 Team 事件或检查点。
+
 支持可选目录属主的 provider 适配器使用 `mountTeammateRuntimeProvider()`，让这个 Host-only 包统一拥有共享属主契约、动态服务世代、注册的恰好一次清理以及 provider 析构顺序。
 
 原生 provider 可以通过自己的工具通道查询成员和任务、变更获授权任务、等待活动，并以成员身份发送消息。provider 声明 `memberOperations` 并实现 `bindMemberOperations`；Team 所有者只有在接受持久成员与 native handle 后才交付不可序列化的 grant。恢复先验证原身份，再授予当前访问权。每次调用都以该 teammate 的身份使用现有 roster、task board 或 mailbox；模型参数不能选择 Team、成员、handle 或 Lead 角色。Evaluation handle 不会获得生产 grant。

@@ -37,6 +37,8 @@ interface TeamMemberSnapshot {
 
 ## 持久运行时放置
 
+`TeamMemberView.memberOperations` 只包含精确挂载的原生句柄在最近一次已接受的 create 或 resume 结果中确认的操作。它是当前 provider 已声明操作的子集。省略表示未知，包括脱离挂载后的状态；空列表表示确认不支持任何操作。仅在线状态变化会保留列表，resume 则替换它，包括结果省略该列表时。这个实时字段不属于 `TeamMemberSnapshot`、Team 事件或检查点，也不授予任何权限。
+
 external provider 只声明它能够强制执行的 context mode 与 capability。Agent Teams 在预留 roster 身份或向 provider 发送工作前验证完整需求；one-shot subagent provider 不作为回退。精确调用审批同时要求 Hook 强制执行与规范 evidence，每个 ask Hook 都携带由 Profile 拥有的稳定策略 id，并必须关联到相同不可变的原生 call 与 approval 身份。
 
 运行时能力是彼此独立的证明。`full-collaboration` 表示 provider 实现完整的耐久 Team 契约：双向 mailbox 投递、全部有界原生成员操作（`members.list`、`tasks.list`、`tasks.get`、`messages.send`、`tasks.update` 与 `wait`）、终态结果结算、精确中断、精确 handle 恢复与释放。若六项原生操作及其 grant binder 不完整，注册会拒绝该声明。`workspace-write` 单独表示 runtime 可以修改分配给它的 workspace；该标记本身不授予权限，实际写入仍受有效 sandbox 与 Profile tool policy 约束。因此，只读 runtime 可以支持完整协作而不声明 workspace 写入。

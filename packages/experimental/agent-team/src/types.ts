@@ -161,6 +161,11 @@ export interface TeamMemberView {
   readonly requestedRoute?: TeamMemberRouteSnapshot
   readonly resolvedRoute?: TeamMemberRouteSnapshot
   readonly externalRuntime?: TeamMemberExternalRuntimeSnapshot
+  /**
+   * Exact native handle's confirmed operations in the current provider generation.
+   * Omitted when unknown or detached; never restored from Team persistence.
+   */
+  readonly memberOperations?: readonly NativeMemberOperationName[]
   readonly diagnostics: string[]
 }
 

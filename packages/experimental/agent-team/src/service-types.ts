@@ -25,6 +25,7 @@ import type {
   NativeMemberTaskResult,
   TeamWaitResult,
   NativeMemberOperationSource,
+  NativeMemberOperationName,
   NativeMemberTurnOutcome,
 } from './types.ts'
 
@@ -125,6 +126,11 @@ export interface TeammateRuntimeCreateResult {
   /** Stable provider-native identity of the accepted initial-work turn, when observable. */
   readonly turnId?: TeammateRuntimeTurnId
   readonly presence: 'running' | 'idle'
+  /**
+   * Operations confirmed on this exact handle, not merely advertised for new runtimes.
+   * Omission means unknown; an empty list confirms none. Never persisted by the Team.
+   */
+  readonly memberOperations?: readonly NativeMemberOperationName[]
 }
 
 /** Provider request to recover one previously accepted logical employee. */
@@ -298,6 +304,7 @@ export interface TeammateRuntimeRegistry {
     profile: TeammateRuntimeProfileSnapshot,
   ): { readonly requirements: TeammateRuntimeRequirements; readonly profile: TeammateRuntimeProfileSnapshot }
   runtimePresence(providerId: string, nativeHandle: TeammateRuntimeHandle): 'running' | 'idle' | 'inactive'
+  runtimeMemberOperations(providerId: string, nativeHandle: TeammateRuntimeHandle): readonly NativeMemberOperationName[] | undefined
   create(providerId: string, request: TeammateRuntimeCreateRequest): Promise<TeammateRuntimeCreateResult>
   resume(
     providerId: string,

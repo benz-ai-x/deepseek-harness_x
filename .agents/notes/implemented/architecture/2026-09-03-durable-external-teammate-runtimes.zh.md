@@ -18,6 +18,8 @@ Host 通过 `ctx.agentTeams.registerTeammateRuntimeProvider()` 在 owner Fiber �
 
 运行能力标记保持彼此正交。`full-collaboration` 证明完整的耐久 Team 参与契约；若 provider 没有发布并绑定全部六项有界原生成员操作，注册会拒绝该声明，其余生命周期由必需的 create、resume、delivery、interrupt、dispose 与终态结果路径覆盖。`workspace-write` 独立证明 runtime 可以修改分配给它的 workspace，但绝不授予权限，也不会越过有效 sandbox 与 Profile tool policy。因此，只读 runtime 可以如实提供完整协作，而不声称拥有写入权限。
 
+目录描述提供方支持的能力，而不是每个历史原生会话已安装的工具。create 和 resume 结果可以证明精确已接受句柄的 `memberOperations`。注册表在实时在线状态旁拥有这份冻结子集，范围仅限于仍接受操作的提供方世代。roster 公开它，但不持久化，也不授予权限。仅在线状态更新保留证明；resume 替换证明，脱离挂载则移除证明。省略的证明保持未知，不继承目录或已退役世代的结论。
+
 创建流程会先记录并 flush provisioning 关联，再调用选定 provider。provider 必须持久接受初始工作并返回一个稳定 native handle，Agent Teams 才会记录 active member。重复相同 launch/member 身份必须返回同一 handle；为另一身份复用 handle，或在 resume 时更改 handle，都会隔离该 provider generation。registry 会校验 provider 返回的持久 handle；被拒绝的结果仍归 cleanup 所有，因此即使已接受的 handle 无效，也会被精确 dispose。
 
 外部 mailbox 投递使用持久 Team message id 与精确 provider/native handle。它不再具有 `quiet`/`wakeup` 选择器：与当前所有 Agent Teams 消息相同，它遵循单一 Steer 契约，provider 在保持 target-local 顺序的同时把消息持久准入为下一个 native turn。provider 在 Team 记录 delivered 前返回稳定 native turn id。runtime delivery、interrupt、presence、evidence 与 disposal 都只通过已记录的精确 native handle 路由，不会回退到 DSH 或一次性 provider。四种 Team event payload 继续固定为 version 2；external correlation 扩展当前 pre-release 结构，而严格 replay 会拒绝 version 1。evidence 可以包含规范 approval 事实与完整当前 pending 集合，但绝不包含拟议参数；只有精确 runtime 报告 `running` 时非空 pending 集合才有效，且重启后不会推断未匹配的 ask 仍为 pending。隔离 evaluation 是独立且由 Lead 拥有的操作：它要求 fresh context、分离 Profile、只读 sandbox、无审批、有界资源，以及包含于 provider 已发布 tool inventory 的唯一 allowlist。provider 在独立 native handle 上把调用方拥有的 evaluation id 与声明 input 运行到规范 outcome。Agent Teams 会在该精确 handle 仍挂载时调用可选的调用方耐久 commit，再于公开操作 settle 前在 `finally` 中释放它。evaluation 绝不创建 roster identity、生产 workspace、transcript 或 activation。可复用 provider conformance suite 为实现固定了幂等 create 与 deliver、调用方取消、重启 resume、evidence、evaluation、精确 interrupt 与精确 dispose 行为。
@@ -27,6 +29,8 @@ provider 注册归调用 Fiber 所有。移除时先关闭新准入、中止已�
 公开 testkit、TypeScript SDK notification snapshot、Python 单文件 runtime snapshot 与真实 headless Agent Teams profile 组合投影相同的 `team/member.externalRuntime` 结构。这些表面只暴露持久关联，绝不暴露 provider secret。
 
 ## Alternatives considered
+
+**从当前提供方元数据推断已有成员的工具。** 拒绝，因为不可变原生会话在提供方升级后可能保留旧工具集。独立持久化工具清单同样会宣称可恢复性，而缺少已安装工具查询的提供方无法独立验证它。进程内接受事实保留这种不确定性，不改变原生身份或 Team 格式。
 
 **把外部 agent 建模为可继续 DSH child。** 拒绝，因为这会让 DSH 看似拥有实际属于另一运行时的 conversation 与 Activation，也无法保持该运行时的精确 native 身份。
 
@@ -51,5 +55,7 @@ Lead 日志仍可检查且不含 secret，但不能独立重建 native 状态。
 每次 evaluation 都会消耗 fresh provider-native execution resource，且 provider 必须发布它能约束的有界 tool inventory。需要持久 evidence 的调用方必须在 commit callback 内写入；callback 失败会使操作失败，但仍不能泄漏 evaluation handle。API 不会持久化 evaluation output，也不会把 evaluation 成功与 activation 耦合。
 
 ## Testing
+
+注册表回归验证精确句柄隔离、分离的操作数组、在线状态与投递及中断时的保留、resume 时证明移除、同 id 替换和资源释放。Ultra 消费方回归覆盖冷恢复时不可变的历史 Codex 工具以及新线程已确认的工具；真实认证原生验收仍不属于这些确定性检查。
 
 Package test 覆盖 capability preflight、不完整 full-collaboration 声明的拒绝、分离 Profile 传递、精确调用审批 capability gate、approval 与 pending 关联、opaque UTF-8 身份、request 与 handle 冲突、跨冷 Host 重启的两个 turn、provider 消失与精确重挂接、queued delivery、presence、evidence、fresh-context evaluation 约束、有界 tool inventory、commit-before-dispose 顺序、取消所有权转移、quarantine、同 id replacement 与 quiescent cleanup。provider conformance suite 会针对可 reopen 的持久 fixture 重复验证可移植契约。headless 组合与两种 SDK 投影固定公开 event shape，并验证 `externalRuntime` 只包含有界持久关联数据。

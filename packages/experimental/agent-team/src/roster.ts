@@ -803,6 +803,9 @@ export class TeamRoster {
     const externalPresence = member.externalRuntime?.nativeHandle === undefined
       ? undefined
       : this.teammateRuntimes.runtimePresence(member.provider, member.externalRuntime.nativeHandle)
+    const memberOperations = member.externalRuntime?.nativeHandle === undefined
+      ? undefined
+      : this.teammateRuntimes.runtimeMemberOperations(member.provider, member.externalRuntime.nativeHandle)
     return {
       id: member.id,
       name: member.name,
@@ -815,6 +818,7 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
+      ...(memberOperations === undefined ? {} : { memberOperations }),
       ...member.requestedRoute === undefined ? {} : { requestedRoute: { ...member.requestedRoute } },
       ...member.resolvedRoute === undefined ? {} : { resolvedRoute: { ...member.resolvedRoute } },
       ...member.externalRuntime === undefined

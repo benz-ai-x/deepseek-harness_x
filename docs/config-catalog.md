@@ -543,7 +543,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/experimental/agent-team/src/types.ts:368`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:373`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-agent-team-claude-code"></a>
 
