@@ -35,9 +35,13 @@ interface TeamMemberSnapshot {
 
 每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。DSH member 保留不可变的 `requestedRoute`；其 `resolvedRoute` 来自已接受 child 的 continuation descriptor，并且必须保留每个显式请求字段。external member 改为保留 `externalRuntime`，不能携带任一 DSH 路由字段。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
 
+<a id="durable-runtime-placement"></a>
+
 ## 持久运行时放置
 
 `TeamMemberView.memberOperations` 只包含精确挂载的原生句柄在最近一次已接受的 create 或 resume 结果中确认的操作。它是当前 provider 已声明操作的子集。省略表示未知，包括脱离挂载后的状态；空列表表示确认不支持任何操作。仅在线状态变化会保留列表，resume 则替换它，包括结果省略该列表时。这个实时字段不属于 `TeamMemberSnapshot`、Team 事件或检查点，也不授予任何权限。
+
+当保留的需求包含 `full-collaboration` 时，每次 create 或 resume 结果都必须确认精确句柄上的全部六项成员操作。证明缺失或不完整时，在挂载或签发新 grant 前以 `TEAM_RUNTIME_CAPABILITY_MISMATCH` 拒绝。现有结果违约生命周期会关闭该 provider 世代并等待其资源清理；其他 provider 保持可用。替换注册可凭完整证明恢复同一持久身份。[接受决策](../../.agents/notes/implemented/bug-fix/2026-09-08-enforce-required-member-collaboration.zh.md)记录取舍。
 
 external provider 只声明它能够强制执行的 context mode 与 capability。Agent Teams 在预留 roster 身份或向 provider 发送工作前验证完整需求；one-shot subagent provider 不作为回退。精确调用审批同时要求 Hook 强制执行与规范 evidence，每个 ask Hook 都携带由 Profile 拥有的稳定策略 id，并必须关联到相同不可变的原生 call 与 approval 身份。
 

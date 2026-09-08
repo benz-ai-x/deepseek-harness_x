@@ -35,9 +35,13 @@ interface TeamMemberSnapshot {
 
 Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. A DSH member retains an immutable `requestedRoute`; its `resolvedRoute` comes from the accepted child continuation descriptor and must preserve every explicit requested field. An external member retains `externalRuntime` instead and cannot carry either DSH route field. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
 
+<a id="durable-runtime-placement"></a>
+
 ## Durable runtime placement
 
 `TeamMemberView.memberOperations` contains only the exact attached native handle's confirmed operations from its latest accepted create or resume result. It is a subset of the current provider's advertised operations. Omission means unknown, including after detachment; an empty list confirms none. Presence-only updates preserve the list, while resume replaces it even when omitted. This live field is not part of `TeamMemberSnapshot`, Team events, or checkpoints and grants no authority.
+
+When the retained requirements include `full-collaboration`, every create or resume result must confirm all six member operations on its exact handle. Missing or incomplete proof rejects with `TEAM_RUNTIME_CAPABILITY_MISMATCH` before attachment or a new grant. The existing result-violation lifecycle closes that provider generation and awaits its resource cleanup; other providers remain available. A replacement registration can recover the same durable identity with complete proof. The [acceptance decision](../../.agents/notes/implemented/bug-fix/2026-09-08-enforce-required-member-collaboration.md) records the trade-off.
 
 An external provider declares only context modes and capabilities it can enforce. Agent Teams validates the complete demand before it reserves a roster identity or sends work to that provider; one-shot subagent providers are not a fallback. Exact-call approval requires both Hook enforcement and normalized evidence, and each ask Hook carries a stable Profile-owned policy id that must correlate to the same immutable native call and approval identities.
 

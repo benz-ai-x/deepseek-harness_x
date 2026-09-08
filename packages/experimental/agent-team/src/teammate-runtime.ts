@@ -872,7 +872,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
       signal,
     }), async (late) => { await this.releaseLateRuntime(record, late) })
     try {
-      return this.acceptRuntimeResult(record, providerId, launchRequestId, request.memberId, result)
+      return this.acceptRuntimeResult(record, providerId, launchRequestId, request.memberId, result, requirements)
     } catch (error: unknown) {
       return await this.quarantine(record, error)
     }
@@ -918,6 +918,7 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
         launchRequestId,
         request.memberId,
         result,
+        requirements,
         expectedNativeHandle,
       )
     } catch (error: unknown) {
@@ -1410,9 +1411,17 @@ export class TeammateRuntimeRegistryHost implements TeammateRuntimeRegistry {
     launchRequestId: TeammateRuntimeCreateRequest['launchRequestId'],
     memberId: TeammateRuntimeCreateRequest['memberId'],
     result: TeammateRuntimeCreateResult,
+    requirements: TeammateRuntimeRequirements,
     expectedNativeHandle?: TeammateRuntimeHandle,
   ): TeammateRuntimeCreateResult {
     const normalized = this.canonicalRuntimeResult(record, result)
+    if (requirements.runtimeCapabilities.includes('full-collaboration')
+      && NATIVE_MEMBER_OPERATIONS.some(operation => !normalized.memberOperations?.includes(operation))) {
+      throw new TeammateRuntimeError(
+        `provider "${providerId}" did not confirm the required full collaboration for its native runtime`,
+        'TEAM_RUNTIME_CAPABILITY_MISMATCH',
+      )
+    }
     if (expectedNativeHandle !== undefined && expectedNativeHandle !== normalized.nativeHandle) {
       throw new TeammateRuntimeError(
         `provider "${providerId}" resumed a different native runtime`,

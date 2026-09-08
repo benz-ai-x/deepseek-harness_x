@@ -129,6 +129,7 @@ export interface TeammateRuntimeCreateResult {
   /**
    * Operations confirmed on this exact handle, not merely advertised for new runtimes.
    * Omission means unknown; an empty list confirms none. Never persisted by the Team.
+   * A request requiring full collaboration must confirm all six member operations.
    */
   readonly memberOperations?: readonly NativeMemberOperationName[]
 }

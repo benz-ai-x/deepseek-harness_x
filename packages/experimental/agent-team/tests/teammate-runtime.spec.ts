@@ -464,6 +464,143 @@ defineTeammateRuntimeProviderConformance({
 })
 
 describe('durable teammate runtime registry', () => {
+  it('accepts explicit empty member operations without a collaboration declaration or requirement', async () => {
+    const { ctx, lead } = await setup()
+    try {
+      const provider = new FakeDurableRuntime(fakeStore())
+      await register(ctx, providerWith(provider, {
+        create: async request => ({ ...await provider.create(request), memberOperations: [] }),
+      }))
+      const { member } = await ctx.agentTeams.spawnTeammate(lead, {
+        name: 'limited-native', description: 'Review.', context: 'fresh',
+        prompt: [{ type: 'text', text: 'Review.' }], signal: SIGNAL,
+        runtime: {
+          kind: 'external-agent', provider: provider.id,
+          launchRequestId: TeammateLaunchRequestId('limited-native'), profile: runtimeProfile(),
+          requirements: createRequest().requirements,
+        },
+      })
+      expect(member).toMatchObject({ status: 'idle', memberOperations: [] })
+      expect(provider.attachedRuntimes).toEqual(new Set([member.externalRuntime!.nativeHandle]))
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it.each([
+    { label: 'empty', memberOperations: [] },
+    { label: 'partial', memberOperations: ['messages.send'] },
+    { label: 'unknown', memberOperations: undefined },
+  ] satisfies Array<{ label: string; memberOperations: NativeMemberOperationName[] | undefined }>)
+  ('rejects a native handle with $label proof of its required full collaboration', async ({ memberOperations }) => {
+    const { ctx, lead } = await setup()
+    try {
+      const provider = new FakeDurableRuntime(fakeStore())
+      await register(ctx, providerWith(provider, {
+        runtimeCapabilities: ['full-collaboration'],
+        memberOperations: ['members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait'],
+        bindMemberOperations: () => undefined,
+        create: async request => ({
+          ...await provider.create(request),
+          ...(memberOperations === undefined ? {} : { memberOperations }),
+        }),
+      }))
+      await expect(ctx.agentTeams.spawnTeammate(lead, {
+        name: 'requires-full', description: 'Review.', context: 'fresh',
+        prompt: [{ type: 'text', text: 'Review.' }], signal: SIGNAL,
+        runtime: {
+          kind: 'external-agent', provider: provider.id,
+          launchRequestId: TeammateLaunchRequestId('requires-full'), profile: runtimeProfile(),
+          requirements: { ...createRequest().requirements, runtimeCapabilities: ['full-collaboration'] },
+        },
+      })).rejects.toMatchObject({ code: 'TEAM_RUNTIME_CAPABILITY_MISMATCH' })
+      const reserved = ctx.agentTeams.listMembers(lead).find(member => member.name === 'requires-full')!
+      expect(reserved.status).toBe('provisioning')
+      expect(reserved.externalRuntime).not.toHaveProperty('nativeHandle')
+      expect(provider.attachedRuntimes.size).toBe(0)
+      expect(provider.dispose).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'runtime', nativeHandle: TeammateRuntimeHandle('native-1'),
+      }))
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('withholds queued work when exact-handle resume loses required collaboration and recovers the same member', async () => {
+    const { ctx, lead } = await setup()
+    try {
+      const store = fakeStore()
+      const operations: NativeMemberOperationName[] = [
+        'members.list', 'tasks.list', 'tasks.get', 'messages.send', 'tasks.update', 'wait',
+      ]
+      const metadata = {
+        runtimeCapabilities: ['full-collaboration'] as const,
+        memberOperations: operations,
+        bindMemberOperations: () => undefined,
+      }
+      const original = new FakeDurableRuntime(store)
+      const registration = ctx.agentTeams.registerTeammateRuntimeProvider(providerWith(original, {
+        ...metadata,
+        create: async request => ({ ...await original.create(request), memberOperations: operations }),
+        resume: async (request) => {
+          const result = await original.resume(request)
+          return result === undefined ? undefined : { ...result, memberOperations: operations }
+        },
+      }))
+      const other = new FakeDurableRuntime(fakeStore(), 'other-native')
+      const otherRegistration = ctx.agentTeams.registerTeammateRuntimeProvider(other)
+      const { member } = await ctx.agentTeams.spawnTeammate(lead, {
+        name: 'requires-full', description: 'Review.', context: 'fresh',
+        prompt: [{ type: 'text', text: 'Review.' }], signal: SIGNAL,
+        runtime: {
+          kind: 'external-agent', provider: original.id,
+          launchRequestId: TeammateLaunchRequestId('requires-full'), profile: runtimeProfile(),
+          requirements: { ...createRequest().requirements, runtimeCapabilities: ['full-collaboration'] },
+        },
+      })
+      const row = () => ctx.agentTeams.listMembers(lead).find(candidate => candidate.id === member.id)!
+      expect(row()).toMatchObject({ status: 'idle', memberOperations: operations })
+      const reduced = new FakeDurableRuntime(store)
+      await registration.replace(providerWith(reduced, {
+        ...metadata,
+        resume: async (request) => {
+          const result = await reduced.resume(request)
+          return result === undefined ? undefined : { ...result, memberOperations: ['messages.send'] as const }
+        },
+      }))
+      await expect.poll(() => reduced.dispose).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'runtime', nativeHandle: member.externalRuntime!.nativeHandle,
+      }))
+      expect(registration.available()).toBe(false)
+      expect(reduced.attachedRuntimes.size).toBe(0)
+      expect(row()).toMatchObject({ status: 'inactive', externalRuntime: member.externalRuntime })
+      expect(row()).not.toHaveProperty('memberOperations')
+      const delivery = await ctx.agentTeams.sendMessage(lead, {
+        target: member.name, content: [{ type: 'text', text: 'Continue.' }], signal: SIGNAL,
+      })
+      expect(delivery.status).toBe('queued')
+      expect(reduced.deliver).not.toHaveBeenCalled()
+      expect(otherRegistration.available()).toBe(true)
+      expect(other.dispose).not.toHaveBeenCalled()
+
+      await registration()
+      const restored = new FakeDurableRuntime(store)
+      ctx.agentTeams.registerTeammateRuntimeProvider(providerWith(restored, {
+        ...metadata,
+        resume: async (request) => {
+          const result = await restored.resume(request)
+          return result === undefined ? undefined : { ...result, memberOperations: operations }
+        },
+      }))
+      await expect.poll(() => restored.deliver).toHaveBeenCalledOnce()
+      expect(row()).toMatchObject({ status: 'idle', memberOperations: operations, externalRuntime: member.externalRuntime })
+      expect(restored.create).not.toHaveBeenCalled()
+      expect(store.sessions.size).toBe(1)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('keeps confirmed member operations exact-handle and generation-local through presence changes', async () => {
     const { ctx, lead } = await setup()
     try {
