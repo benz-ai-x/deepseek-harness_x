@@ -416,7 +416,15 @@ export function TeamAction({
           if (conflictKey === 'conflictDraft') conflictDraftRef.current = conflictMessage
           const reloaded = await refresh()
           if (sessionRef.current !== requestedSession) return undefined
-          if (reloaded || conflictKey === 'conflictDraft') setError(conflictMessage)
+          if (reloaded && conflictKey === 'conflictDraft') {
+            const currentTask = viewRef.current?.tasks.find(task => task.id === taskId)
+            if (currentTask !== undefined) {
+              setEditBase(current => current?.taskId === currentTask.id
+                ? { taskId: currentTask.id, revision: currentTask.revision }
+                : current)
+            }
+          }
+          if (reloaded) setError(conflictMessage)
         } else {
           setError(failureText(result.value.error))
         }
@@ -993,6 +1001,10 @@ interface TaskFormProps {
 function TaskForm({ draft, setDraft, dependencyOptions, taskId, pending, onSave, onCancel, t }: TaskFormProps) {
   const field = (key: keyof Draft, value: string): void => { setDraft({ ...draft, [key]: value }) }
   const blockers = taskIds(draft.blockers)
+  const availableIds = new Set(dependencyOptions
+    .filter(task => task.id !== taskId && task.status !== 'deleted')
+    .map(task => task.id))
+  const unavailableBlockers = blockers.filter(id => id !== taskId && !availableIds.has(id))
   const toggleBlocker = (id: TeamTaskId, checked: boolean): void => {
     field('blockers', (checked ? [...blockers, id] : blockers.filter(blocker => blocker !== id)).join(', '))
   }
@@ -1002,7 +1014,7 @@ function TaskForm({ draft, setDraft, dependencyOptions, taskId, pending, onSave,
       <textarea value={draft.description} placeholder={t('description')} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { field('description', event.target.value) }} />
       <fieldset className={css.dependencyPicker}>
         <legend>{t('blockers')}</legend>
-        {dependencyOptions.filter(task => task.id !== taskId).map(task => (
+        {dependencyOptions.filter(task => task.id !== taskId && task.status !== 'deleted').map(task => (
           <label key={task.id} className={css.dependencyOption}>
             <input
               type="checkbox"
@@ -1011,6 +1023,17 @@ function TaskForm({ draft, setDraft, dependencyOptions, taskId, pending, onSave,
               onChange={(event: ChangeEvent<HTMLInputElement>) => { toggleBlocker(task.id, event.target.checked) }}
             />
             <span>{task.id} · {task.subject}</span>
+          </label>
+        ))}
+        {unavailableBlockers.map(id => (
+          <label key={id} className={css.dependencyOption}>
+            <input
+              type="checkbox"
+              checked
+              disabled={pending}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => { toggleBlocker(id, event.target.checked) }}
+            />
+            <span>{id} · {t('dependencyUnavailable')}</span>
           </label>
         ))}
       </fieldset>

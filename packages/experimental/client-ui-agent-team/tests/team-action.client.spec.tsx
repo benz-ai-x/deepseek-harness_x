@@ -960,6 +960,61 @@ describe('TeamAction', () => {
     })
   })
 
+  it('keeps a concurrently deleted selected dependency visible and removable from the draft', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const blockedTask: TeamTask = {
+      ...task,
+      status: 'pending',
+      blockedBy: [TASK_2],
+      ready: false,
+    }
+    let sink: WatchSink | undefined
+    const updateTask = vi.fn(actions().updateTask)
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({
+        ok: true,
+        value: { ...view, tasks: [blockedTask, dependencyOption] },
+      }),
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+      updateTask,
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: zh.edit }))
+    expect(screen.getByRole<HTMLInputElement>('checkbox', {
+      name: 'task-2 · Dependency option',
+    }).checked).toBe(true)
+
+    act(() => {
+      sink?.replace({
+        ...view,
+        tasks: [{ ...blockedTask, revision: 2, blockedBy: [] }],
+      })
+    })
+    const unavailable = screen.getByRole<HTMLInputElement>('checkbox', {
+      name: `task-2 · ${zh.dependencyUnavailable}`,
+    })
+    expect(unavailable.checked).toBe(true)
+    expect(updateTask).not.toHaveBeenCalled()
+
+    fireEvent.click(unavailable)
+    expect(screen.queryByRole('checkbox', { name: `task-2 · ${zh.dependencyUnavailable}` })).toBeNull()
+    expect(updateTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => {
+      expect(updateTask).toHaveBeenCalledWith(SESSION, expect.objectContaining({
+        taskId: TASK_1,
+        expectedRevision: 1,
+        action: 'edit',
+        blockedBy: [],
+      }))
+    })
+  })
+
   it('assigns, edits, completes, reopens, and deletes with contiguous CAS revisions', async () => {
     const taskZero: TeamTask = {
       ...dependencyOption,
@@ -1213,6 +1268,100 @@ describe('TeamAction', () => {
       blockedBy: [TASK_2],
     }))
     expect(secondLoad).toHaveBeenCalledTimes(2)
+  })
+
+  it('advances the edit base only after a successful conflict reload and waits for another explicit Save', async () => {
+    const initial: TeamTask = {
+      ...task,
+      status: 'pending',
+      ready: true,
+    }
+    let authoritative: TeamTask = {
+      ...initial,
+      revision: 2,
+      subject: 'Current authority',
+    }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [initial, dependencyOption] } })
+      .mockImplementation(() => Promise.resolve({
+        ok: true as const,
+        value: { ...view, tasks: [authoritative, dependencyOption] },
+      }))
+    const updateTask = vi.fn<TeamActionInjected['updateTask']>((_sessionId, input) => {
+      if (input.expectedRevision === 1) return Promise.resolve(taskConflict('stale revision 1'))
+      authoritative = {
+        ...authoritative,
+        revision: 3,
+        subject: input.subject ?? authoritative.subject,
+      }
+      return Promise.resolve(taskSuccess(authoritative))
+    })
+    render(<TeamAction {...props(actions({ load, updateTask }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: zh.edit }))
+    fireEvent.change(screen.getByPlaceholderText(zh.subject), {
+      target: { value: 'Retained draft' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+
+    expect(await screen.findByText(zh.conflictDraft)).toBeTruthy()
+    expect(screen.getByDisplayValue('Retained draft')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'task-1 · Current authority' })).toBeTruthy()
+    expect(updateTask).toHaveBeenCalledTimes(1)
+    expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 1,
+      action: 'edit',
+    }))
+
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    expect(await screen.findByRole('button', { name: 'task-1 · Retained draft' })).toBeTruthy()
+    expect(updateTask).toHaveBeenCalledTimes(2)
+    expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 2,
+      action: 'edit',
+    }))
+  })
+
+  it('keeps a failed conflict reload visible and leaves the edit base unchanged', async () => {
+    const failedReload = Promise.withResolvers<TeamActionResult<TeamView>>()
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { ...view, tasks: [task, dependencyOption] } })
+      .mockImplementationOnce(() => failedReload.promise)
+      .mockResolvedValue(remoteFailure('authority reload failed'))
+    const updateTask = vi.fn(() => Promise.resolve(taskConflict('stale revision 1')))
+    render(<TeamAction {...props(actions({ load, updateTask }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    await act(async () => { await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: zh.edit }))
+    fireEvent.change(screen.getByPlaceholderText(zh.subject), {
+      target: { value: 'Still unsaved' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(load).toHaveBeenCalledTimes(2) })
+
+    await act(async () => {
+      failedReload.resolve(remoteFailure('authority reload failed'))
+      await failedReload.promise
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('alert').textContent).toBe('authority reload failed (gateway/internal)')
+    expect(screen.queryByText(zh.conflictDraft)).toBeNull()
+    expect(screen.getByDisplayValue('Still unsaved')).toBeTruthy()
+    expect(updateTask).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: zh.save }))
+    await waitFor(() => { expect(updateTask).toHaveBeenCalledTimes(2) })
+    expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
+      taskId: TASK_1,
+      expectedRevision: 1,
+      action: 'edit',
+    }))
   })
 
   it('pins an edit revision across another Client commit and a watch invalidation', async () => {
