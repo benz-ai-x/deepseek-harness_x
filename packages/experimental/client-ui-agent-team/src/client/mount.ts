@@ -18,9 +18,10 @@ import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   TeamAction, type TeamActionInjected, type TeamActionResult, type TeamPanelView,
-  type TeamActionWatchControl, type TeamActionWatchSink, type TeamTaskActionResult,
+  type TeamActionWatchSink, type TeamTaskActionResult,
 } from './TeamAction.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
+import { createTeamWatchOwner, type TeamWatchControl } from './watch-owner.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -144,56 +145,6 @@ function registerUi(ctx: ClientContext): void {
 type TeamWatchBaselineFrame = Extract<TeamWatchFrame, { readonly type: 'baseline' }>
 type TeamWatchInvalidationFrame = Exclude<TeamWatchFrame, TeamWatchBaselineFrame>
 
-interface AwaitableTeamActionWatchControl {
-  start(): void
-  dispose(): Promise<void>
-}
-
-interface TeamWatchOwner {
-  own(control: AwaitableTeamActionWatchControl): TeamActionWatchControl
-  dispose(): Promise<void>
-}
-
-/** Retain every triggered watch close until the Client registration can await quiescence. */
-function createTeamWatchOwner(): TeamWatchOwner {
-  const controls = new Set<TeamActionWatchControl>()
-  const pending = new Set<Promise<void>>()
-  const failures: unknown[] = []
-  let accepting = true
-  return {
-    own(control) {
-      let completion: Promise<void> | undefined
-      let disposed = false
-      const owned: TeamActionWatchControl = {
-        start() {
-          if (!disposed) control.start()
-        },
-        dispose(): Promise<void> {
-          if (completion !== undefined) return completion
-          disposed = true
-          controls.delete(owned)
-          const closing = control.dispose()
-          const observed = closing.catch((error: unknown) => { failures.push(error) })
-          completion = observed
-          pending.add(observed)
-          void observed.then(() => { pending.delete(observed) })
-          return observed
-        },
-      }
-      if (accepting) controls.add(owned)
-      else void owned.dispose()
-      return owned
-    },
-    async dispose() {
-      accepting = false
-      for (const control of [...controls]) void control.dispose()
-      await Promise.all([...pending])
-      if (failures.length === 1) throw failures[0]
-      if (failures.length > 1) throw new AggregateError(failures, 'Team watch controls failed to dispose')
-    },
-  }
-}
-
 /**
  * Bind one logical Team generation stream to its public panel sink.
  * @param ctx - Client Context providing the generated Remote stream carrier.
@@ -205,7 +156,7 @@ export function createTeamActionWatch(
   ctx: ClientContext,
   sessionId: SessionId,
   sink: TeamActionWatchSink,
-): AwaitableTeamActionWatchControl {
+): TeamWatchControl {
   const stream = ctx.remote.$stream<TeamWatchFrame>({
     name: 'Agent Teams change stream',
     open: signal => ctx.remote.agentTeams.watch(sessionId, signal),

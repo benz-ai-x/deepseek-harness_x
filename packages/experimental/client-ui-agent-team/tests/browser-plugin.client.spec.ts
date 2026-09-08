@@ -287,7 +287,7 @@ describe('ui-team browser plugin', () => {
     })
     control.start()
 
-    control.dispose()
+    void control.dispose()
     await b.fiber.dispose()
     expect(logged).toHaveBeenCalledWith(failure)
     expect(b.remote.disposeStream).toHaveBeenCalledOnce()

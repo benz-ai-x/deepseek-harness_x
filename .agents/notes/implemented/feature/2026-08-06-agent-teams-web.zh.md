@@ -26,6 +26,8 @@ Teammate navigation 使用既有 `{ parentSessionId, childSessionId, mode: 'cont
 
 稳定 Web preset 仍会在自身 preset scope 内注册 continuable Subagent control。顶层 Agent Teams profile override 无法替换这些 registration，因此该实验性 composition 可能同时暴露 Team roster 与 legacy child control。Team-aware Web preset 暂缓实现；[Web profile README](../../../../packages/experimental/agent-team-web-profile/README.zh.md#known-limitations-and-deferred-work)负责记录当前限制。
 
+任务面板与 Team 消息 contribution 共用 Team Client package 导出的浏览器专用 `createTeamWatchOwner`。每个 registration 仍持有独立 owner，共享实现使父面板与子视图的 transport teardown 和失败报告保持一致。扩展无需导入私有组件或额外挂载 Remote。
+
 ## 边界
 
 Web 消息读取仍只提供 list/detail 且没有 read receipt；独立 Team watch 只携带完整 view baseline 与无状态 invalidation。仅限 Lead 的生成式 `agentTeams/sendMessage` Remote 与消息 composer 提供显式发送和回复，不会把读取或重连变成变更，也不推断工作已完成。Reader 绝不会把消息正文复制进 Team view、全局 Client store 或 run index。Web UI 不提供 worktree 或 Git control、teammate creation、rename、deletion、interrupt 或自动 merge。它不会从 task ownership 或 write scope 推断文件系统权限。导航到 teammate 后的普通 continuation 仍是 addressed-child prompt；只有显式的消息 composer 提交才是 Team mailbox message。

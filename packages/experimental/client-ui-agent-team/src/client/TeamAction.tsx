@@ -583,7 +583,7 @@ export function TeamAction({
     if (event.key === 'ArrowRight') {
       nextId = graphLayout.nodes.find(node => node.task.blockedBy.includes(task.id))?.task.id
     } else if (event.key === 'ArrowLeft') {
-      nextId = task.blockedBy[0]
+      nextId = task.blockedBy.find(id => graphLayout.byId.has(id))
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       const index = graphLayout.nodes.findIndex(node => node.task.id === task.id)
       const change = event.key === 'ArrowDown' ? 1 : -1

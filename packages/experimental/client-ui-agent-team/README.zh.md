@@ -33,13 +33,15 @@ kind: "package-reference"
 
 ### 管理任务板
 
-列表与依赖图由同一份 `agentTeams/view` task snapshot 派生，共用一个已选任务、详情面板与变更控件。图节点使用真实 task id，并显示 Host 给出的 owner、status、readiness 与 blocker 事实；每条有向边从前置任务指向依赖它的任务。图提供确定性自动布局、有界缩放与平移、适配视野、感知依赖的键盘导航，并以原生 button 列表作为等价替代。过滤只隐藏呈现、标明被过滤掉的前置，从不重新计算 Host readiness。
+列表与依赖图由同一份 `agentTeams/view` task snapshot 派生，共用一个已选任务、详情面板与变更控件。图节点使用真实 task id，并显示 Host 给出的 owner、status、readiness 与 blocker 事实；每条有向边从前置任务指向依赖它的任务。图提供确定性自动布局、有界缩放与平移、适配视野、感知依赖的键盘导航，并以原生 button 列表作为等价替代。过滤只隐藏呈现、标明被过滤掉的前置，从不重新计算 Host readiness。左方向键会跳过隐藏项，选择第一个可见前置任务。
 
-用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、完成、重开和删除任务。Create 与 edit form 会把当前真实 task id 显示为原生依赖 checkbox，并排除正在编辑的任务。每次 update 都发送当前显示的 revision，create 或 update rejection 都保留为显式 business result。
+用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、完成、重开和删除任务。Create 与 edit form 会把当前真实 task id 显示为原生依赖 checkbox，并排除正在编辑的任务。非 edit update 发送当前显示的 revision；edit 保留 form 打开时捕获的 revision，直至 conflict 触发的权威 reload 成功。Create 或 update rejection 都保留为显式 business result。
 
 ### 扩展 Team 面板
 
 页头 action 拥有唯一的 Team dialog，并在其中声明 session-scoped list Slot `agent-team.panel.view`。Client 扩展通过该公开 Slot 提供稳定 id、顺序、本地化标签与组件；Team owner 会传入当前会话解析出的精确 Lead `teamSessionId`。Contribution 会作为“概览”旁的 tab 出现，无需导入本包的私有组件。注册、locale 变化与移除会更新导航列表，释放任一 Fiber 都会移除相应权限与 UI。
+
+浏览器导出还提供 `createTeamWatchOwner()`，供任务面板与消费 Team 变化的扩展使用。每个 Client registration 创建自己的 owner，并把 React 组件打开的 watch 交给它。组件 cleanup 立即且幂等地关闭 watch；registration 通过 Cordis effect 等待 `owner.dispose()`，包括此前已经开始但尚未结束的关闭。所有已接纳的关闭完成后，由 owner 报告关闭失败。该辅助模块不挂载 Remote namespace，也不保留 Team 数据。
 
 -----
 

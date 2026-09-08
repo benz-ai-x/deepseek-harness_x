@@ -33,13 +33,15 @@ Opening the panel starts `agentTeams/watch` and reads `agentTeams/view`. Roster 
 
 ### Manage the task board
 
-The list and dependency graph derive from the same `agentTeams/view` task snapshot and share one selected task, detail panel, and mutation controls. Graph nodes use real task ids and Host-provided owner, status, readiness, and blocker facts; each directed edge runs from a prerequisite to its dependent. The graph provides deterministic automatic layout, bounded zoom and pan, fit-to-view, dependency-aware keyboard navigation, and the native-button list as an equivalent alternative. Filtering hides presentation only, identifies prerequisites omitted by the filter, and never recalculates Host readiness.
+The list and dependency graph derive from the same `agentTeams/view` task snapshot and share one selected task, detail panel, and mutation controls. Graph nodes use real task ids and Host-provided owner, status, readiness, and blocker facts; each directed edge runs from a prerequisite to its dependent. The graph provides deterministic automatic layout, bounded zoom and pan, fit-to-view, dependency-aware keyboard navigation, and the native-button list as an equivalent alternative. Filtering hides presentation only, identifies prerequisites omitted by the filter, and never recalculates Host readiness. Left-arrow navigation selects the first visible prerequisite, skipping hidden ones.
 
-A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Create and edit forms expose current real task ids as native dependency checkboxes, excluding the task being edited. Every update sends the displayed revision, and create or update rejections remain explicit business results.
+A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Create and edit forms expose current real task ids as native dependency checkboxes, excluding the task being edited. Non-edit updates send the displayed revision; edits retain the revision captured when the form opens until a conflict-triggered authority reload succeeds. Create or update rejections remain explicit business results.
 
 ### Extend the Team panel
 
 The header action owns the only Team dialog and declares the session-scoped list Slot `agent-team.panel.view` inside it. A Client extension contributes a stable id, order, localized label, and component through that public Slot; the Team owner passes the exact Lead `teamSessionId` selected by the current conversation. Contributions appear as tabs beside Overview and need no import from this package's private components. Registration, locale changes, and removal update the navigation list, and disposing either Fiber removes its authority and UI.
+
+The browser export also provides `createTeamWatchOwner()` for the task panel and extensions that consume Team changes. Each Client registration creates its own owner and gives it the watches opened by its React components. Component cleanup closes a watch immediately and idempotently; the registration awaits `owner.dispose()` through a Cordis effect, including earlier closes still pending. Close failures are reported by the owner after every admitted close settles. The helper mounts no Remote namespace and retains no Team data.
 
 -----
 

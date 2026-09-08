@@ -643,6 +643,38 @@ describe('TeamAction', () => {
     expect(within(graph).getByLabelText('task-1 → task-2')).toBeTruthy()
   })
 
+  it('navigates to a visible prerequisite when the first dependency is filtered out', async () => {
+    const hidden: TeamTask = { ...task, subject: 'Hidden prerequisite' }
+    const visible: TeamTask = { ...dependencyOption, subject: 'Visible prerequisite' }
+    const dependent: TeamTask = {
+      ...task,
+      id: TASK_3,
+      subject: 'Visible dependent',
+      blockedBy: [TASK_1, TASK_2],
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [hidden, visible, dependent] } }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Visible dependent')
+    fireEvent.change(screen.getByRole('searchbox', { name: zh.taskFilter }), {
+      target: { value: 'Visible' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    const dependentNode = within(graph).getByRole('button', { name: 'task-3 · Visible dependent' })
+    const prerequisiteNode = within(graph).getByRole('button', { name: 'task-2 · Visible prerequisite' })
+    expect(within(graph).queryByRole('button', { name: 'task-1 · Hidden prerequisite' })).toBeNull()
+    expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+    dependentNode.focus()
+    fireEvent.keyDown(dependentNode, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(prerequisiteNode)
+    expect(within(screen.getByRole('region', { name: zh.taskDetails }))
+      .getByText('task-2 · Visible prerequisite')).toBeTruthy()
+    fireEvent.keyDown(prerequisiteNode, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(dependentNode)
+  })
+
   it('renders the shared task graph status and controls in English', async () => {
     const dependent: TeamTask = {
       id: TASK_2,

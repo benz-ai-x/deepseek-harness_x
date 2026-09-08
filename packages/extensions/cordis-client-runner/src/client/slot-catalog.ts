@@ -132,7 +132,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.view\', () => ctx.slots.register(\n      { name: \'agent-team.panel.view\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/mount.ts:33',
+    source: 'packages/experimental/client-ui-agent-team/src/client/mount.ts:34',
   },
   {
     key: 'conversation',

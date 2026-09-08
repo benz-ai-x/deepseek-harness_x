@@ -5,6 +5,8 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { mountAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
+export { createTeamWatchOwner } from './watch-owner.ts'
+export type { TeamWatchControl, TeamWatchOwner } from './watch-owner.ts'
 export type {
   TeamActionInjected, TeamActionProps, TeamActionResult, TeamActionWatchControl,
   TeamActionWatchSink, TeamPanelView,

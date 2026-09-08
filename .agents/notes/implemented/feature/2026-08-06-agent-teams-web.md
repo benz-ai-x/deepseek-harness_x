@@ -26,6 +26,8 @@ Teammate navigation uses the existing `{ parentSessionId, childSessionId, mode: 
 
 Stable Web presets still register continuable Subagent controls inside their preset scope. Top-level Agent Teams profile overrides cannot replace those registrations, so this experimental composition may expose both the Team roster and legacy child controls. A Team-aware Web preset is deferred; the [Web profile README](../../../../packages/experimental/agent-team-web-profile/README.md#known-limitations-and-deferred-work) owns the current limitation.
 
+The task panel and Team message contributions share the browser-only `createTeamWatchOwner` exported by the Team Client package. Each registration retains its own owner, while the shared implementation keeps transport teardown and failure reporting consistent across the parent panel and child views. Extensions need no private component import or additional Remote mount.
+
 ## Boundaries
 
 The Web message reads remain list/detail-only and have no read receipt; the separate Team watch carries only a complete view baseline and state-free invalidations. A Lead-only generated `agentTeams/sendMessage` Remote and message composer provide explicit sends and replies without turning a read or reconnect into a mutation or inferring completion. The reader never copies message bodies into the Team view, a global Client store, or a run index. The Web UI has no worktree or Git controls, teammate creation, rename, deletion, interruption, or automatic merge behavior. It does not infer filesystem authority from task ownership or write scopes. An ordinary continuation after teammate navigation remains an addressed-child prompt; only an explicit message-composer submission is a Team mailbox message.
