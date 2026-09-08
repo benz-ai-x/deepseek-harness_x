@@ -310,7 +310,7 @@ describe('native Team member queries', () => {
     const grant = provider.grants.get(handle)!
     await ctx.sessions.flush(lead.agent.session)
     const relative = readdirSync(root, { recursive: true }).find(path =>
-      typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.jsonl.zstd'))
+      typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.v2.jsonl.zstd'))
     if (typeof relative !== 'string') throw new Error('Lead has no durable Session log')
     const path = join(root, relative)
     const backup = `${path}.before-recovery-flush`
@@ -752,7 +752,7 @@ describe('native Team member queries', () => {
     const task = await ctx.agentTeams.createTask(lead.agent, { subject: 'Flush', description: 'Commit once.' })
     await ctx.sessions.flush(lead.agent.session)
     const relative = readdirSync(root, { recursive: true }).find(path =>
-      typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.jsonl.zstd'))
+      typeof path === 'string' && path.includes(lead.agent.id) && path.endsWith('session.v2.jsonl.zstd'))
     if (typeof relative !== 'string') throw new Error('Lead has no durable Session log')
     const path = join(root, relative)
     const backup = `${path}.before-flush-failure`
@@ -838,7 +838,7 @@ describe('native Team member queries', () => {
     await vi.waitFor(() => { expect(ctx.agents.get(launched.member.id)?.status).toBe('running') })
     await ctx.sessions.flush(ctx.agents.get(launched.member.id)!.session)
     const relative = readdirSync(root, { recursive: true }).find(path =>
-      typeof path === 'string' && path.includes(launched.member.id) && path.endsWith('session.jsonl.zstd'))
+      typeof path === 'string' && path.includes(launched.member.id) && path.endsWith('session.v2.jsonl.zstd'))
     if (typeof relative !== 'string') throw new Error('DSH child has no persisted session file')
     const path = join(root, relative)
     const backup = `${path}.before-failure`

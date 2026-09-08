@@ -20,10 +20,10 @@ const NAVIGATION_SNAPSHOT_DIR = fileURLToPath(
   new URL('../../../snapshots/web/agent-team-panel-navigation', import.meta.url),
 )
 const NAVIGATION_EXPECTED = join(NAVIGATION_SNAPSHOT_DIR, 'navigation.expected.md')
-const NAVIGATION_SEED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/session.jsonl', import.meta.url))
+const NAVIGATION_SEED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/session.v2.jsonl', import.meta.url))
 const NAVIGATION_SESSION = 'agent-team-navigation-web-e2e'
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/agent-team-panel', import.meta.url))
-const SESSION = join(SNAPSHOT_DIR, 'session.jsonl')
+const SESSION = join(SNAPSHOT_DIR, 'session.v2.jsonl')
 const LIST_EXPECTED = join(SNAPSHOT_DIR, 'task-list.expected.md')
 const GRAPH_EXPECTED = join(SNAPSHOT_DIR, 'task-graph.expected.md')
 const OVERLAY = fileURLToPath(new URL('./agent-team-panel.overlay.yml', import.meta.url))
@@ -160,7 +160,7 @@ describe('web e2e: Agent Teams panel', () => {
 
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, [
-      'session.jsonl', 'system-prompt.expected.md', 'task-graph.expected.md',
+      'session.jsonl', 'session.v2.jsonl', 'system-prompt.expected.md', 'task-graph.expected.md',
       'task-list.expected.md', 'tool-schemas.expected.json',
     ])
   })

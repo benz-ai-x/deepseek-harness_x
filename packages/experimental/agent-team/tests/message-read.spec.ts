@@ -538,7 +538,7 @@ describe('Agent Teams committed message reader', () => {
     releaseFlush.resolve(undefined)
     const outcome = await read.then(
       value => ({ ok: true as const, value }),
-      error => ({ ok: false as const, error }),
+      (error: unknown) => ({ ok: false as const, error }),
     )
     await disposal
 

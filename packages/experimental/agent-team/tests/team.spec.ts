@@ -1555,7 +1555,7 @@ describe('Team Remote API', () => {
     const recipient = await waitRunning(ctx, started.member.id)
     await ctx.sessions.flush(lead.session)
     const relative = readdirSync(storageRoot, { recursive: true }).find(path =>
-      typeof path === 'string' && path.includes(lead.id) && path.endsWith('session.jsonl.zstd'))
+      typeof path === 'string' && path.includes(lead.id) && path.endsWith('session.v2.jsonl.zstd'))
     if (typeof relative !== 'string') throw new Error('Lead has no durable Session log')
     const path = join(storageRoot, relative)
     const backup = `${path}.before-message-request-flush-failure`
