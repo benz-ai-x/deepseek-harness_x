@@ -53,7 +53,7 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 打开的面板把每个重连 watch generation 作为一份完整 baseline 加后续有界 invalidation 消费。Baseline 会原子替换更早的 unary read；invalidation 只调用既有权威 view reader，不携带 task state。权威读取严格串行：一次读取期间的 burst 只设置一个 dirty latch，并至多触发一次 trailing read。Carrier 丢失会保留最后已发布 view，并显示明确的 disconnected 或 stale 状态；重连只读取新 baseline。Session 变化与 service replacement 会隔离迟到 generation、释放排队读取并让新 generation 独立继续；关闭面板会主动停止 control，而所属 Client 生命周期会等待 stream 静止。
 
-开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。如果所选 id 从这份非删除 view 中消失，选择会保持不变，同时通过生成式 `agentTeams/getTask` 读取它的权威 tombstone；同一详情面板显示删除事实但不提供 mutation control，session 或 service 变化会隔离迟到 detail read。任务文本、scope 与完整 dependency 草稿使用同一个 `edit` compare-and-set mutation，其 expected revision 在开始编辑时钉住。如果发生冲突，UI 会重新读取当前权威任务，在竞态 watch refresh 后仍保留明确标记为未保存的旧 form 与 dependency 草稿，并且绝不自动重试；如果重新读取失败，则保留该错误。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
+开始 create 或 update 会让更早的 refresh 失效。成功后会重新读取完整 Team view，使每个 task 的派生字段保持最新。如果所选 id 从这份非删除 view 中消失，选择会保持不变，同时通过生成式 `agentTeams/getTask` 读取它的权威 tombstone；同一详情面板显示删除事实但不提供 mutation control，session 或 service 变化会隔离迟到 detail read。任务文本、scope 与完整 dependency 草稿使用同一个 `edit` compare-and-set mutation；expected revision 在开始编辑时捕获，watch refresh 不会推进它。如果草稿里已选的 dependency 从当前 view 消失，它会保留为明确的「不可用或已删除」checkbox，直至用户移除或保存。Edit conflict 发生后，UI 保留旧 form 与 dependency 草稿，并且绝不自动重试。由 conflict 触发的权威 reload 成功后，才会推进下一次显式 Save 使用的基准并标明草稿未保存；reload 失败则不推进基准，并保持真实错误可见。列表／图模式、选择、过滤与视口变换都是可释放的组件状态；布局与可见性都不会新建 task projection 或改变 readiness。
 
 | 文件 | 职责 |
 |---|---|
