@@ -5,6 +5,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { mountAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
+export type { AgentTeamPanelViewOwnerProps } from './mount.ts'
 export type {
   TeamActionInjected, TeamActionProps, TeamActionResult, TeamPanelView,
 } from './TeamAction.tsx'

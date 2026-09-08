@@ -364,7 +364,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
         this.receiveRemoteEventResult(client, result)
         return { ok: true, value: undefined }
       } catch (error) {
-        return rpcFailure(error)
+        return rpcFailure(error, true)
       }
     }
     return this.invokeRpc(endpoint, payload, signal)
@@ -588,8 +588,16 @@ export class TypertGatewayService extends Service implements TypertGateway {
   }
 
   private async invokeRpc(endpoint: string, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult> {
+    let request: InvokeRemoteRequest
     try {
-      const value = await this.invoke(remoteRequest(endpoint, payload, signal))
+      request = remoteRequest(endpoint, payload, signal)
+    } catch (error) {
+      // Parsing is Gateway-owned and only emits correction-oriented wire
+      // diagnostics. Business/provider throws below are never trusted here.
+      return rpcFailure(error, true)
+    }
+    try {
+      const value = await this.invoke(request)
       // A void or explicitly absent business result carries no `value` field;
       // JSON has no `undefined`, and the envelope's optional slot is the one
       // representation of absence that both args and results already use.
@@ -995,7 +1003,7 @@ function remoteCancelled(endpoint: string, cause: unknown): RemoteError<'gateway
   return new RemoteError('gateway/cancelled', `Remote invocation "${endpoint}" was aborted`, {}, { cause })
 }
 
-function rpcFailure(error: unknown): ConnectionRpcResult {
+function rpcFailure(error: unknown, exposeGatewayDiagnostic = false): ConnectionRpcResult {
   const remote = remoteErrorOf(error)
   if (remote !== undefined) {
     return { ok: false, error: { code: remote.code, message: remote.message, details: remote.details } }
@@ -1004,7 +1012,9 @@ function rpcFailure(error: unknown): ConnectionRpcResult {
     ok: false,
     error: {
       code: 'gateway/internal',
-      message: error instanceof Error ? error.message : String(error),
+      message: exposeGatewayDiagnostic
+        ? error instanceof Error ? error.message : String(error)
+        : 'Remote invocation failed.',
       details: {},
     },
   }

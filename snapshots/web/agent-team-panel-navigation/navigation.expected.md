@@ -1,0 +1,16 @@
+- button "Agent Team" [expanded]:
+  - img
+  - text: Agent Team
+- dialog "Agent Team":
+  - strong: Agent Team
+  - button "Refresh Team":
+    - img
+  - button "Close":
+    - img
+  - tablist "Agent Team views":
+    - tab "Overview"
+    - tab "Messages" [selected]
+  - region "Addressed Team messages":
+    - paragraph: "Team: {{sessionId}}"
+    - paragraph: "Member: addressed-member"
+    - paragraph: "Navigation revision: 1"

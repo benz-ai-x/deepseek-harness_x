@@ -73,6 +73,13 @@ export class AgentTeamPanelNavigationService extends Service implements AgentTea
   }
 
   private emit(): void {
-    for (const listener of this.listeners) listener()
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch (error: unknown) {
+        const diagnostic = error instanceof Error ? error.message : String(error)
+        this.ctx.logger.warn(`Agent Team panel navigation subscriber failed: ${diagnostic}`)
+      }
+    }
   }
 }

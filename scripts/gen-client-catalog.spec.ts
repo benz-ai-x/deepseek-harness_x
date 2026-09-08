@@ -210,5 +210,11 @@ describe('the real workspace surface', () => {
     const root = entries.find(entry => entry.key === 'root')
     expect(root?.replaceRisk).toBe('shadows-shipped-ui')
     expect(root?.occupants.join(' ')).toContain('AppFrame')
+
+    const agentTeamPanel = entries.find(entry => entry.key === 'agent-team.panel.view')
+    const agentTeamOwner = agentTeamPanel?.ownerProps.join('\n') ?? ''
+    expect(agentTeamOwner).toContain('teamSessionId')
+    expect(agentTeamOwner).toContain('selectedMemberId')
+    expect(agentTeamOwner).toContain('navigationRevision')
   })
 })

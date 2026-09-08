@@ -106,10 +106,10 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Identifies one session in the store (and its persistence artifacts). */\nexport type SessionId = Branded<\'SessionId\'>',
+      '/** Values the Team panel owner passes to every public child view. */\nexport interface AgentTeamPanelViewOwnerProps {\n  /** Exact Team Lead Session whose independently authorized state the child reads. */\n  readonly teamSessionId: SessionId\n  /** Exact Team member requested by cross-plugin navigation, when one was addressed. */\n  readonly selectedMemberId?: SessionId\n  /** Monotonic navigation request revision; a matching child consumes each revision once. */\n  readonly navigationRevision?: number\n}',
     ],
     ownerPropsReferences: [
-      'Branded',
+      'SessionId',
     ],
     standardProps: [
       'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',
@@ -132,7 +132,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.view\', () => ctx.slots.register(\n      { name: \'agent-team.panel.view\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/mount.ts:32',
+    source: 'packages/experimental/client-ui-agent-team/src/client/mount.ts:42',
   },
   {
     key: 'conversation',

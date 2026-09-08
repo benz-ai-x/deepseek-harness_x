@@ -66,6 +66,8 @@ const teammateProfileCapabilities = [
   'hooks',
 ] as const
 const teammateRuntimeCapabilities = [
+  'full-collaboration',
+  'workspace-write',
   'exact-call-approval',
   'sandbox',
   'evaluation',

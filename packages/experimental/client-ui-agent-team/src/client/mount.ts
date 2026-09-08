@@ -21,6 +21,16 @@ import {
 import { en, NS, zh, type TeamKey } from './locales.ts'
 import { AgentTeamPanelNavigationService } from './navigation.ts'
 
+/** Values the Team panel owner passes to every public child view. */
+export interface AgentTeamPanelViewOwnerProps {
+  /** Exact Team Lead Session whose independently authorized state the child reads. */
+  readonly teamSessionId: SessionId
+  /** Exact Team member requested by cross-plugin navigation, when one was addressed. */
+  readonly selectedMemberId?: SessionId
+  /** Monotonic navigation request revision; a matching child consumes each revision once. */
+  readonly navigationRevision?: number
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Agent Teams roster and task-board copy. */
@@ -32,11 +42,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'agent-team.panel.view': {
       kind: 'list'
       scope: 'session'
-      owner: {
-        readonly teamSessionId: SessionId
-        readonly selectedMemberId?: SessionId
-        readonly navigationRevision?: number
-      }
+      owner: AgentTeamPanelViewOwnerProps
     }
   }
 }

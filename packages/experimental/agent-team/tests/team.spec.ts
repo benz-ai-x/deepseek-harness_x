@@ -459,8 +459,24 @@ describe('Team identity and provisioning', () => {
 
     await expect(spawn(ctx, lead, 'checkpoint-failure')).rejects.toThrow('checkpoint failed')
     const member = durable(lead).members[0]
-    expect(member).toMatchObject({ phase: 'failed', error: 'checkpoint failed' })
+    expect(member).toMatchObject({ phase: 'failed', error: 'Teammate provisioning failed.' })
     if (member !== undefined) await waitNoAgent(ctx, member.id)
+  })
+
+  it('contains unclassified provider diagnostics at the public roster boundary', async () => {
+    const { ctx, lead } = await setup([])
+    const failure = new Error('configPath=/private/provider.json token=secret nativePayload=RAW_TRANSCRIPT')
+    vi.spyOn(ctx.subagents, 'startContinuable').mockRejectedValueOnce(failure)
+
+    await expect(spawn(ctx, lead, 'private-failure')).rejects.toBe(failure)
+    expect(durable(lead).members[0]).toMatchObject({
+      phase: 'failed',
+      error: 'Teammate provisioning failed.',
+    })
+    expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({
+      status: 'failed',
+      diagnostics: ['Teammate provisioning failed.'],
+    })
   })
 
   it('fails and drains a child whose resolved route differs from the requested route', async () => {
@@ -513,7 +529,7 @@ describe('Team identity and provisioning', () => {
     await expect(spawn(first.ctx, first.lead, 'string-failure')).rejects.toBe('string provider failure')
     expect(first.ctx.agentTeams.listMembers(first.lead)[1]).toMatchObject({
       status: 'failed',
-      diagnostics: ['string provider failure'],
+      diagnostics: ['Teammate provisioning failed.'],
     })
     await expect(first.ctx.agentTeams.sendMessage(first.lead, {
       target: 'string-failure', content: content('cannot deliver'), signal: SIGNAL,

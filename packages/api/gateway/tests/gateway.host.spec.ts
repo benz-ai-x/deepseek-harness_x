@@ -1033,6 +1033,19 @@ describe('TypertGatewayService', () => {
       expect(result.error.message).toContain('plain-object args field')
     }
 
+    const diagnosticPoison = 'configPath=/private/provider.json token=secret nativePayload=RAW_TRANSCRIPT'
+    service.businessError = new Error(diagnosticPoison)
+    const genericFailure = await handler(
+      'goals/fail',
+      { args: { request: null } },
+      new AbortController().signal,
+    )
+    expect(genericFailure).toEqual({
+      ok: false,
+      error: { code: 'gateway/internal', message: 'Remote invocation failed.', details: {} },
+    })
+    expect(JSON.stringify(genericFailure)).not.toContain(diagnosticPoison)
+
     service.businessError = 'non-error failure' as unknown as Error
     await expect(handler(
       'goals/fail',
@@ -1040,7 +1053,7 @@ describe('TypertGatewayService', () => {
       new AbortController().signal,
     )).resolves.toEqual({
       ok: false,
-      error: { code: 'gateway/internal', message: 'non-error failure', details: {} },
+      error: { code: 'gateway/internal', message: 'Remote invocation failed.', details: {} },
     })
 
     // A business rejection observed while the carrier signal is already aborted

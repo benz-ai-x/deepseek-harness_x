@@ -227,6 +227,35 @@ describe('ui-team browser plugin', () => {
     expect(b.ctx.get('agentTeamPanelNavigation')).toBeUndefined()
   })
 
+  it('contains a throwing navigation subscriber without starving later listeners', async () => {
+    const b = await bench()
+    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
+    const later = vi.fn()
+    const stopThrowing = actions.hooks.panelNavigation.subscribe(() => {
+      throw new Error('broken navigation subscriber')
+    })
+    const stopLater = actions.hooks.panelNavigation.subscribe(later)
+
+    expect(() => {
+      b.ctx.agentTeamPanelNavigation.open({
+        teamSessionId: SESSION,
+        viewId: 'messages',
+        memberId: CHILD,
+      })
+    }).not.toThrow()
+    expect(later).toHaveBeenCalledOnce()
+    expect(actions.hooks.panelNavigation.getSnapshot()).toEqual({
+      revision: 1,
+      teamSessionId: SESSION,
+      viewId: 'messages',
+      memberId: CHILD,
+    })
+
+    stopLater()
+    stopThrowing()
+    await b.fiber.dispose()
+  })
+
   it('unmounts the Remote contribution when later Client registration fails', async () => {
     const b = await bench({ registrationFailure: true })
     await expect(b.activation).resolves.toMatchObject({ message: 'slot registration failed' })

@@ -227,7 +227,14 @@ describe('Agent Teams projection events', () => {
     const nativeHandle = TeammateRuntimeHandle('native/session/运行')
     const provisioning = member({
       provider: 'native',
-      externalRuntime: externalRuntime({ launchRequestId }),
+      externalRuntime: externalRuntime({
+        launchRequestId,
+        requirements: {
+          contextMode: 'fresh',
+          profileCapabilities: ['persona', 'mission'],
+          runtimeCapabilities: ['full-collaboration', 'sandbox'],
+        },
+      }),
     })
     const projected = projectTeam(ROOT, [
       event('team/member', { version: 2, teamId: TEAM, member: provisioning }, SessionSeq(0)),

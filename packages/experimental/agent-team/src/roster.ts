@@ -33,6 +33,12 @@ import type {
 import { requiredText } from './validation.ts'
 
 const MEMBER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const PUBLIC_PROVISIONING_FAILURE = 'Teammate provisioning failed.'
+
+/** Retain only Agent Teams-owned business diagnostics in durable/public roster state. */
+function publicProvisioningFailure(error: unknown): string {
+  return error instanceof TeamError ? error.message : PUBLIC_PROVISIONING_FAILURE
+}
 
 /** Retain only the route fields whose durable meaning is owned by Agent Teams. */
 function routeSnapshot(options: AgentOptions | undefined): TeamMemberRouteSnapshot {
@@ -573,7 +579,7 @@ export class TeamRoster {
       const failed: TeamMemberSnapshot = {
         ...member,
         phase: 'failed',
-        error: errorMessage(error),
+        error: publicProvisioningFailure(error),
       }
       try {
         const phase = await this.settleProvisioning(root, failed)
