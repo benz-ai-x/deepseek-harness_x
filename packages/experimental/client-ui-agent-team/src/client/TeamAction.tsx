@@ -500,25 +500,36 @@ export function TeamAction({
       task.ownerName ?? '',
     ].some(value => value.toLocaleLowerCase().includes(query)))
   }, [taskFilter, view?.tasks])
+  const taskById = useMemo(
+    () => new Map((view?.tasks ?? []).map(task => [task.id, task])),
+    [view?.tasks],
+  )
   const visibleTaskIds = useMemo(() => new Set(visibleTasks.map(task => task.id)), [visibleTasks])
   const graphLayout = useMemo(() => taskGraphLayout(visibleTasks), [visibleTasks])
   const hiddenBlockers = (task: TeamTask): TeamTaskId[] => task.blockedBy.filter(id => !visibleTaskIds.has(id))
+  const unfinishedBlockers = (task: TeamTask): TeamTaskId[] => task.blockedBy.filter(
+    id => taskById.get(id)?.status !== 'completed',
+  )
 
   const zoomGraph = (change: number): void => {
-    setGraphTransform(current => ({
-      ...current,
-      scale: Math.round(Math.min(2, Math.max(0.5, current.scale + change)) * 10) / 10,
-    }))
+    setGraphTransform((current) => {
+      const minimum = current.scale < 0.5 ? Math.min(0.05, current.scale) : 0.5
+      return {
+        ...current,
+        scale: Math.round(Math.min(2, Math.max(minimum, current.scale + change)) * 100) / 100,
+      }
+    })
   }
 
   const fitGraph = (): void => {
     const viewport = graphViewportRef.current
     const width = viewport?.clientWidth === undefined || viewport.clientWidth === 0 ? 480 : viewport.clientWidth
     const height = viewport?.clientHeight === undefined || viewport.clientHeight === 0 ? 260 : viewport.clientHeight
-    const scale = Math.min(1, Math.max(0.5, Math.min(
-      (width - 16) / graphLayout.width,
-      (height - 16) / graphLayout.height,
-    )))
+    const scale = Math.min(
+      1,
+      Math.max(1, width - 16) / graphLayout.width,
+      Math.max(1, height - 16) / graphLayout.height,
+    )
     setGraphTransform({
       x: Math.round((width - graphLayout.width * scale) / 2),
       y: Math.round((height - graphLayout.height * scale) / 2),
@@ -729,7 +740,9 @@ export function TeamAction({
                                   {task.id !== selectedTaskId && task.status === 'pending' && (
                                     <span>{task.ready ? t('ready') : t('blocked')}</span>
                                   )}
-                                  {task.blockedBy.length > 0 && <span>{t('blockedBy')}: {task.blockedBy.join(', ')}</span>}
+                                  {unfinishedBlockers(task).length > 0 && (
+                                    <span>{t('blockedBy')}: {unfinishedBlockers(task).join(', ')}</span>
+                                  )}
                                   {hiddenBlockers(task).length > 0 && (
                                     <span className={css.hiddenDependency}>
                                       {t('hiddenDependencies')}{hiddenBlockers(task).join(', ')}
@@ -837,8 +850,8 @@ export function TeamAction({
                                     {node.task.status === 'pending' && (
                                       <small>{node.task.ready ? t('ready') : t('blocked')}</small>
                                     )}
-                                    {node.task.blockedBy.length > 0 && (
-                                      <small>{t('blockedBy')}: {node.task.blockedBy.join(', ')}</small>
+                                    {unfinishedBlockers(node.task).length > 0 && (
+                                      <small>{t('blockedBy')}: {unfinishedBlockers(node.task).join(', ')}</small>
                                     )}
                                     {hiddenBlockers(node.task).length > 0 && (
                                       <small className={css.hiddenDependency}>
@@ -883,8 +896,8 @@ export function TeamAction({
                                 {selectedTask.status === 'pending' && (
                                   <span>{selectedTask.ready ? t('ready') : t('blocked')}</span>
                                 )}
-                                {selectedTask.blockedBy.length > 0 && (
-                                  <span>{t('blockedBy')}: {selectedTask.blockedBy.join(', ')}</span>
+                                {unfinishedBlockers(selectedTask).length > 0 && (
+                                  <span>{t('blockedBy')}: {unfinishedBlockers(selectedTask).join(', ')}</span>
                                 )}
                                 {selectedTask.writeScopes.length > 0 && (
                                   <span>{t('writeScopes')}: {selectedTask.writeScopes.join(', ')}</span>

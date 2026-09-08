@@ -353,6 +353,70 @@ describe('TeamAction', () => {
     expect(screen.getByRole('region', { name: '任务详情' }).textContent).toContain('Build the Team runtime')
   })
 
+  it('shows only unfinished Host dependencies as blockers while retaining every DAG edge', async () => {
+    type WatchSink = Parameters<TeamActionInjected['watch']>[1]
+    const completed: TeamTask = {
+      ...task,
+      status: 'completed',
+      revision: 2,
+      ready: false,
+    }
+    const unfinished: TeamTask = { ...dependencyOption }
+    const dependent: TeamTask = {
+      id: TASK_3,
+      revision: 1,
+      subject: 'Ship release',
+      description: 'Wait only for unfinished work',
+      status: 'pending',
+      blockedBy: [TASK_1, TASK_2],
+      writeScopes: [],
+      ready: false,
+      writeScopeWarnings: [],
+    }
+    let sink: WatchSink | undefined
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({
+        ok: true,
+        value: { ...view, tasks: [completed, unfinished, dependent] },
+      }),
+      watch: (_sessionId, nextSink) => {
+        sink = nextSink
+        return { start() {}, dispose: () => Promise.resolve() }
+      },
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Ship release')
+    const listChoice = screen.getByRole('button', { name: 'task-3 · Ship release' })
+    expect(within(listChoice).getByText(`${zh.blockedBy}: task-2`)).toBeTruthy()
+    expect(within(listChoice).queryByText(`${zh.blockedBy}: task-1, task-2`)).toBeNull()
+    fireEvent.click(listChoice)
+    const detail = screen.getByRole('region', { name: zh.taskDetails })
+    expect(within(detail).getByText(`${zh.blockedBy}: task-2`)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    expect(within(graph).getByLabelText('task-1 → task-3')).toBeTruthy()
+    expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+    const graphNode = within(graph).getByRole('button', { name: 'task-3 · Ship release' })
+    expect(within(graphNode).getByText(`${zh.blockedBy}: task-2`)).toBeTruthy()
+
+    act(() => {
+      sink?.replace({
+        ...view,
+        tasks: [completed, { ...unfinished, status: 'completed', revision: 2, ready: false }, {
+          ...dependent,
+          revision: 2,
+          ready: true,
+        }],
+      })
+    })
+    expect(within(graphNode).queryByText(new RegExp(zh.blockedBy, 'u'))).toBeNull()
+    expect(within(graphNode).getByText(zh.ready)).toBeTruthy()
+    expect(within(graph).getByLabelText('task-1 → task-3')).toBeTruthy()
+    expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
+  })
+
   it('auto-lays out the DAG and supports zoom, pan, fit, and directional keyboard navigation', async () => {
     const prerequisite: TeamTask = {
       ...task,
@@ -426,6 +490,37 @@ describe('TeamAction', () => {
     expect(document.activeElement).toBe(second)
     fireEvent.click(screen.getByRole('button', { name: '任务列表' }))
     expect(screen.getByRole('button', { name: 'task-2 · Integrate runtime' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('fits a five-row DAG completely inside the default graph viewport', async () => {
+    const tasks = Array.from({ length: 5 }, (_, index): TeamTask => ({
+      ...task,
+      id: `task-${index + 1}` as TeamTaskId,
+      subject: `Vertical task ${index + 1}`,
+      status: 'pending',
+      blockedBy: [],
+      ready: true,
+      writeScopeWarnings: [],
+    }))
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks } }),
+    }))} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Vertical task 5')
+    fireEvent.click(screen.getByRole('button', { name: zh.taskGraph }))
+    const graph = screen.getByRole('application', { name: zh.taskGraph })
+    const last = within(graph).getByRole('button', { name: 'task-5 · Vertical task 5' })
+    expect(last.getAttribute('data-graph-column')).toBe('0')
+    expect(last.getAttribute('data-graph-row')).toBe('4')
+
+    fireEvent.click(screen.getByRole('button', { name: zh.fitGraph }))
+    expect(graph.getAttribute('data-zoom')).toBe('0.35')
+    expect(graph.getAttribute('data-pan-y')).toBe('8')
+    fireEvent.click(screen.getByRole('button', { name: zh.zoomOut }))
+    expect(graph.getAttribute('data-zoom')).toBe('0.15')
+    fireEvent.click(screen.getByRole('button', { name: zh.zoomIn }))
+    expect(graph.getAttribute('data-zoom')).toBe('0.35')
   })
 
   it('shows filtered-out dependency hints without changing Host readiness', async () => {
@@ -857,7 +952,9 @@ describe('TeamAction', () => {
       writeScopes: ['src'],
     })
     await waitFor(() => {
-      expect(screen.getByRole('region', { name: zh.taskDetails }).textContent).toContain('依赖: task-2')
+      const detail = screen.getByRole('region', { name: zh.taskDetails })
+      expect(detail.textContent).not.toContain(`${zh.blockedBy}:`)
+      expect(detail.textContent).toContain(zh.ready)
       expect(within(graph).getByLabelText('task-2 → task-3')).toBeTruthy()
       expect(within(graph).queryByLabelText('task-1 → task-3')).toBeNull()
     })
